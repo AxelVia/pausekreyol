@@ -181,7 +181,29 @@ def get_client_summary(slug: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/clients/{slug}/alerts")
+@app.patch("/clients/{slug}")
+def patch_client(slug: str, body: dict):
+    """Met à jour les données d'un client (infos + emails surveillés)."""
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    client_dir = matches[0]
+    meta_path = client_dir / "client.json"
+    meta = json.loads(meta_path.read_text())
+
+    # Met à jour client_data
+    meta["client_data"].update(body)
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    # Sync Drive
+    try:
+        from engine.drive_storage import sync_client_to_drive
+        meta = sync_client_to_drive(client_dir, meta)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+    except Exception as e:
+        logger.warning(f"Drive sync après PATCH : {e}")
+
+    return meta
 def get_client_alerts(slug: str):
     """Retourne les alertes de conformité du client (caisses, licences...)."""
     matches = list(CLIENTS_DIR.glob(f"{slug}*"))

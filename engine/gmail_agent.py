@@ -113,7 +113,29 @@ def download_attachment(service, msg_id: str, attachment_id: str) -> bytes:
 
 # ── Analyse IA ────────────────────────────────────────────────────────────────
 
-def analyze_with_claude(mail_details: dict, excel_summary: dict) -> dict:
+def detect_client_from_email(sender_email: str, clients_dir) -> Optional[str]:
+    """
+    Cherche quel client est associé à une adresse email expéditeur.
+    Retourne le nom du client ou None.
+    """
+    from pathlib import Path
+    import json
+    clients_dir = Path(clients_dir)
+    if not clients_dir.exists():
+        return None
+    for client_dir in clients_dir.iterdir():
+        meta_path = client_dir / "client.json"
+        if not meta_path.exists():
+            continue
+        meta = json.loads(meta_path.read_text())
+        cd = meta.get("client_data", {})
+        emails = cd.get("emails_surveillance", [])
+        email_contact = cd.get("email_contact", "")
+        all_emails = emails + ([email_contact] if email_contact else [])
+        for e in all_emails:
+            if e.lower() in sender_email.lower():
+                return cd.get("nom_usuel") or cd.get("nom_officiel")
+    return None
     """
     Claude analyse le mail + l'Excel et retourne une tâche structurée.
     Retourne : { titre, priorite, description, client_detecte, actions_suggérées }
@@ -246,6 +268,14 @@ def run_agent():
             if not details["attachments"]:
                 processed.add(msg_id)
                 continue
+
+            # Détecte le client depuis l'adresse expéditeur
+            from pathlib import Path
+            clients_dir = Path(__file__).parent.parent / "clients"
+            client_detecte = detect_client_from_email(details["from"], clients_dir)
+            if client_detecte:
+                details["client_hint"] = client_detecte
+                logger.info(f"Client détecté automatiquement : {client_detecte}")
 
             logger.info(f"Traitement : {details['subject']} (de {details['from']})")
 

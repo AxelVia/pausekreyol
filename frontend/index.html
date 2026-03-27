@@ -630,17 +630,22 @@ function DashboardView({ data, taches, onNewClient, setView }) {
 
 // ── Client detail view ────────────────────────────────────────────────────────
 
-function ClientDetailView({ slug, onBack, onNewProject }) {
+function ClientDetailView({ slug, onBack, onRefresh }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('infos');
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
     fetch(`${API}/clients/${slug}`)
       .then(r => r.json())
       .then(d => { setDetail(d); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [slug]);
+  }
+
+  useEffect(() => { load(); }, [slug]);
 
   if (loading) return <div className="empty"><div className="empty-text">Chargement...</div></div>;
   if (!detail) return <div className="empty"><div className="empty-text">Client introuvable.</div></div>;
@@ -659,8 +664,12 @@ function ClientDetailView({ slug, onBack, onNewProject }) {
           <div style={{ fontSize: 17, fontWeight: 600 }}>{cd.nom_usuel || cd.nom_officiel}</div>
           <div style={{ fontSize: 12, color: 'var(--text3)' }}>{typeLabel}</div>
         </div>
-        <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => onNewProject(slug)}>+ Nouveau projet</button>
+        <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setShowNewProject(true)}>+ Nouveau projet</button>
+        <button className="btn" onClick={() => setShowEdit(true)}>✏️ Modifier</button>
       </div>
+
+      {showNewProject && <NewProjectModal slug={slug} onClose={() => setShowNewProject(false)} onCreated={() => { load(); if (onRefresh) onRefresh(); }} />}
+      {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={() => { load(); if (onRefresh) onRefresh(); }} />}
 
       {/* Tabs */}
       <div className="tabs">
@@ -1148,7 +1157,7 @@ function App() {
         <main className="content">
           {view === 'dashboard' && <DashboardView data={data} taches={taches} onNewClient={() => setShowModal(true)} setView={setView} />}
           {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
-          {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onNewProject={slug => console.log('new project', slug)} />}
+          {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
@@ -1156,6 +1165,188 @@ function App() {
       </div>
 
       {showModal && <NewClientModal onClose={() => setShowModal(false)} onCreated={fetchDashboard} />}
+    </div>
+  );
+}
+
+// ── Modal nouveau projet ──────────────────────────────────────────────────────
+
+function NewProjectModal({ slug, onClose, onCreated }) {
+  const [form, setForm] = useState({ nom_projet: '', date_debut_projet: '', date_fin_projet: '', lieu_projet: '', code_aap: '' });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(k, v) { setForm(prev => ({ ...prev, [k]: v })); }
+
+  async function submit() {
+    if (!form.nom_projet) { setError('Nom du projet obligatoire.'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/clients/${slug}/projets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      onCreated();
+      onClose();
+    } catch (e) {
+      setError('Erreur : ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">Nouveau projet</div>
+        <div className="modal-sub">Un budget Excel sera généré et synchronisé sur Drive.</div>
+        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
+        <div className="form-group">
+          <label className="form-label">Nom du projet *</label>
+          <input className="form-input" value={form.nom_projet} onChange={e => set('nom_projet', e.target.value)} placeholder="Bastet Festival #6 — Oct 2027" autoFocus />
+        </div>
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Date de début</label>
+            <input className="form-input" type="date" value={form.date_debut_projet} onChange={e => set('date_debut_projet', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Date de fin</label>
+            <input className="form-input" type="date" value={form.date_fin_projet} onChange={e => set('date_fin_projet', e.target.value)} />
+          </div>
+        </div>
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Lieu</label>
+            <input className="form-input" value={form.lieu_projet} onChange={e => set('lieu_projet', e.target.value)} placeholder="La Place, Paris" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Code appel à projets</label>
+            <input className="form-input" value={form.code_aap} onChange={e => set('code_aap', e.target.value)} placeholder="HHP27S1" />
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+            {loading ? 'Création…' : 'Créer le projet →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal édition client ──────────────────────────────────────────────────────
+
+function EditClientModal({ detail, onClose, onSaved }) {
+  const cd = detail.client_data || {};
+  const [form, setForm] = useState({
+    ...cd,
+    emails_surveillance: (cd.emails_surveillance || []).join(', '),
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(k, v) { setForm(prev => ({ ...prev, [k]: v })); }
+
+  async function submit() {
+    setLoading(true);
+    try {
+      const payload = {
+        ...form,
+        emails_surveillance: form.emails_surveillance
+          ? form.emails_surveillance.split(',').map(e => e.trim()).filter(Boolean)
+          : [],
+      };
+      const res = await fetch(`${API}/clients/${detail.slug}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError('Erreur : ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const isFrance = cd.type_structure === 'asso_france';
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">Modifier le dossier</div>
+        <div className="modal-sub">{cd.nom_usuel || cd.nom_officiel}</div>
+        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
+
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Nom officiel</label>
+            <input className="form-input" value={form.nom_officiel || ''} onChange={e => set('nom_officiel', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Nom usuel</label>
+            <input className="form-input" value={form.nom_usuel || ''} onChange={e => set('nom_usuel', e.target.value)} />
+          </div>
+        </div>
+
+        {isFrance && <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">SIRET</label>
+            <input className="form-input" value={form.siret || ''} onChange={e => set('siret', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Licence Type 1</label>
+            <input className="form-input" value={form.licence_type1 || ''} onChange={e => set('licence_type1', e.target.value)} />
+          </div>
+        </div>}
+
+        <div className="form-group">
+          <label className="form-label">{isFrance ? 'Président(e)' : 'Directeur(rice) Général(e)'}</label>
+          <input className="form-input" value={form.president || ''} onChange={e => set('president', e.target.value)} />
+        </div>
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Email principal</label>
+            <input className="form-input" value={form.email_contact || ''} onChange={e => set('email_contact', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Téléphone</label>
+            <input className="form-input" value={form.telephone || ''} onChange={e => set('telephone', e.target.value)} />
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Adresse du siège</label>
+          <input className="form-input" value={form.adresse_siege || ''} onChange={e => set('adresse_siege', e.target.value)} />
+        </div>
+
+        <div className="divider" />
+
+        <div className="form-group">
+          <label className="form-label">📧 Emails surveillés par l'agent IA</label>
+          <input
+            className="form-input"
+            value={form.emails_surveillance || ''}
+            onChange={e => set('emails_surveillance', e.target.value)}
+            placeholder="contact@asso.fr, artiste@gmail.com, ..."
+          />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Sépare les adresses par des virgules. L'agent rattachera automatiquement les mails reçus de ces adresses à ce client.
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+            {loading ? 'Sauvegarde…' : 'Sauvegarder →'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
