@@ -3,6 +3,7 @@ PauseKreyol — Moteur de templates
 Crée automatiquement un dossier client avec les Excel pré-remplis et interconnectés.
 """
 
+import io
 import shutil
 import json
 from pathlib import Path
@@ -99,15 +100,18 @@ def _fill_workbook(wb, mapping: dict, data: dict) -> int:
     return filled
 
 
+def _workbook_to_bytes(wb) -> bytes:
+    """Sérialise un workbook openpyxl en bytes sans passer par le disque."""
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
 def create_client_folder(client_data: dict) -> Path:
     """
     Crée le dossier complet d'un nouveau client.
-
-    client_data doit contenir au minimum :
-        - nom_officiel : str
-        - type_structure : str (asso_france | sas_senegal)
-
-    Retourne le chemin du dossier créé.
+    Les Excel sont générés en mémoire et uploadés directement sur Drive.
     """
     nom = client_data.get("nom_usuel") or client_data.get("nom_officiel", "NOUVEAU_CLIENT")
     type_structure = client_data.get("type_structure", "asso_france")
@@ -116,61 +120,78 @@ def create_client_folder(client_data: dict) -> Path:
 
     client_dir = CLIENTS_DIR / f"{slug}_{timestamp}"
     projets_dir = client_dir / "projets"
-    docs_dir = client_dir / "documents"
-
     client_dir.mkdir(parents=True, exist_ok=True)
     projets_dir.mkdir(exist_ok=True)
-    docs_dir.mkdir(exist_ok=True)
+    (client_dir / "documents").mkdir(exist_ok=True)
 
-    # ── Choix du template selon le type de structure ────────────────
+    # ── Choix du template ───────────────────────────────────────────
     tpl_config = TEMPLATES.get(type_structure, TEMPLATES["asso_france"])
     mapping_name = tpl_config["mapping_asso"]
     mapping = ASSOCIATION_MAPPING if mapping_name == "ASSOCIATION_MAPPING" else SAS_MAPPING
 
-    # ── 1. Fichier Association / Structure ──────────────────────────
+    # ── 1. Génère Excel Association en mémoire ──────────────────────
     asso_src = TEMPLATES_DIR / tpl_config["fichier"]
-    asso_dst = client_dir / f"STRUCTURE_{slug}.xlsx"
-    shutil.copy2(asso_src, asso_dst)
-
-    wb_asso = load_workbook(asso_dst)
+    asso_name = f"STRUCTURE_{slug}.xlsx"
+    wb_asso = load_workbook(str(asso_src))
     filled = _fill_workbook(wb_asso, mapping, client_data)
-    wb_asso.save(asso_dst)
-    print(f"  ✅ Structure : {asso_dst.name} ({filled} cellules pré-remplies)")
+    asso_bytes = _workbook_to_bytes(wb_asso)
+    print(f"  ✅ Structure : {asso_name} ({filled} cellules pré-remplies)")
 
-    # ── 2. Fichier Budget projet vierge ─────────────────────────────
+    # Sauvegarde locale aussi (pour lecture ultérieure si Railway la garde)
+    asso_dst = client_dir / asso_name
+    asso_dst.write_bytes(asso_bytes)
+
+    # ── 2. Génère Budget en mémoire ─────────────────────────────────
     budget_src = TEMPLATES_DIR / "TEMPLATE_BUDGET_PROJET.xlsx"
-    budget_dst = projets_dir / f"BUDGET_PROJET_VIERGE_{slug}.xlsx"
-    shutil.copy2(budget_src, budget_dst)
-
-    wb_budget = load_workbook(budget_dst)
+    budget_name = f"BUDGET_PROJET_VIERGE_{slug}.xlsx"
+    wb_budget = load_workbook(str(budget_src))
     filled = _fill_workbook(wb_budget, BUDGET_MAPPING, client_data)
-    wb_budget.save(budget_dst)
-    print(f"  ✅ Budget projet : {budget_dst.name} ({filled} cellules pré-remplies)")
+    budget_bytes = _workbook_to_bytes(wb_budget)
+    print(f"  ✅ Budget projet : {budget_name} ({filled} cellules pré-remplies)")
 
-    # ── 3. Fichier metadata client (JSON) ───────────────────────────
+    budget_dst = projets_dir / budget_name
+    budget_dst.write_bytes(budget_bytes)
+
+    # ── 3. Metadata ─────────────────────────────────────────────────
     meta = {
         "slug": slug,
         "created_at": datetime.now().isoformat(),
         "client_data": client_data,
-        "fichiers": {
-            "association": str(asso_dst.relative_to(BASE_DIR)),
-            "budget_template": str(budget_dst.relative_to(BASE_DIR)),
-        },
         "projets": []
     }
     meta_path = client_dir / "client.json"
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
-    print(f"  ✅ Metadata : {meta_path.name}")
+    print(f"  ✅ Metadata : client.json")
 
-    # ── 4. Sync vers Google Drive (prod uniquement) ─────────────────
+    # ── 4. Upload direct vers Drive (bytes en mémoire) ───────────────
     try:
-        from engine.drive_storage import sync_client_to_drive
-        meta = sync_client_to_drive(client_dir, meta)
-        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
-        print(f"  ✅ Synchronisé sur Google Drive")
+        from engine.drive_storage import drive_get_or_create_folder, drive_upload_bytes, drive_upload_json, get_root_folder_id
+        import os
+        if os.getenv("ENV") == "production":
+            root_id = get_root_folder_id()
+            client_folder_id = drive_get_or_create_folder(slug, root_id)
+            meta["drive_folder_id"] = client_folder_id
+
+            # Upload Excel association
+            asso_id = drive_upload_bytes(asso_bytes, asso_name, client_folder_id)
+            meta["drive_asso_id"] = asso_id
+            print(f"  ✅ Drive : {asso_name} uploadé")
+
+            # Dossier projets + budget
+            projets_folder_id = drive_get_or_create_folder("projets", client_folder_id)
+            meta["drive_projets_folder_id"] = projets_folder_id
+            drive_upload_bytes(budget_bytes, budget_name, projets_folder_id)
+            print(f"  ✅ Drive : {budget_name} uploadé")
+
+            # client.json
+            drive_upload_json(meta, "client.json", client_folder_id)
+            print(f"  ✅ Drive : client.json uploadé")
+
+            # Met à jour le json local avec les IDs Drive
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
     except Exception as e:
         import traceback
-        print(f"  ❌ Drive sync ERREUR : {e}")
+        print(f"  ❌ Drive upload ERREUR : {e}")
         print(traceback.format_exc())
 
     return client_dir
