@@ -628,9 +628,147 @@ function DashboardView({ data, taches, onNewClient, setView }) {
   );
 }
 
+// ── Client detail view ────────────────────────────────────────────────────────
+
+function ClientDetailView({ slug, onBack, onNewProject }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('infos');
+
+  useEffect(() => {
+    fetch(`${API}/clients/${slug}`)
+      .then(r => r.json())
+      .then(d => { setDetail(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [slug]);
+
+  if (loading) return <div className="empty"><div className="empty-text">Chargement...</div></div>;
+  if (!detail) return <div className="empty"><div className="empty-text">Client introuvable.</div></div>;
+
+  const cd = detail.client_data || {};
+  const projets = detail.projets || [];
+  const typeLabel = cd.type_structure === 'sas_senegal' ? '🇸🇳 SAS OHADA — Sénégal' : '🇫🇷 Association loi 1901 — France';
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <button className="btn" onClick={onBack} style={{ padding: '6px 10px' }}>← Retour</button>
+        <div className="client-avatar" style={{ width: 40, height: 40, borderRadius: 10, fontSize: 15 }}>{initials(cd.nom_usuel || cd.nom_officiel || '?')}</div>
+        <div>
+          <div style={{ fontSize: 17, fontWeight: 600 }}>{cd.nom_usuel || cd.nom_officiel}</div>
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>{typeLabel}</div>
+        </div>
+        <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => onNewProject(slug)}>+ Nouveau projet</button>
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs">
+        {[['infos', 'Informations'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents']].map(([k, l]) => (
+          <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* Infos */}
+      {tab === 'infos' && (
+        <div className="grid-2">
+          <div className="card">
+            <div className="card-header"><div className="card-title">Identité</div></div>
+            {[
+              ['Nom officiel', cd.nom_officiel],
+              ['Nom usuel', cd.nom_usuel],
+              cd.siret && ['SIRET', cd.siret],
+              cd.ninea && ['NINEA', cd.ninea],
+              cd.rccm && ['RCCM', cd.rccm],
+              cd.date_creation && ['Date de création', cd.date_creation],
+              cd.adresse_siege && ['Adresse', cd.adresse_siege],
+            ].filter(Boolean).map(([label, val], i) => val && (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <span style={{ color: 'var(--text3)' }}>{label}</span>
+                <span style={{ fontWeight: 500, textAlign: 'right', maxWidth: '60%' }}>{val}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="card">
+            <div className="card-header"><div className="card-title">Contacts & licences</div></div>
+            {[
+              cd.president && ['Président(e) / DG', cd.president],
+              cd.tresorier && ['Trésorier(e)', cd.tresorier],
+              cd.email_contact && ['Email', cd.email_contact],
+              cd.telephone && ['Téléphone', cd.telephone],
+              cd.licence_type1 && ['Licence Type 1', cd.licence_type1],
+              cd.licence_type2 && ['Licence Type 2', cd.licence_type2],
+            ].filter(Boolean).map(([label, val], i) => val && (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <span style={{ color: 'var(--text3)' }}>{label}</span>
+                <span style={{ fontWeight: 500 }}>{val}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Projets */}
+      {tab === 'projets' && (
+        <div className="card">
+          {projets.length === 0 && (
+            <div className="empty">
+              <div className="empty-icon">📋</div>
+              <div className="empty-text">Aucun projet. Créez le premier dossier de subvention.</div>
+            </div>
+          )}
+          {projets.map((p, i) => (
+            <div key={i} className="client-row">
+              <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8 }}>P{i + 1}</div>
+              <div className="client-info">
+                <div className="client-name">{p.nom}</div>
+                <div className="client-meta">Créé le {p.created_at?.slice(0, 10)}</div>
+              </div>
+              <Badge statut={p.statut === 'en_construction' ? 'Attention' : 'OK'} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Alertes placeholder */}
+      {tab === 'alertes' && (
+        <div className="card">
+          <div className="empty">
+            <div className="empty-text">Les alertes se calculent depuis l'Excel Association. Ouvrez le fichier sur Google Drive pour les renseigner.</div>
+          </div>
+          {detail.drive_folder_id && (
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
+                Ouvrir le dossier Drive →
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Documents placeholder */}
+      {tab === 'documents' && (
+        <div className="card">
+          <div className="empty">
+            <div className="empty-text">Checklist documents disponible dans l'Excel Association sur Google Drive.</div>
+          </div>
+          {detail.drive_folder_id && (
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
+                Ouvrir le dossier Drive →
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Clients view ──────────────────────────────────────────────────────────────
 
-function ClientsView({ clients, onNewClient }) {
+function ClientsView({ clients, onNewClient, onOpenClient }) {
   return (
     <div>
       <div className="section-header">
@@ -645,11 +783,11 @@ function ClientsView({ clients, onNewClient }) {
           </div>
         )}
         {clients.map((c, i) => (
-          <div key={i} className="client-row">
+          <div key={i} className="client-row" onClick={() => onOpenClient(c.slug)}>
             <div className="client-avatar">{initials(c.nom)}</div>
             <div className="client-info">
               <div className="client-name">{c.nom}</div>
-              <div className="client-meta">SIRET {c.siret} · {c.nb_projets} projet(s)</div>
+              <div className="client-meta">{c.siret ? `SIRET ${c.siret} · ` : ''}{c.nb_projets} projet(s)</div>
             </div>
             <div className="client-right">
               <Badge statut="OK" />
@@ -924,6 +1062,7 @@ const icons = {
 
 function App() {
   const [view, setView] = useState('dashboard');
+  const [selectedClient, setSelectedClient] = useState(null);
   const [data, setData] = useState({ nb_clients: 0, nb_alertes_urgentes: 0, clients: [], alertes: [] });
   const [taches, setTaches] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -978,7 +1117,7 @@ function App() {
         <nav className="sidebar-nav">
           <div className="nav-section">
             {navItems.map(item => (
-              <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => setView(item.key)}>
+              <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => { setView(item.key); setSelectedClient(null); }}>
                 {item.icon}
                 {item.label}
                 {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
@@ -1008,7 +1147,8 @@ function App() {
 
         <main className="content">
           {view === 'dashboard' && <DashboardView data={data} taches={taches} onNewClient={() => setShowModal(true)} setView={setView} />}
-          {view === 'clients' && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} />}
+          {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
+          {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onNewProject={slug => console.log('new project', slug)} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
