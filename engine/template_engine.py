@@ -139,7 +139,9 @@ def create_client_folder(client_data: dict) -> Path:
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
         print(f"  ✅ Synchronisé sur Google Drive")
     except Exception as e:
-        print(f"  ⚠️  Drive sync ignorée : {e}")
+        import traceback
+        print(f"  ❌ Drive sync ERREUR : {e}")
+        print(traceback.format_exc())
 
     return client_dir
 
