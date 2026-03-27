@@ -18,9 +18,21 @@ CLIENTS_DIR = BASE_DIR / "clients"
 # Format : { "NomSheet": { "CellRef": "clé_dans_client_data" } }
 # ─────────────────────────────────────────────
 
+TEMPLATES = {
+    "asso_france": {
+        "label": "Association loi 1901 — France",
+        "fichier": "TEMPLATE_ASSOCIATION.xlsx",
+        "mapping_asso": "ASSOCIATION_MAPPING",
+    },
+    "sas_senegal": {
+        "label": "SAS OHADA — Sénégal",
+        "fichier": "TEMPLATE_SAS_SENEGAL.xlsx",
+        "mapping_asso": "SAS_MAPPING",
+    },
+}
+
 ASSOCIATION_MAPPING = {
     "IDENTITE": {
-        # Col B = valeurs (label en col A)
         "B5": "nom_officiel",
         "B6": "nom_usuel",
         "B7": "siret",
@@ -28,16 +40,29 @@ ASSOCIATION_MAPPING = {
         "B9": "numero_rna",
         "B10": "date_creation",
         "B12": "adresse_siege",
-        # Direction (label col A, valeur col B)
         "B16": "president",
         "B17": "tresorier",
         "B19": "directeur_artistique",
         "B21": "email_contact",
         "B22": "telephone",
-        # Licences (label col D, valeur col E)
         "E6": "licence_type1",
         "E7": "licence_type2",
         "E8": "licence_type3",
+    }
+}
+
+SAS_MAPPING = {
+    "IDENTITE": {
+        "B4": "nom_officiel",
+        "B5": "nom_usuel",
+        "B6": "ninea",
+        "B7": "rccm",
+        "B8": "capital_social",
+        "B9": "date_creation",
+        "B10": "adresse_siege",
+        "B13": "president",
+        "B15": "email_contact",
+        "B16": "telephone",
     }
 }
 
@@ -80,12 +105,12 @@ def create_client_folder(client_data: dict) -> Path:
 
     client_data doit contenir au minimum :
         - nom_officiel : str
-        - siret : str
+        - type_structure : str (asso_france | sas_senegal)
 
     Retourne le chemin du dossier créé.
     """
     nom = client_data.get("nom_usuel") or client_data.get("nom_officiel", "NOUVEAU_CLIENT")
-    # Sanitize nom pour le filesystem
+    type_structure = client_data.get("type_structure", "asso_france")
     slug = "".join(c if c.isalnum() or c in " _-" else "_" for c in nom).strip().replace(" ", "_")
     timestamp = datetime.now().strftime("%Y%m")
 
@@ -97,15 +122,20 @@ def create_client_folder(client_data: dict) -> Path:
     projets_dir.mkdir(exist_ok=True)
     docs_dir.mkdir(exist_ok=True)
 
-    # ── 1. Fichier Association ──────────────────────────────────────
-    asso_src = TEMPLATES_DIR / "TEMPLATE_ASSOCIATION.xlsx"
-    asso_dst = client_dir / f"ASSOCIATION_{slug}.xlsx"
+    # ── Choix du template selon le type de structure ────────────────
+    tpl_config = TEMPLATES.get(type_structure, TEMPLATES["asso_france"])
+    mapping_name = tpl_config["mapping_asso"]
+    mapping = ASSOCIATION_MAPPING if mapping_name == "ASSOCIATION_MAPPING" else SAS_MAPPING
+
+    # ── 1. Fichier Association / Structure ──────────────────────────
+    asso_src = TEMPLATES_DIR / tpl_config["fichier"]
+    asso_dst = client_dir / f"STRUCTURE_{slug}.xlsx"
     shutil.copy2(asso_src, asso_dst)
 
     wb_asso = load_workbook(asso_dst)
-    filled = _fill_workbook(wb_asso, ASSOCIATION_MAPPING, client_data)
+    filled = _fill_workbook(wb_asso, mapping, client_data)
     wb_asso.save(asso_dst)
-    print(f"  ✅ Association : {asso_dst.name} ({filled} cellules pré-remplies)")
+    print(f"  ✅ Structure : {asso_dst.name} ({filled} cellules pré-remplies)")
 
     # ── 2. Fichier Budget projet vierge ─────────────────────────────
     budget_src = TEMPLATES_DIR / "TEMPLATE_BUDGET_PROJET.xlsx"

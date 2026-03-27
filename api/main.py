@@ -107,11 +107,21 @@ app.add_middleware(
 # ── Modèles ──────────────────────────────────────────────────────────────────
 
 class ClientCreate(BaseModel):
+    type_structure: str = "asso_france"
     nom_officiel: str
     nom_usuel: Optional[str] = None
-    siret: str
+    # France
+    siret: Optional[str] = None
     code_ape: Optional[str] = None
     numero_rna: Optional[str] = None
+    licence_type1: Optional[str] = None
+    licence_type2: Optional[str] = None
+    licence_type3: Optional[str] = None
+    # Sénégal
+    ninea: Optional[str] = None
+    rccm: Optional[str] = None
+    capital_social: Optional[str] = None
+    # Commun
     date_creation: Optional[str] = None
     adresse_siege: Optional[str] = None
     president: Optional[str] = None
@@ -119,9 +129,6 @@ class ClientCreate(BaseModel):
     directeur_artistique: Optional[str] = None
     email_contact: Optional[str] = None
     telephone: Optional[str] = None
-    licence_type1: Optional[str] = None
-    licence_type2: Optional[str] = None
-    licence_type3: Optional[str] = None
 
 
 class ProjectCreate(BaseModel):

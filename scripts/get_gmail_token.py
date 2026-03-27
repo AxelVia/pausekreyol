@@ -16,6 +16,7 @@ from google.oauth2.credentials import Credentials
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/drive",
 ]
 
 # Mets ici le chemin vers ton fichier JSON téléchargé depuis Google Cloud

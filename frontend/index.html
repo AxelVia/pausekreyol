@@ -772,14 +772,30 @@ function AlertesView({ data }) {
 // ── Modal nouveau client ──────────────────────────────────────────────────────
 
 function NewClientModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ nom_officiel: '', nom_usuel: '', siret: '', president: '', email_contact: '', telephone: '', adresse_siege: '', licence_type1: '' });
+  const [form, setForm] = useState({
+    type_structure: '',
+    nom_officiel: '', nom_usuel: '',
+    siret: '', ninea: '', rccm: '',
+    president: '', email_contact: '', telephone: '',
+    adresse_siege: '', licence_type1: ''
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   function set(k, v) { setForm(prev => ({ ...prev, [k]: v })); }
 
+  const TYPES = [
+    { value: 'asso_france', label: '🇫🇷 Association loi 1901 — France' },
+    { value: 'sas_senegal', label: '🇸🇳 SAS OHADA — Sénégal' },
+  ];
+
+  const isFrance = form.type_structure === 'asso_france';
+  const isSenegal = form.type_structure === 'sas_senegal';
+  const typeSelected = isFrance || isSenegal;
+
   async function submit() {
-    if (!form.nom_officiel || !form.siret) { setError('Nom officiel et SIRET obligatoires.'); return; }
+    if (!form.type_structure) { setError('Sélectionnez un type de structure.'); return; }
+    if (!form.nom_officiel) { setError('Nom officiel obligatoire.'); return; }
     setLoading(true);
     try {
       const res = await fetch(`${API}/clients`, {
@@ -791,7 +807,7 @@ function NewClientModal({ onClose, onCreated }) {
       onCreated();
       onClose();
     } catch (e) {
-      setError('Erreur API : ' + e.message + ' (vérifiez que le serveur tourne)');
+      setError('Erreur : ' + e.message);
     } finally {
       setLoading(false);
     }
@@ -801,52 +817,91 @@ function NewClientModal({ onClose, onCreated }) {
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-title">Nouveau dossier client</div>
-        <div className="modal-sub">Les Excel Association et Budget seront générés automatiquement.</div>
+        <div className="modal-sub">Les Excel seront générés et synchronisés sur Google Drive automatiquement.</div>
 
         {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
 
-        <div className="form-grid">
-          <div className="form-group">
-            <label className="form-label">Nom officiel *</label>
-            <input className="form-input" value={form.nom_officiel} onChange={e => set('nom_officiel', e.target.value)} placeholder="Association XYZ" />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Nom usuel / commercial</label>
-            <input className="form-input" value={form.nom_usuel} onChange={e => set('nom_usuel', e.target.value)} placeholder="XYZ" />
-          </div>
-        </div>
-        <div className="form-grid">
-          <div className="form-group">
-            <label className="form-label">SIRET *</label>
-            <input className="form-input" value={form.siret} onChange={e => set('siret', e.target.value)} placeholder="12345678900000" />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Licence spectacle (Type 1)</label>
-            <input className="form-input" value={form.licence_type1} onChange={e => set('licence_type1', e.target.value)} placeholder="PLATESV-D-20XX-XXXXXX" />
-          </div>
-        </div>
+        {/* Sélecteur type de structure */}
         <div className="form-group">
-          <label className="form-label">Président(e)</label>
-          <input className="form-input" value={form.president} onChange={e => set('president', e.target.value)} placeholder="Prénom Nom" />
+          <label className="form-label">Type de structure *</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {TYPES.map(t => (
+              <div
+                key={t.value}
+                onClick={() => set('type_structure', t.value)}
+                style={{
+                  flex: 1, padding: '10px 12px', borderRadius: 'var(--radius-sm)',
+                  border: `1.5px solid ${form.type_structure === t.value ? 'var(--accent-mid)' : 'var(--border2)'}`,
+                  background: form.type_structure === t.value ? 'var(--accent-light)' : 'var(--surface)',
+                  cursor: 'pointer', fontSize: 13, fontWeight: form.type_structure === t.value ? 500 : 400,
+                  color: form.type_structure === t.value ? 'var(--accent)' : 'var(--text)',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {t.label}
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="form-grid">
+
+        {typeSelected && <>
+          <div className="form-grid">
+            <div className="form-group">
+              <label className="form-label">Nom officiel *</label>
+              <input className="form-input" value={form.nom_officiel} onChange={e => set('nom_officiel', e.target.value)} placeholder={isFrance ? "Association XYZ" : "SAS XYZ"} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Nom usuel / commercial</label>
+              <input className="form-input" value={form.nom_usuel} onChange={e => set('nom_usuel', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="form-grid">
+            {isFrance && <>
+              <div className="form-group">
+                <label className="form-label">SIRET</label>
+                <input className="form-input" value={form.siret} onChange={e => set('siret', e.target.value)} placeholder="12345678900000" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Licence spectacle (Type 1)</label>
+                <input className="form-input" value={form.licence_type1} onChange={e => set('licence_type1', e.target.value)} placeholder="PLATESV-D-20XX-XXXXXX" />
+              </div>
+            </>}
+            {isSenegal && <>
+              <div className="form-group">
+                <label className="form-label">NINEA</label>
+                <input className="form-input" value={form.ninea} onChange={e => set('ninea', e.target.value)} placeholder="NINEA Sénégal" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">N° RCCM</label>
+                <input className="form-input" value={form.rccm} onChange={e => set('rccm', e.target.value)} placeholder="SN-DKR-20XX-..." />
+              </div>
+            </>}
+          </div>
+
           <div className="form-group">
-            <label className="form-label">Email de contact</label>
-            <input className="form-input" value={form.email_contact} onChange={e => set('email_contact', e.target.value)} placeholder="contact@asso.fr" />
+            <label className="form-label">{isFrance ? 'Président(e)' : 'Directeur(rice) Général(e)'}</label>
+            <input className="form-input" value={form.president} onChange={e => set('president', e.target.value)} />
+          </div>
+          <div className="form-grid">
+            <div className="form-group">
+              <label className="form-label">Email de contact</label>
+              <input className="form-input" value={form.email_contact} onChange={e => set('email_contact', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Téléphone</label>
+              <input className="form-input" value={form.telephone} onChange={e => set('telephone', e.target.value)} />
+            </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Téléphone</label>
-            <input className="form-input" value={form.telephone} onChange={e => set('telephone', e.target.value)} placeholder="+33 6 XX XX XX XX" />
+            <label className="form-label">Adresse du siège</label>
+            <input className="form-input" value={form.adresse_siege} onChange={e => set('adresse_siege', e.target.value)} />
           </div>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Adresse du siège</label>
-          <input className="form-input" value={form.adresse_siege} onChange={e => set('adresse_siege', e.target.value)} placeholder="1 rue de la Paix, 75001 Paris" />
-        </div>
+        </>}
 
         <div className="modal-footer">
           <button className="btn" onClick={onClose}>Annuler</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+          <button className="btn btn-primary" onClick={submit} disabled={loading || !typeSelected}>
             {loading ? 'Création…' : 'Créer le dossier →'}
           </button>
         </div>

@@ -1,13 +1,12 @@
 """
 PauseKreyol — Intégration Google Drive
-Synchronise les dossiers clients entre le filesystem local (Railway tmp) et Google Drive.
+Utilise le token OAuth Gmail (refresh token) pour uploader dans le Drive personnel.
+Pas de compte de service — les fichiers appartiennent au vrai compte Google.
 """
 
 import os
 import io
 import json
-import shutil
-import tempfile
 import logging
 from pathlib import Path
 from typing import Optional
@@ -18,18 +17,175 @@ IS_PROD = os.getenv("ENV") == "production"
 
 
 def _get_service():
-    from google.oauth2 import service_account
+    """Retourne le client Drive via OAuth (refresh token Gmail)."""
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
     from googleapiclient.discovery import build
 
-    sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if not sa_json:
-        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON non défini")
-
-    info = json.loads(sa_json)
-    creds = service_account.Credentials.from_service_account_info(
-        info, scopes=["https://www.googleapis.com/auth/drive"]
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["GMAIL_REFRESH_TOKEN"],
+        client_id=os.environ["GMAIL_CLIENT_ID"],
+        client_secret=os.environ["GMAIL_CLIENT_SECRET"],
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=[
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.modify",
+        ],
     )
+    creds.refresh(Request())
     return build("drive", "v3", credentials=creds)
+
+
+def get_root_folder_id() -> str:
+    fid = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+    if not fid:
+        raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID non défini")
+    return fid
+
+
+# ── Opérations Drive ──────────────────────────────────────────────────────────
+
+def drive_get_or_create_folder(name: str, parent_id: str) -> str:
+    service = _get_service()
+    q = f"name='{name}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    results = service.files().list(q=q, fields="files(id)").execute()
+    files = results.get("files", [])
+    if files:
+        return files[0]["id"]
+    meta = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    folder = service.files().create(body=meta, fields="id").execute()
+    return folder["id"]
+
+
+def drive_upload_file(local_path: Path, name: str, parent_id: str) -> str:
+    from googleapiclient.http import MediaIoBaseUpload
+    service = _get_service()
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    meta = {"name": name, "parents": [parent_id]}
+    media = MediaIoBaseUpload(io.FileIO(str(local_path), "rb"), mimetype=mime)
+    f = service.files().create(body=meta, media_body=media, fields="id").execute()
+    return f["id"]
+
+
+def drive_update_file(file_id: str, local_path: Path):
+    from googleapiclient.http import MediaIoBaseUpload
+    service = _get_service()
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    media = MediaIoBaseUpload(io.FileIO(str(local_path), "rb"), mimetype=mime)
+    service.files().update(fileId=file_id, media_body=media).execute()
+
+
+def drive_upload_json(data: dict, name: str, parent_id: str) -> str:
+    from googleapiclient.http import MediaIoBaseUpload
+    service = _get_service()
+    content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    meta = {"name": name, "parents": [parent_id]}
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/json")
+    f = service.files().create(body=meta, media_body=media, fields="id").execute()
+    return f["id"]
+
+
+def drive_update_json(file_id: str, data: dict):
+    from googleapiclient.http import MediaIoBaseUpload
+    service = _get_service()
+    content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/json")
+    service.files().update(fileId=file_id, media_body=media).execute()
+
+
+def drive_read_json(file_id: str) -> dict:
+    service = _get_service()
+    content = service.files().get_media(fileId=file_id).execute()
+    return json.loads(content)
+
+
+def drive_find_file(name: str, parent_id: str) -> Optional[str]:
+    service = _get_service()
+    q = f"name='{name}' and '{parent_id}' in parents and trashed=false"
+    results = service.files().list(q=q, fields="files(id)").execute()
+    files = results.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def drive_list_folders(parent_id: str) -> list:
+    service = _get_service()
+    q = f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    results = service.files().list(q=q, fields="files(id,name)").execute()
+    return results.get("files", [])
+
+
+# ── Opérations haut niveau ────────────────────────────────────────────────────
+
+def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
+    if not IS_PROD:
+        logger.info("Mode dev — sync Drive ignorée")
+        return meta
+
+    root_id = get_root_folder_id()
+    slug = meta["slug"]
+
+    client_folder_id = drive_get_or_create_folder(slug, root_id)
+    meta["drive_folder_id"] = client_folder_id
+    logger.info(f"Dossier Drive client : {client_folder_id}")
+
+    # Upload tous les Excel du dossier client
+    for xlsx in client_dir.glob("*.xlsx"):
+        existing_id = drive_find_file(xlsx.name, client_folder_id)
+        if existing_id:
+            drive_update_file(existing_id, xlsx)
+            meta["drive_asso_id"] = existing_id
+        else:
+            fid = drive_upload_file(xlsx, xlsx.name, client_folder_id)
+            meta["drive_asso_id"] = fid
+        logger.info(f"Excel uploadé : {xlsx.name}")
+
+    # Dossier projets
+    projets_folder_id = drive_get_or_create_folder("projets", client_folder_id)
+    meta["drive_projets_folder_id"] = projets_folder_id
+
+    projets_local = client_dir / "projets"
+    if projets_local.exists():
+        for xlsx in projets_local.glob("*.xlsx"):
+            existing_id = drive_find_file(xlsx.name, projets_folder_id)
+            if existing_id:
+                drive_update_file(existing_id, xlsx)
+            else:
+                drive_upload_file(xlsx, xlsx.name, projets_folder_id)
+            logger.info(f"Budget uploadé : {xlsx.name}")
+
+    # Upload client.json
+    meta_file_id = drive_find_file("client.json", client_folder_id)
+    if meta_file_id:
+        drive_update_json(meta_file_id, meta)
+    else:
+        drive_upload_json(meta, "client.json", client_folder_id)
+    logger.info("client.json synchronisé")
+
+    return meta
+
+
+def load_all_clients_from_drive() -> list:
+    if not IS_PROD:
+        return []
+    root_id = get_root_folder_id()
+    client_folders = drive_list_folders(root_id)
+    clients = []
+    for folder in client_folders:
+        try:
+            meta_id = drive_find_file("client.json", folder["id"])
+            if meta_id:
+                meta = drive_read_json(meta_id)
+                clients.append(meta)
+        except Exception as e:
+            logger.error(f"Erreur lecture client {folder['name']} : {e}")
+    return clients
+
 
 
 def get_root_folder_id() -> str:
