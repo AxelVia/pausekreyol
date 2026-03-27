@@ -191,19 +191,72 @@ def patch_client(slug: str, body: dict):
     meta_path = client_dir / "client.json"
     meta = json.loads(meta_path.read_text())
 
+    # Sauvegarde les anciennes valeurs pour le journal
+    old_data = dict(meta["client_data"])
+
     # Met à jour client_data
     meta["client_data"].update(body)
+
+    # Historisation
+    try:
+        from engine.historisation import append_event, add_timestamps
+        changes = {k: {"avant": old_data.get(k), "après": v}
+                   for k, v in body.items() if old_data.get(k) != v}
+        meta = add_timestamps(meta, "modification_infos", {"champs_modifiés": list(changes.keys())})
+        append_event(client_dir, "modification_infos", {"modifications": changes})
+    except Exception as e:
+        logger.warning(f"Historisation PATCH ignorée : {e}")
+
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
     # Sync Drive
     try:
-        from engine.drive_storage import sync_client_to_drive
-        meta = sync_client_to_drive(client_dir, meta)
-        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json
+        client_folder_id = meta.get("drive_folder_id")
+        if client_folder_id:
+            meta_id = drive_find_file("client.json", client_folder_id)
+            if meta_id:
+                drive_update_json(meta_id, meta)
+            else:
+                drive_upload_json(meta, "client.json", client_folder_id)
     except Exception as e:
         logger.warning(f"Drive sync après PATCH : {e}")
 
     return meta
+
+
+@app.delete("/clients/{slug}")
+def delete_client(slug: str, confirm: str = ""):
+    """
+    Supprime un client. Nécessite confirm=SUPPRIMER pour procéder.
+    Archive le dossier Drive avant suppression.
+    """
+    if confirm != "SUPPRIMER":
+        raise HTTPException(
+            status_code=400,
+            detail="Ajoutez ?confirm=SUPPRIMER pour confirmer la suppression."
+        )
+
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    client_dir = matches[0]
+    meta_path = client_dir / "client.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+
+    # Archive sur Drive avant suppression
+    try:
+        from engine.historisation import archive_client_before_delete, append_event
+        append_event(client_dir, "suppression", {"slug": slug})
+        archive_client_before_delete(slug, meta)
+    except Exception as e:
+        logger.warning(f"Archivage avant suppression : {e}")
+
+    # Supprime localement
+    import shutil
+    shutil.rmtree(client_dir, ignore_errors=True)
+
+    return {"status": "supprimé", "slug": slug, "archivé": True}
 def get_client_alerts(slug: str):
     """Retourne les alertes de conformité du client (caisses, licences...)."""
     matches = list(CLIENTS_DIR.glob(f"{slug}*"))

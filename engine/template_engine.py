@@ -194,59 +194,103 @@ def create_client_folder(client_data: dict) -> Path:
         print(f"  ❌ Drive upload ERREUR : {e}")
         print(traceback.format_exc())
 
+    # ── 5. Journal d'événements ─────────────────────────────────────
+    try:
+        from engine.historisation import append_event, add_timestamps
+        meta = add_timestamps(meta, "creation_dossier", {
+            "type_structure": client_data.get("type_structure"),
+            "nom": client_data.get("nom_officiel"),
+        })
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        append_event(client_dir, "creation_dossier", {
+            "nom_officiel": client_data.get("nom_officiel"),
+            "type_structure": client_data.get("type_structure"),
+            "fichiers": [asso_name, budget_name],
+        })
+    except Exception as e:
+        print(f"  ⚠️  Historisation ignorée : {e}")
+
     return client_dir
 
 
 def create_project(client_slug: str, project_data: dict) -> Path:
-    """
-    Crée un nouveau dossier projet pour un client existant.
-
-    project_data doit contenir :
-        - nom_projet : str
-        - date_debut_projet : str (optionnel)
-        - date_fin_projet : str (optionnel)
-        - lieu_projet : str (optionnel)
-        - code_aap : str (optionnel)
-    """
-    # Trouver le dossier client
+    """Crée un nouveau projet pour un client existant."""
     matches = list(CLIENTS_DIR.glob(f"{client_slug}*"))
     if not matches:
-        raise ValueError(f"Client '{client_slug}' non trouvé dans {CLIENTS_DIR}")
+        raise ValueError(f"Client '{client_slug}' non trouvé")
     client_dir = matches[0]
 
-    # Charger les données client existantes
     meta_path = client_dir / "client.json"
     meta = json.loads(meta_path.read_text())
     client_data = meta["client_data"]
-
-    # Merge : données client + données projet
     merged = {**client_data, **project_data}
 
     nom_projet = project_data.get("nom_projet", "PROJET")
     slug_projet = "".join(c if c.isalnum() or c in " _-" else "_" for c in nom_projet).replace(" ", "_")
+    budget_name = f"BUDGET_{slug_projet}.xlsx"
 
     projet_dir = client_dir / "projets" / slug_projet
     projet_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copier et pré-remplir le budget
+    # Génère le budget en mémoire
     budget_src = TEMPLATES_DIR / "TEMPLATE_BUDGET_PROJET.xlsx"
-    budget_dst = projet_dir / f"BUDGET_{slug_projet}.xlsx"
-    shutil.copy2(budget_src, budget_dst)
-
-    wb = load_workbook(budget_dst)
+    wb = load_workbook(str(budget_src))
     filled = _fill_workbook(wb, BUDGET_MAPPING, merged)
-    wb.save(budget_dst)
-    print(f"  ✅ Projet '{nom_projet}' : {budget_dst.name} ({filled} cellules pré-remplies)")
+    budget_bytes = _workbook_to_bytes(wb)
+    (projet_dir / budget_name).write_bytes(budget_bytes)
+    print(f"  ✅ Projet '{nom_projet}' : {budget_name} ({filled} cellules pré-remplies)")
 
-    # Mettre à jour le metadata client
-    meta["projets"].append({
+    # Met à jour le meta
+    projet_entry = {
         "nom": nom_projet,
         "slug": slug_projet,
         "created_at": datetime.now().isoformat(),
-        "fichier_budget": str(budget_dst.relative_to(BASE_DIR)),
-        "statut": "en_construction"
-    })
+        "statut": "en_construction",
+        "dates": {
+            "debut": project_data.get("date_debut_projet"),
+            "fin": project_data.get("date_fin_projet"),
+        },
+        "lieu": project_data.get("lieu_projet"),
+        "code_aap": project_data.get("code_aap"),
+    }
+    meta["projets"].append(projet_entry)
+
+    # Historisation
+    try:
+        from engine.historisation import append_event, add_timestamps
+        meta = add_timestamps(meta, "creation_projet", {"nom_projet": nom_projet})
+        append_event(client_dir, "creation_projet", {
+            "nom_projet": nom_projet,
+            "slug_projet": slug_projet,
+            "lieu": project_data.get("lieu_projet"),
+            "dates": projet_entry["dates"],
+        })
+    except Exception as e:
+        print(f"  ⚠️  Historisation ignorée : {e}")
+
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    # Upload Drive
+    try:
+        from engine.drive_storage import drive_get_or_create_folder, drive_upload_bytes, drive_upload_json, drive_find_file
+        import os
+        if os.getenv("ENV") == "production" and meta.get("drive_projets_folder_id"):
+            projets_folder_id = meta["drive_projets_folder_id"]
+            projet_drive_id = drive_get_or_create_folder(slug_projet, projets_folder_id)
+            drive_upload_bytes(budget_bytes, budget_name, projet_drive_id)
+            print(f"  ✅ Drive : {budget_name} uploadé")
+
+            # Mise à jour client.json sur Drive
+            client_folder_id = meta.get("drive_folder_id")
+            if client_folder_id:
+                meta_id = drive_find_file("client.json", client_folder_id)
+                if meta_id:
+                    from engine.drive_storage import drive_update_json
+                    drive_update_json(meta_id, meta)
+                else:
+                    drive_upload_json(meta, "client.json", client_folder_id)
+    except Exception as e:
+        print(f"  ⚠️  Drive upload projet ignoré : {e}")
 
     return projet_dir
 

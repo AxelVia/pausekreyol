@@ -669,11 +669,11 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
       </div>
 
       {showNewProject && <NewProjectModal slug={slug} onClose={() => setShowNewProject(false)} onCreated={() => { load(); if (onRefresh) onRefresh(); }} />}
-      {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={() => { load(); if (onRefresh) onRefresh(); }} />}
+      {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={() => { load(); if (onRefresh) onRefresh(); }} onDeleted={() => { if (onRefresh) onRefresh(); onBack(); }} />}
 
       {/* Tabs */}
       <div className="tabs">
-        {[['infos', 'Informations'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents']].map(([k, l]) => (
+        {[['infos', 'Informations'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents'], ['historique', 'Historique']].map(([k, l]) => (
           <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -826,11 +826,42 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-// ── Clients view ──────────────────────────────────────────────────────────────
+      {/* Historique */}
+      {tab === 'historique' && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Journal d'activité</div>
+            <div className="card-subtitle">Toutes les opérations sur ce dossier</div>
+          </div>
+          {(() => {
+            const history = detail?.timestamps?.history || [];
+            const labels = {
+              creation_dossier: '📁 Dossier créé',
+              creation_projet: '📋 Projet créé',
+              modification_infos: '✏️ Infos modifiées',
+              upload_excel: '📊 Excel mis à jour',
+              suppression: '🗑 Suppression',
+              tache_creee: '✅ Tâche créée',
+              tache_validee: '✔️ Tâche validée',
+            };
+            if (history.length === 0) return (
+              <div className="empty"><div className="empty-text">Aucun événement enregistré.</div></div>
+            );
+            return [...history].reverse().map((evt, i) => (
+              <div key={i} className="alert-row">
+                <div style={{ flex: 1 }}>
+                  <div className="alert-label">{labels[evt.event] || evt.event}</div>
+                  <div className="alert-sub">
+                    {new Date(evt.at).toLocaleString('fr-FR')}
+                    {evt.details?.nom_projet && ` — ${evt.details.nom_projet}`}
+                    {evt.details?.champs_modifiés?.length > 0 && ` — ${evt.details.champs_modifiés.join(', ')}`}
+                  </div>
+                </div>
+              </div>
+            ));
+          })()}
+        </div>
+      )}
 
 function ClientsView({ clients, onNewClient, onOpenClient }) {
   return (
@@ -1295,7 +1326,7 @@ function NewProjectModal({ slug, onClose, onCreated }) {
 
 // ── Modal édition client ──────────────────────────────────────────────────────
 
-function EditClientModal({ detail, onClose, onSaved }) {
+function EditClientModal({ detail, onClose, onSaved, onDeleted }) {
   const cd = detail.client_data || {};
   const [form, setForm] = useState({
     ...cd,
@@ -1303,6 +1334,7 @@ function EditClientModal({ detail, onClose, onSaved }) {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [deleteStep, setDeleteStep] = useState(0); // 0=caché, 1=première confirmation, 2=deuxième confirmation
 
   function set(k, v) { setForm(prev => ({ ...prev, [k]: v })); }
 
@@ -1325,6 +1357,23 @@ function EditClientModal({ detail, onClose, onSaved }) {
       onClose();
     } catch (e) {
       setError('Erreur : ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirmDelete() {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/clients/${detail.slug}?confirm=SUPPRIMER`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(await res.text());
+      onDeleted();
+      onClose();
+    } catch (e) {
+      setError('Erreur suppression : ' + e.message);
+      setDeleteStep(0);
     } finally {
       setLoading(false);
     }
@@ -1395,11 +1444,38 @@ function EditClientModal({ detail, onClose, onSaved }) {
           </div>
         </div>
 
-        <div className="modal-footer">
-          <button className="btn" onClick={onClose}>Annuler</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading}>
-            {loading ? 'Sauvegarde…' : 'Sauvegarder →'}
-          </button>
+        <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+          {/* Zone suppression */}
+          <div>
+            {deleteStep === 0 && (
+              <button className="btn" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => setDeleteStep(1)}>
+                🗑 Supprimer
+              </button>
+            )}
+            {deleteStep === 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: 'var(--danger)' }}>Archiver et supprimer définitivement ?</span>
+                <button className="btn" style={{ fontSize: 12 }} onClick={() => setDeleteStep(0)}>Non</button>
+                <button className="btn" style={{ fontSize: 12, color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => setDeleteStep(2)}>Oui, continuer</button>
+              </div>
+            )}
+            {deleteStep === 2 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: 'var(--danger)', fontWeight: 500 }}>⚠️ Dernière confirmation — cette action est irréversible</span>
+                <button className="btn" style={{ fontSize: 12 }} onClick={() => setDeleteStep(0)}>Annuler</button>
+                <button className="btn" style={{ fontSize: 12, background: 'var(--danger)', color: 'white', borderColor: 'var(--danger)' }} onClick={confirmDelete} disabled={loading}>
+                  {loading ? '...' : 'Supprimer définitivement'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn" onClick={onClose}>Annuler</button>
+            <button className="btn btn-primary" onClick={submit} disabled={loading}>
+              {loading ? 'Sauvegarde…' : 'Sauvegarder →'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
