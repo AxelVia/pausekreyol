@@ -60,8 +60,20 @@ async def lifespan(app: FastAPI):
             from engine.drive_storage import load_all_clients_from_drive
             clients = load_all_clients_from_drive()
             for meta in clients:
-                client_dir = CLIENTS_DIR / meta["slug"]
-                client_dir.mkdir(parents=True, exist_ok=True)
+                # Recrée la structure exacte attendue par list_clients()
+                # CLIENTS_DIR / slug / client.json
+                slug = meta.get("slug", "")
+                if not slug:
+                    continue
+                # Cherche un dossier existant avec ce slug ou en crée un
+                matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+                if matches:
+                    client_dir = matches[0]
+                else:
+                    client_dir = CLIENTS_DIR / slug
+                    client_dir.mkdir(parents=True, exist_ok=True)
+                    (client_dir / "projets").mkdir(exist_ok=True)
+
                 (client_dir / "client.json").write_text(
                     json.dumps(meta, ensure_ascii=False, indent=2)
                 )

@@ -869,8 +869,8 @@ const icons = {
 
 function App() {
   const [view, setView] = useState('dashboard');
-  const [data, setData] = useState(MOCK.dashboard);
-  const [taches, setTaches] = useState(MOCK.taches);
+  const [data, setData] = useState({ nb_clients: 0, nb_alertes_urgentes: 0, clients: [], alertes: [] });
+  const [taches, setTaches] = useState([]);
   const [showModal, setShowModal] = useState(false);
 
   async function fetchTaches() {
