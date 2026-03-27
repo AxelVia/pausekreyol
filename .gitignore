@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+clients/
+*.egg-info/
+dist/
+build/
+.DS_Store
+Thumbs.db
+venv/
+.venv/
+scripts/client_secret.json
+scripts/gmail_tokens.json
