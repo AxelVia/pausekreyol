@@ -134,6 +134,12 @@ def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
     meta["drive_folder_id"] = client_folder_id
     logger.info(f"Dossier Drive client : {client_folder_id}")
 
+    # Debug — liste les fichiers dans client_dir
+    logger.info(f"client_dir = {client_dir}")
+    logger.info(f"client_dir existe = {client_dir.exists()}")
+    xlsx_files = list(client_dir.glob("*.xlsx"))
+    logger.info(f"Excel trouvés dans client_dir : {xlsx_files}")
+
     # Upload tous les Excel du dossier client
     for xlsx in client_dir.glob("*.xlsx"):
         existing_id = drive_find_file(xlsx.name, client_folder_id)
