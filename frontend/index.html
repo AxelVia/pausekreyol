@@ -202,6 +202,11 @@
     .metric-card.accent-warn { border-left: 3px solid #D97706; }
     .metric-card.accent-danger { border-left: 3px solid #DC2626; }
     .metric-card.accent-info { border-left: 3px solid #3B82F6; }
+    .metric-card[style*="cursor: pointer"]:hover, .metric-card[style*="cursor:pointer"]:hover {
+      background: var(--surface2);
+      transform: translateY(-1px);
+      transition: all 0.15s;
+    }
 
     /* Grid */
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -531,22 +536,22 @@ function DashboardView({ data, taches, onNewClient, setView }) {
   return (
     <div>
       <div className="metrics-grid">
-        <div className="metric-card accent-info">
+        <div className="metric-card accent-info" onClick={() => setView('clients')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Clients actifs</div>
           <div className="metric-value">{data?.nb_clients || 0}</div>
           <div className="metric-sub">associations suivies</div>
         </div>
-        <div className="metric-card accent-warn">
+        <div className="metric-card accent-warn" onClick={() => setView('alertes')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Alertes urgentes</div>
           <div className="metric-value">{urgentes.length}</div>
           <div className="metric-sub">à traiter maintenant</div>
         </div>
-        <div className="metric-card accent-green">
+        <div className="metric-card accent-green" onClick={() => setView('taches')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Tâches en cours</div>
           <div className="metric-value">{tachesEnCours.length}</div>
           <div className="metric-sub">dont {tachesEnCours.filter(t => t.priorite === 'URGENT').length} urgentes</div>
         </div>
-        <div className="metric-card accent-info">
+        <div className="metric-card accent-info" onClick={() => setView('subventions')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Subventions pipeline</div>
           <div className="metric-value">7</div>
           <div className="metric-sub">en cours de suivi</div>
