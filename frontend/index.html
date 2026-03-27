@@ -1195,7 +1195,6 @@ function App() {
   const [taches, setTaches] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [showImport, setShowImport] = useState(false);
 
   async function fetchTaches() {
     try {
@@ -1280,8 +1279,9 @@ function App() {
 
         <main className="content">
           {view === 'dashboard' && <DashboardView data={data} taches={taches} onNewClient={() => setShowModal(true)} setView={setView} />}
-          {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} onImport={() => setShowImport(true)} />}
-          {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}          {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
+          {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
+          {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
+          {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
         </main>
@@ -1289,7 +1289,6 @@ function App() {
 
       {showModal && <NewClientModal onClose={() => setShowModal(false)} onCreated={fetchDashboard} />}
       {showImport && <ImportExcelModal slug={null} onClose={() => setShowImport(false)} onDone={() => { fetchDashboard(); setShowImport(false); }} />}
-      {showImport && <ImportExcelModal onClose={() => setShowImport(false)} onCreated={() => { fetchDashboard(); setShowImport(false); }} />}
     </div>
   );
 }
@@ -1681,150 +1680,6 @@ function EditClientModal({ detail, onClose, onSaved, onDeleted }) {
             </button>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Modal import Excel ────────────────────────────────────────────────────────
-
-function ImportExcelModal({ onClose, onCreated }) {
-  const [file, setFile] = useState(null);
-  const [step, setStep] = useState('upload'); // upload | preview | creating
-  const [parsed, setParsed] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const FIELD_LABELS = {
-    nom_officiel: 'Nom officiel', nom_usuel: 'Nom usuel', siret: 'SIRET',
-    ninea: 'NINEA', rccm: 'RCCM', president: 'Président(e)',
-    email_contact: 'Email', telephone: 'Téléphone', adresse_siege: 'Adresse',
-    licence_type1: 'Licence Type 1', date_creation: 'Date création',
-    nom_projet: 'Nom du projet', lieu_projet: 'Lieu', date_debut_projet: 'Début',
-  };
-
-  async function handleParse() {
-    if (!file) { setError('Sélectionnez un fichier Excel.'); return; }
-    setLoading(true); setError('');
-    const form = new FormData();
-    form.append('file', file);
-    try {
-      const res = await fetch(`${API}/import/parse`, { method: 'POST', body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur parsing');
-      if (data.erreur) throw new Error(data.erreur);
-      setParsed(data);
-      setStep('preview');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleCreate() {
-    setLoading(true); setStep('creating');
-    const form = new FormData();
-    form.append('file', file);
-    try {
-      const res = await fetch(`${API}/import/create-client`, { method: 'POST', body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur création');
-      onCreated();
-    } catch (e) {
-      setError(e.message);
-      setStep('preview');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const cd = parsed?.client_data || {};
-  const pd = parsed?.projet_data || {};
-
-  return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ width: 580 }}>
-        <div className="modal-title">📥 Importer un Excel client</div>
-        <div className="modal-sub">
-          Importez un fichier Pause Kreyol (COLLECTE_CLIENT ou STRUCTURE) pour créer ou mettre à jour un dossier automatiquement.
-        </div>
-
-        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
-
-        {step === 'upload' && <>
-          <div
-            style={{
-              border: '2px dashed var(--border2)', borderRadius: 'var(--radius)',
-              padding: '32px', textAlign: 'center', cursor: 'pointer',
-              background: file ? 'var(--accent-light)' : 'var(--surface2)',
-              transition: 'all 0.15s',
-            }}
-            onClick={() => document.getElementById('excel-upload').click()}
-          >
-            <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
-            {file
-              ? <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)' }}>{file.name}</div>
-              : <div style={{ fontSize: 13, color: 'var(--text3)' }}>Cliquez pour sélectionner un fichier Excel (.xlsx)</div>
-            }
-            <input
-              id="excel-upload" type="file" accept=".xlsx,.xls"
-              style={{ display: 'none' }}
-              onChange={e => { setFile(e.target.files[0]); setError(''); }}
-            />
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
-            Formats acceptés : TEMPLATE_COLLECTE_CLIENT.xlsx · STRUCTURE_xxx.xlsx
-          </div>
-          <div className="modal-footer">
-            <button className="btn" onClick={onClose}>Annuler</button>
-            <button className="btn btn-primary" onClick={handleParse} disabled={!file || loading}>
-              {loading ? 'Analyse en cours…' : 'Analyser le fichier →'}
-            </button>
-          </div>
-        </>}
-
-        {step === 'preview' && parsed && <>
-          <div style={{ background: 'var(--accent-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>
-            <strong>{parsed.nb_champs} champs extraits</strong> depuis {parsed.type_fichier.replace('_', ' ')}
-            {parsed.champs_manquants.length > 0 && <span style={{ color: 'var(--warn)', marginLeft: 8 }}>⚠️ Manquants : {parsed.champs_manquants.join(', ')}</span>}
-          </div>
-
-          <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 14 }}>
-            {/* Données client */}
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Informations client</div>
-            {Object.entries(cd).filter(([k]) => k !== 'type_structure' && cd[k]).map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                <span style={{ color: 'var(--text3)' }}>{FIELD_LABELS[k] || k}</span>
-                <span style={{ fontWeight: 500, maxWidth: '60%', textAlign: 'right' }}>{String(v)}</span>
-              </div>
-            ))}
-            {/* Données projet */}
-            {pd.nom_projet && <>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '10px 0 6px' }}>Projet détecté</div>
-              {Object.entries(pd).filter(([k, v]) => v).map(([k, v]) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                  <span style={{ color: 'var(--text3)' }}>{FIELD_LABELS[k] || k}</span>
-                  <span style={{ fontWeight: 500 }}>{String(v)}</span>
-                </div>
-              ))}
-            </>}
-          </div>
-
-          <div className="modal-footer">
-            <button className="btn" onClick={() => setStep('upload')}>← Changer de fichier</button>
-            <button className="btn btn-primary" onClick={handleCreate} disabled={loading || parsed.champs_manquants.includes('nom_officiel')}>
-              {loading ? 'Création du dossier…' : `Créer le dossier${pd.nom_projet ? ' + projet' : ''} →`}
-            </button>
-          </div>
-        </>}
-
-        {step === 'creating' && (
-          <div className="empty" style={{ padding: '40px 0' }}>
-            <div style={{ fontSize: 24, marginBottom: 12 }}>⏳</div>
-            <div style={{ fontSize: 14 }}>Création du dossier et synchronisation Drive…</div>
-          </div>
-        )}
       </div>
     </div>
   );
