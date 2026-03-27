@@ -260,6 +260,9 @@ def delete_client(slug: str, confirm: str = ""):
     shutil.rmtree(client_dir, ignore_errors=True)
 
     return {"status": "supprimé", "slug": slug, "archivé": True}
+
+
+@app.get("/clients/{slug}/alertes")
 def get_client_alerts(slug: str):
     """Retourne les alertes de conformité du client (caisses, licences...)."""
     matches = list(CLIENTS_DIR.glob(f"{slug}*"))
@@ -696,6 +699,9 @@ Réponds UNIQUEMENT en JSON valide :
         **analyse,
         "task_id": task_id,
     }
+
+
+@app.patch("/clients/{slug}/projets/{slug_projet}/subventions/{sub_id}")
 def update_subvention(slug: str, slug_projet: str, sub_id: int, body: dict):
     """Met à jour une subvention (statut, montant accordé...)."""
     client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)

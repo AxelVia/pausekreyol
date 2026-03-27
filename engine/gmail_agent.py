@@ -139,6 +139,9 @@ def detect_client_from_email(sender_email: str, clients_dir) -> Optional[str]:
             if e.lower() in sender_email.lower():
                 return cd.get("nom_usuel") or cd.get("nom_officiel")
     return None
+
+
+def analyze_with_claude(mail_details: dict, excel_summary: dict) -> dict:
     """
     Claude analyse le mail + l'Excel et retourne une tâche structurée.
     Retourne : { titre, priorite, description, client_detecte, actions_suggérées }
