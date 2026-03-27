@@ -4,9 +4,13 @@ Lance avec : uvicorn api.main:app --reload
 """
 
 import os
+import io
 import json
+import shutil
 import logging
+import tempfile
 from pathlib import Path
+from datetime import datetime
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -15,7 +19,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s"
 )
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -253,7 +257,6 @@ def delete_client(slug: str, confirm: str = ""):
         logger.warning(f"Archivage avant suppression : {e}")
 
     # Supprime localement
-    import shutil
     shutil.rmtree(client_dir, ignore_errors=True)
 
     return {"status": "supprimé", "slug": slug, "archivé": True}
@@ -365,9 +368,6 @@ def trigger_agent():
 
 # ── Import Excel ──────────────────────────────────────────────────────────────
 
-from fastapi import UploadFile, File
-import shutil
-
 @app.post("/import/parse")
 async def parse_excel_upload(file: UploadFile = File(...)):
     """Parse un Excel uploadé et retourne les données extraites — prévisualisation sans création."""
@@ -415,42 +415,6 @@ async def create_client_from_excel(file: UploadFile = File(...)):
             "projet_cree": bool(parsed.get("projet_data", {}) and parsed["projet_data"].get("nom_projet")),
             "source": parsed.get("source"),
         }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/import/update-client/{slug}")
-async def update_client_from_excel(slug: str, file: UploadFile = File(...)):
-    """Parse l'Excel et retourne le diff avec les données existantes — pour validation."""
-    if not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
-
-    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
-    if not matches:
-        raise HTTPException(status_code=404, detail="Client non trouvé")
-
-    meta_path = matches[0] / "client.json"
-    meta = json.loads(meta_path.read_text())
-    existing = meta.get("client_data", {})
-
-    try:
-        from engine.excel_parser import parse_excel_bytes, diff_client_data
-        content = await file.read()
-        parsed = parse_excel_bytes(content, file.filename)
-        changes = diff_client_data(existing, parsed["client_data"])
-
-        return {
-            "slug": slug,
-            "source": parsed.get("source"),
-            "champs_importes": len(parsed["client_data"]),
-            "modifications": changes,
-            "nb_modifications": len(changes),
-            "projet_data": parsed.get("projet_data"),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
