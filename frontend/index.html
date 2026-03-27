@@ -643,6 +643,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
   const [tab, setTab] = useState('infos');
   const [showNewProject, setShowNewProject] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   function load() {
     setLoading(true);
@@ -681,11 +682,13 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
           <div style={{ fontSize: 12, color: 'var(--text3)' }}>{typeLabel}</div>
         </div>
         <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setShowNewProject(true)}>+ Nouveau projet</button>
+        <button className="btn" onClick={() => setShowImport(true)}>📊 Importer Excel</button>
         <button className="btn" onClick={() => setShowEdit(true)}>✏️ Modifier</button>
       </div>
 
       {showNewProject && <NewProjectModal slug={slug} onClose={() => setShowNewProject(false)} onCreated={() => { load(); if (onRefresh) onRefresh(); }} />}
       {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={handleSaved} onDeleted={() => { if (onRefresh) onRefresh(); onBack(); }} />}
+      {showImport && <ImportExcelModal slug={slug} onClose={() => setShowImport(false)} onDone={handleSaved} />}
 
       {/* Tabs */}
       <div className="tabs">
@@ -892,12 +895,15 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 
 // ── Clients view ──────────────────────────────────────────────────────────────
 
-function ClientsView({ clients, onNewClient, onOpenClient }) {
+function ClientsView({ clients, onNewClient, onOpenClient, onImport }) {
   return (
     <div>
       <div className="section-header">
         <div className="section-title">Dossiers clients</div>
-        <button className="btn btn-primary" onClick={onNewClient}>+ Nouveau client</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={onImport}>📊 Importer un Excel</button>
+          <button className="btn btn-primary" onClick={onNewClient}>+ Nouveau client</button>
+        </div>
       </div>
       <div className="card">
         {clients.length === 0 && (
@@ -1188,6 +1194,8 @@ function App() {
   const [data, setData] = useState({ nb_clients: 0, nb_alertes_urgentes: 0, clients: [], alertes: [] });
   const [taches, setTaches] = useState([]);
   const [showModal, setShowModal] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   async function fetchTaches() {
     try {
@@ -1262,27 +1270,195 @@ function App() {
         <header className="topbar">
           <div className="topbar-title">{titles[view]}</div>
           <div className="topbar-right">
-            {view === 'clients' && <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nouveau client</button>}
+            {view === 'clients' && !selectedClient && <>
+              <button className="btn" onClick={() => setShowImport(true)}>📥 Importer un Excel</button>
+              <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nouveau client</button>
+            </>}
             {view === 'dashboard' && <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nouveau client</button>}
           </div>
         </header>
 
         <main className="content">
           {view === 'dashboard' && <DashboardView data={data} taches={taches} onNewClient={() => setShowModal(true)} setView={setView} />}
-          {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
-          {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
-          {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
+          {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} onImport={() => setShowImport(true)} />}
+          {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}          {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
         </main>
       </div>
 
       {showModal && <NewClientModal onClose={() => setShowModal(false)} onCreated={fetchDashboard} />}
+      {showImport && <ImportExcelModal slug={null} onClose={() => setShowImport(false)} onDone={() => { fetchDashboard(); setShowImport(false); }} />}
+      {showImport && <ImportExcelModal onClose={() => setShowImport(false)} onCreated={() => { fetchDashboard(); setShowImport(false); }} />}
     </div>
   );
 }
 
-// ── Modal nouveau projet ──────────────────────────────────────────────────────
+// ── Modal import Excel ────────────────────────────────────────────────────────
+
+function ImportExcelModal({ slug, onClose, onDone }) {
+  const [step, setStep] = useState('upload'); // upload → preview → done
+  const [parsed, setParsed] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const isUpdate = !!slug;
+
+  async function handleFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setLoading(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const url = isUpdate
+        ? `${API}/import/update-client/${slug}`
+        : `${API}/import/parse`;
+      const res = await fetch(url, { method: 'POST', body: formData });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setParsed(data);
+      setStep('preview');
+    } catch (e) {
+      setError('Erreur : ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirm() {
+    setLoading(true);
+    try {
+      if (isUpdate) {
+        // Applique les modifications
+        const updates = {};
+        Object.entries(parsed.modifications || {}).forEach(([k, v]) => {
+          updates[k] = v['après'];
+        });
+        const res = await fetch(`${API}/clients/${slug}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const updated = await res.json();
+        onDone(updated);
+      } else {
+        // Crée le client — re-upload le fichier
+        const input = document.getElementById('excel-import-input');
+        const formData = new FormData();
+        formData.append('file', input.files[0]);
+        const res = await fetch(`${API}/import/create-client`, { method: 'POST', body: formData });
+        if (!res.ok) throw new Error(await res.text());
+        onDone(await res.json());
+      }
+      onClose();
+    } catch (e) {
+      setError('Erreur : ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const LABELS = {
+    nom_officiel: 'Nom officiel', nom_usuel: 'Nom usuel', siret: 'SIRET',
+    ninea: 'NINEA', rccm: 'RCCM', date_creation: 'Date création',
+    adresse_siege: 'Adresse', president: 'Président(e)', tresorier: 'Trésorier(e)',
+    email_contact: 'Email', telephone: 'Téléphone', licence_type1: 'Licence Type 1',
+    numero_urssaf: 'N° URSSAF', numero_guso: 'N° GUSO',
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">{isUpdate ? 'Mettre à jour depuis un Excel' : 'Importer depuis un Excel'}</div>
+        <div className="modal-sub">
+          {isUpdate
+            ? 'Importez une fiche client remplie — les modifications seront prévisualisées avant application.'
+            : 'Importez une fiche client remplie pour créer automatiquement le dossier.'}
+        </div>
+
+        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
+
+        {step === 'upload' && (
+          <div>
+            <div style={{
+              border: '2px dashed var(--border2)', borderRadius: 'var(--radius)',
+              padding: '30px', textAlign: 'center', cursor: 'pointer',
+              background: 'var(--surface2)'
+            }} onClick={() => document.getElementById('excel-import-input').click()}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+              <div style={{ fontSize: 14, fontWeight: 500 }}>Cliquez pour sélectionner un fichier Excel</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
+                FICHE_CLIENT.xlsx, STRUCTURE_xxx.xlsx (.xlsx uniquement)
+              </div>
+            </div>
+            <input id="excel-import-input" type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFile} />
+            {loading && <div style={{ textAlign: 'center', padding: 16, color: 'var(--text3)' }}>Analyse en cours...</div>}
+          </div>
+        )}
+
+        {step === 'preview' && parsed && (
+          <div>
+            <div style={{ background: 'var(--accent-light)', padding: '10px 14px', borderRadius: 6, marginBottom: 14, fontSize: 13 }}>
+              {isUpdate
+                ? <><strong>{parsed.nb_modifications}</strong> modification(s) détectée(s) — source : {parsed.source}</>
+                : <><strong>{parsed.champs_importes}</strong> champ(s) importé(s) — source : {parsed.source}</>
+              }
+            </div>
+
+            {isUpdate && parsed.modifications && Object.keys(parsed.modifications).length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>Modifications détectées :</div>
+                {Object.entries(parsed.modifications).map(([key, change], i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text3)', width: 140, flexShrink: 0 }}>{LABELS[key] || key}</span>
+                    <span style={{ color: 'var(--danger)', textDecoration: 'line-through', flex: 1 }}>{change.avant || '—'}</span>
+                    <span style={{ color: 'var(--accent)', flex: 1, fontWeight: 500 }}>→ {change['après']}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!isUpdate && parsed.client_data && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>Données extraites :</div>
+                {Object.entries(parsed.client_data).slice(0, 8).map(([key, val], i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text3)', width: 160, flexShrink: 0 }}>{LABELS[key] || key}</span>
+                    <span style={{ fontWeight: 500 }}>{val}</span>
+                  </div>
+                ))}
+                {parsed.projet_data?.nom_projet && (
+                  <div style={{ marginTop: 8, padding: '8px', background: 'var(--info-light)', borderRadius: 6, fontSize: 12 }}>
+                    📋 Projet détecté : <strong>{parsed.projet_data.nom_projet}</strong> — sera créé automatiquement
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isUpdate && parsed.nb_modifications === 0 && (
+              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text3)', fontSize: 13 }}>
+                Aucune modification détectée — le dossier est déjà à jour.
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button className="btn" onClick={() => step === 'preview' ? setStep('upload') : onClose()}>
+            {step === 'preview' ? '← Retour' : 'Annuler'}
+          </button>
+          {step === 'preview' && (isUpdate ? parsed?.nb_modifications > 0 : parsed?.champs_importes > 0) && (
+            <button className="btn btn-primary" onClick={confirm} disabled={loading}>
+              {loading ? 'Application...' : isUpdate ? `Appliquer ${parsed.nb_modifications} modification(s) →` : 'Créer le dossier →'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function NewProjectModal({ slug, onClose, onCreated }) {
   const [form, setForm] = useState({ nom_projet: '', date_debut_projet: '', date_fin_projet: '', lieu_projet: '', code_aap: '' });
@@ -1505,6 +1681,150 @@ function EditClientModal({ detail, onClose, onSaved, onDeleted }) {
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal import Excel ────────────────────────────────────────────────────────
+
+function ImportExcelModal({ onClose, onCreated }) {
+  const [file, setFile] = useState(null);
+  const [step, setStep] = useState('upload'); // upload | preview | creating
+  const [parsed, setParsed] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const FIELD_LABELS = {
+    nom_officiel: 'Nom officiel', nom_usuel: 'Nom usuel', siret: 'SIRET',
+    ninea: 'NINEA', rccm: 'RCCM', president: 'Président(e)',
+    email_contact: 'Email', telephone: 'Téléphone', adresse_siege: 'Adresse',
+    licence_type1: 'Licence Type 1', date_creation: 'Date création',
+    nom_projet: 'Nom du projet', lieu_projet: 'Lieu', date_debut_projet: 'Début',
+  };
+
+  async function handleParse() {
+    if (!file) { setError('Sélectionnez un fichier Excel.'); return; }
+    setLoading(true); setError('');
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch(`${API}/import/parse`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Erreur parsing');
+      if (data.erreur) throw new Error(data.erreur);
+      setParsed(data);
+      setStep('preview');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreate() {
+    setLoading(true); setStep('creating');
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch(`${API}/import/create-client`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Erreur création');
+      onCreated();
+    } catch (e) {
+      setError(e.message);
+      setStep('preview');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const cd = parsed?.client_data || {};
+  const pd = parsed?.projet_data || {};
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ width: 580 }}>
+        <div className="modal-title">📥 Importer un Excel client</div>
+        <div className="modal-sub">
+          Importez un fichier Pause Kreyol (COLLECTE_CLIENT ou STRUCTURE) pour créer ou mettre à jour un dossier automatiquement.
+        </div>
+
+        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
+
+        {step === 'upload' && <>
+          <div
+            style={{
+              border: '2px dashed var(--border2)', borderRadius: 'var(--radius)',
+              padding: '32px', textAlign: 'center', cursor: 'pointer',
+              background: file ? 'var(--accent-light)' : 'var(--surface2)',
+              transition: 'all 0.15s',
+            }}
+            onClick={() => document.getElementById('excel-upload').click()}
+          >
+            <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+            {file
+              ? <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)' }}>{file.name}</div>
+              : <div style={{ fontSize: 13, color: 'var(--text3)' }}>Cliquez pour sélectionner un fichier Excel (.xlsx)</div>
+            }
+            <input
+              id="excel-upload" type="file" accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={e => { setFile(e.target.files[0]); setError(''); }}
+            />
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
+            Formats acceptés : TEMPLATE_COLLECTE_CLIENT.xlsx · STRUCTURE_xxx.xlsx
+          </div>
+          <div className="modal-footer">
+            <button className="btn" onClick={onClose}>Annuler</button>
+            <button className="btn btn-primary" onClick={handleParse} disabled={!file || loading}>
+              {loading ? 'Analyse en cours…' : 'Analyser le fichier →'}
+            </button>
+          </div>
+        </>}
+
+        {step === 'preview' && parsed && <>
+          <div style={{ background: 'var(--accent-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>
+            <strong>{parsed.nb_champs} champs extraits</strong> depuis {parsed.type_fichier.replace('_', ' ')}
+            {parsed.champs_manquants.length > 0 && <span style={{ color: 'var(--warn)', marginLeft: 8 }}>⚠️ Manquants : {parsed.champs_manquants.join(', ')}</span>}
+          </div>
+
+          <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 14 }}>
+            {/* Données client */}
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Informations client</div>
+            {Object.entries(cd).filter(([k]) => k !== 'type_structure' && cd[k]).map(([k, v]) => (
+              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <span style={{ color: 'var(--text3)' }}>{FIELD_LABELS[k] || k}</span>
+                <span style={{ fontWeight: 500, maxWidth: '60%', textAlign: 'right' }}>{String(v)}</span>
+              </div>
+            ))}
+            {/* Données projet */}
+            {pd.nom_projet && <>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '10px 0 6px' }}>Projet détecté</div>
+              {Object.entries(pd).filter(([k, v]) => v).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text3)' }}>{FIELD_LABELS[k] || k}</span>
+                  <span style={{ fontWeight: 500 }}>{String(v)}</span>
+                </div>
+              ))}
+            </>}
+          </div>
+
+          <div className="modal-footer">
+            <button className="btn" onClick={() => setStep('upload')}>← Changer de fichier</button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={loading || parsed.champs_manquants.includes('nom_officiel')}>
+              {loading ? 'Création du dossier…' : `Créer le dossier${pd.nom_projet ? ' + projet' : ''} →`}
+            </button>
+          </div>
+        </>}
+
+        {step === 'creating' && (
+          <div className="empty" style={{ padding: '40px 0' }}>
+            <div style={{ fontSize: 24, marginBottom: 12 }}>⏳</div>
+            <div style={{ fontSize: 14 }}>Création du dossier et synchronisation Drive…</div>
+          </div>
+        )}
       </div>
     </div>
   );

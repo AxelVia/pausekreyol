@@ -361,3 +361,228 @@ def trigger_agent():
         return {"status": "ok", "new_tasks": len(tasks or [])}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Import Excel ──────────────────────────────────────────────────────────────
+
+from fastapi import UploadFile, File
+import shutil
+
+@app.post("/import/parse")
+async def parse_excel_upload(file: UploadFile = File(...)):
+    """Parse un Excel uploadé et retourne les données extraites — prévisualisation sans création."""
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
+    try:
+        from engine.excel_parser import parse_excel_bytes
+        content = await file.read()
+        result = parse_excel_bytes(content, file.filename)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/import/create-client")
+async def create_client_from_excel(file: UploadFile = File(...)):
+    """Parse l'Excel et crée le dossier client — appelé après validation."""
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
+    try:
+        from engine.excel_parser import parse_excel_bytes
+        content = await file.read()
+        parsed = parse_excel_bytes(content, file.filename)
+
+        if parsed.get("source") == "error":
+            raise HTTPException(status_code=400, detail=parsed.get("error", "Erreur parsing"))
+        if not parsed["client_data"].get("nom_officiel"):
+            raise HTTPException(status_code=400, detail="Nom officiel manquant dans le fichier")
+
+        client_dir = create_client_folder(parsed["client_data"])
+        meta = json.loads((client_dir / "client.json").read_text())
+
+        if parsed.get("projet_data") and parsed["projet_data"].get("nom_projet"):
+            try:
+                create_project(meta["slug"], parsed["projet_data"])
+                meta = json.loads((client_dir / "client.json").read_text())
+            except Exception as e:
+                logger.warning(f"Projet non créé depuis import : {e}")
+
+        return {
+            "status": "created",
+            "slug": meta["slug"],
+            "nom": parsed["client_data"].get("nom_officiel"),
+            "champs_importes": len(parsed["client_data"]),
+            "projet_cree": bool(parsed.get("projet_data", {}) and parsed["projet_data"].get("nom_projet")),
+            "source": parsed.get("source"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/import/update-client/{slug}")
+async def update_client_from_excel(slug: str, file: UploadFile = File(...)):
+    """Parse l'Excel et retourne le diff avec les données existantes — pour validation."""
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
+
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+
+    meta_path = matches[0] / "client.json"
+    meta = json.loads(meta_path.read_text())
+    existing = meta.get("client_data", {})
+
+    try:
+        from engine.excel_parser import parse_excel_bytes, diff_client_data
+        content = await file.read()
+        parsed = parse_excel_bytes(content, file.filename)
+        changes = diff_client_data(existing, parsed["client_data"])
+
+        return {
+            "slug": slug,
+            "source": parsed.get("source"),
+            "champs_importes": len(parsed["client_data"]),
+            "modifications": changes,
+            "nb_modifications": len(changes),
+            "projet_data": parsed.get("projet_data"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/import/update-client/{slug}")
+async def update_client_from_excel(slug: str, file: UploadFile = File(...)):
+    """
+    Parse l'Excel et retourne le diff avec les données existantes.
+    Crée une tâche de validation — ne modifie pas encore le client.
+    """
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
+
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    client_dir = matches[0]
+    meta = json.loads((client_dir / "client.json").read_text())
+
+    try:
+        from engine.excel_parser import parse_excel_client, diff_with_existing
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+        parsed = parse_excel_client(tmp_path)
+        tmp_path.unlink()
+
+        if parsed.get("erreur"):
+            raise HTTPException(status_code=400, detail=parsed["erreur"])
+
+        # Calcule le diff
+        changes = diff_with_existing(parsed, meta["client_data"])
+
+        if not changes:
+            return {"status": "no_changes", "message": "Aucune modification détectée"}
+
+        # Crée une tâche de validation
+        from datetime import datetime
+        task = {
+            "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "created_at": datetime.now().isoformat(),
+            "source": "Import Excel",
+            "titre": f"Valider les modifications Excel — {meta['client_data'].get('nom_usuel') or meta['client_data'].get('nom_officiel')}",
+            "priorite": "Attention",
+            "description": f"{len(changes)} champ(s) modifié(s) détecté(s) dans le fichier importé.",
+            "client_detecte": meta["client_data"].get("nom_usuel") or meta["client_data"].get("nom_officiel"),
+            "client_slug": slug,
+            "type": "validation_import",
+            "actions_suggerees": [f"Vérifier : {k} → '{v['après']}'" for k, v in list(changes.items())[:5]],
+            "impacts_detectes": list(changes.keys()),
+            "changements": changes,
+            "nouvelles_donnees": parsed["client_data"],
+            "done": False,
+        }
+
+        tasks_file = CLIENTS_DIR / "tasks.json"
+        tasks = json.loads(tasks_file.read_text()) if tasks_file.exists() else []
+        tasks.append(task)
+        tasks_file.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
+
+        return {
+            "status": "task_created",
+            "task_id": task["id"],
+            "nb_changes": len(changes),
+            "changes": changes,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/taches/{task_id}/valider")
+def valider_tache(task_id: str):
+    """
+    Valide une tâche de type validation_import.
+    Applique les modifications au dossier client.
+    """
+    if not TASKS_FILE.exists():
+        raise HTTPException(status_code=404, detail="Tâche non trouvée")
+
+    tasks = json.loads(TASKS_FILE.read_text())
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    if not task:
+        raise HTTPException(status_code=404, detail="Tâche non trouvée")
+
+    if task.get("type") == "validation_import" and task.get("client_slug"):
+        slug = task["client_slug"]
+        nouvelles_donnees = task.get("nouvelles_donnees", {})
+
+        matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+        if matches:
+            client_dir = matches[0]
+            meta_path = client_dir / "client.json"
+            meta = json.loads(meta_path.read_text())
+
+            old_data = dict(meta["client_data"])
+            meta["client_data"].update(nouvelles_donnees)
+
+            # Historisation
+            try:
+                from engine.historisation import append_event, add_timestamps
+                changes = task.get("changements", {})
+                meta = add_timestamps(meta, "modification_import_excel", {
+                    "champs": list(changes.keys()),
+                    "task_id": task_id,
+                })
+                append_event(client_dir, "modification_import_excel", {
+                    "modifications": changes,
+                    "source": "Import Excel validé",
+                })
+            except Exception as e:
+                logger.warning(f"Historisation validation : {e}")
+
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+            # Sync Drive
+            try:
+                from engine.drive_storage import drive_find_file, drive_update_json
+                client_folder_id = meta.get("drive_folder_id")
+                if client_folder_id:
+                    meta_id = drive_find_file("client.json", client_folder_id)
+                    if meta_id:
+                        drive_update_json(meta_id, meta)
+            except Exception as e:
+                logger.warning(f"Drive sync après validation : {e}")
+
+    # Marque la tâche comme faite
+    task["done"] = True
+    task["validated_at"] = datetime.now().isoformat() if 'datetime' in dir() else ""
+    TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
+
+    return {"status": "validated", "task_id": task_id}
