@@ -904,21 +904,14 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 
 // ── Clients view ──────────────────────────────────────────────────────────────
 
-function ClientsView({ clients, onNewClient, onOpenClient, onImport }) {
+function ClientsView({ clients, onNewClient, onOpenClient }) {
   return (
     <div>
-      <div className="section-header">
-        <div className="section-title">Dossiers clients</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={onImport}>📊 Importer un Excel</button>
-          <button className="btn btn-primary" onClick={onNewClient}>+ Nouveau client</button>
-        </div>
-      </div>
       <div className="card">
         {clients.length === 0 && (
           <div className="empty">
             <div className="empty-icon">📁</div>
-            <div className="empty-text">Aucun client. Créez votre premier dossier.</div>
+            <div className="empty-text">Aucun client. Créez votre premier dossier ou importez un Excel.</div>
           </div>
         )}
         {clients.map((c, i) => (
@@ -1282,7 +1275,6 @@ function App() {
               <button className="btn" onClick={() => setShowImport(true)}>📥 Importer un Excel</button>
               <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nouveau client</button>
             </>}
-            {view === 'dashboard' && <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nouveau client</button>}
           </div>
         </header>
 
@@ -1379,11 +1371,11 @@ function ImportExcelModal({ slug, onClose, onDone }) {
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
-        <div className="modal-title">{isUpdate ? 'Mettre à jour depuis un Excel' : 'Importer depuis un Excel'}</div>
+        <div className="modal-title">{isUpdate ? '📊 Mettre à jour depuis un Excel' : '📥 Créer un client depuis un Excel'}</div>
         <div className="modal-sub">
           {isUpdate
             ? 'Importez une fiche client remplie — les modifications seront prévisualisées avant application.'
-            : 'Importez une fiche client remplie pour créer automatiquement le dossier.'}
+            : 'Importez un fichier COLLECTE_CLIENT.xlsx ou STRUCTURE_xxx.xlsx rempli par le client pour créer automatiquement son dossier.'}
         </div>
 
         {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
