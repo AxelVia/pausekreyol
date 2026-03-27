@@ -652,6 +652,15 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
       .catch(() => setLoading(false));
   }
 
+  function handleSaved(updatedMeta) {
+    if (updatedMeta && updatedMeta.client_data) {
+      setDetail(updatedMeta);
+    } else {
+      load();
+    }
+    if (onRefresh) onRefresh();
+  }
+
   useEffect(() => { load(); }, [slug]);
 
   if (loading) return <div className="empty"><div className="empty-text">Chargement...</div></div>;
@@ -676,7 +685,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
       </div>
 
       {showNewProject && <NewProjectModal slug={slug} onClose={() => setShowNewProject(false)} onCreated={() => { load(); if (onRefresh) onRefresh(); }} />}
-      {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={() => { load(); if (onRefresh) onRefresh(); }} onDeleted={() => { if (onRefresh) onRefresh(); onBack(); }} />}
+      {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={handleSaved} onDeleted={() => { if (onRefresh) onRefresh(); onBack(); }} />}
 
       {/* Tabs */}
       <div className="tabs">
@@ -1363,7 +1372,8 @@ function EditClientModal({ detail, onClose, onSaved, onDeleted }) {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
-      onSaved();
+      const updated = await res.json();
+      onSaved(updated);
       onClose();
     } catch (e) {
       setError('Erreur : ' + e.message);
