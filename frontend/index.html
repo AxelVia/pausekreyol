@@ -418,7 +418,164 @@
     }
     .section-title { font-size: 15px; font-weight: 600; }
 
-    /* Scrollbar */
+    /* ── RESPONSIVE MOBILE ─────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+
+      /* Layout : sidebar cachée, nav en bas */
+      .app { flex-direction: column; }
+
+      .sidebar {
+        display: none; /* cachée sur mobile */
+      }
+
+      .main { flex: 1; padding-bottom: 64px; } /* espace pour la nav du bas */
+
+      /* Topbar allégée */
+      .topbar {
+        padding: 0 16px;
+        height: 48px;
+      }
+      .topbar-title { font-size: 14px; }
+
+      /* Masque tous les boutons d'action en mode mobile (read-only) */
+      .topbar-right { display: none; }
+      .btn-primary { display: none !important; }
+      button.btn:not(.btn-tab):not(.btn-back):not(.btn-toggle) { display: none; }
+
+      /* Contenu */
+      .content { padding: 12px; }
+
+      /* Grilles : tout en colonne */
+      .grid-2, .grid-3, .grid-4 {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+      }
+
+      /* Cards */
+      .card { padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+      .card-header { flex-wrap: wrap; gap: 6px; }
+
+      /* Métriques */
+      .metrics-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px;
+      }
+      .metric-card { padding: 12px; }
+      .metric-value { font-size: 22px; }
+
+      /* Rows clients/tâches */
+      .client-row { padding: 10px 0; }
+      .client-right { display: none; } /* masque badge + date sur mobile */
+
+      /* Tabs */
+      .tabs { overflow-x: auto; white-space: nowrap; padding-bottom: 2px; gap: 4px; }
+      .tab { padding: 6px 12px; font-size: 12px; }
+
+      /* Modal : plein écran sur mobile */
+      .modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+      }
+      .modal {
+        width: 100% !important;
+        max-width: 100% !important;
+        border-radius: 16px 16px 0 0;
+        max-height: 85vh;
+        overflow-y: auto;
+        padding: 20px 16px 32px;
+      }
+      .modal-footer { flex-direction: column-reverse; gap: 8px; }
+      .modal-footer .btn { width: 100%; justify-content: center; }
+
+      /* Pipeline subventions */
+      .pipeline { flex-direction: column; }
+      .pipeline-col { min-width: unset; }
+
+      /* Alertes */
+      .alert-row { flex-wrap: wrap; gap: 6px; }
+
+      /* Section header */
+      .section-header { margin-bottom: 12px; }
+      .section-title { font-size: 14px; }
+
+      /* Cacher le bouton retour desktop, montrer version mobile */
+      .btn-back-mobile { display: flex !important; }
+      /* Masque les boutons retour desktop dans les vues détail */
+      .btn-desktop-back { display: none !important; }
+
+      /* Tables dans les détails */
+      table { font-size: 12px; }
+    }
+
+    /* ── BARRE DE NAVIGATION MOBILE EN BAS ─────────────────────────────── */
+    .mobile-nav {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 60px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      z-index: 100;
+      padding: 0 4px;
+    }
+    .mobile-nav-inner {
+      display: flex;
+      align-items: stretch;
+      height: 100%;
+    }
+    .mobile-nav-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-family: 'DM Sans', sans-serif;
+      color: var(--text3);
+      font-size: 10px;
+      font-weight: 500;
+      padding: 6px 4px;
+      border-radius: 8px;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .mobile-nav-item.active { color: var(--accent); }
+    .mobile-nav-item svg { width: 20px; height: 20px; }
+    .mobile-nav-badge {
+      position: absolute;
+      top: 4px; right: calc(50% - 14px);
+      background: var(--danger);
+      color: white;
+      font-size: 9px;
+      font-weight: 700;
+      min-width: 14px;
+      height: 14px;
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 3px;
+    }
+
+    @media (max-width: 768px) {
+      .mobile-nav { display: flex; }
+    }
+
+    /* Bannière read-only sur mobile */
+    .mobile-readonly-banner {
+      display: none;
+      background: var(--accent-light);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 500;
+      text-align: center;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    @media (max-width: 768px) {
+      .mobile-readonly-banner { display: block; }
+    }
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
@@ -676,7 +833,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
     <div>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-        <button className="btn" onClick={onBack} style={{ padding: '6px 10px' }}>← Retour</button>
+        <button className="btn btn-desktop-back" onClick={onBack} style={{ padding: '6px 10px' }}>← Retour</button>
         <div className="client-avatar" style={{ width: 40, height: 40, borderRadius: 10, fontSize: 15 }}>{initials(cd.nom_usuel || cd.nom_officiel || '?')}</div>
         <div>
           <div style={{ fontSize: 17, fontWeight: 600 }}>{cd.nom_usuel || cd.nom_officiel}</div>
@@ -790,9 +947,20 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
         />
       )}
 
-      {/* Alertes */}
+      {/* Alertes placeholder */}
       {tab === 'alertes' && (
-        <AlertesClientTab slug={slug} driveFolderId={detail.drive_folder_id} />
+        <div className="card">
+          <div className="empty">
+            <div className="empty-text">Les alertes se calculent depuis l'Excel Association. Ouvrez le fichier sur Google Drive pour les renseigner.</div>
+          </div>
+          {detail.drive_folder_id && (
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
+                Ouvrir le dossier Drive →
+              </a>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Documents */}
@@ -918,46 +1086,6 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 }
 
 // ── Vue détail projet ─────────────────────────────────────────────────────────
-// ── Alertes onglet client (fetch réel) ───────────────────────────────────────
-
-function AlertesClientTab({ slug, driveFolderId }) {
-  const [alertes, setAlertes] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch(`${API}/clients/${slug}/alertes`)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => { setAlertes(Array.isArray(data) ? data : []); setLoading(false); })
-      .catch(() => { setAlertes([]); setLoading(false); });
-  }, [slug]);
-
-  if (loading) return <div className="card"><div className="empty"><div className="empty-text">Chargement des alertes…</div></div></div>;
-
-  return (
-    <div className="card">
-      {(alertes.length === 0) ? (
-        <div className="empty">
-          <div className="empty-text">Aucune alerte détectée. Renseignez les dates dans l'Excel Association sur Drive pour les activer.</div>
-          {driveFolderId && (
-            <div style={{ marginTop: 8 }}>
-              <a href={`https://drive.google.com/drive/folders/${driveFolderId}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>Ouvrir sur Drive →</a>
-            </div>
-          )}
-        </div>
-      ) : alertes.map((a, i) => (
-        <div key={i} className="alert-row">
-          <AlertDot statut={a.statut} />
-          <div style={{ flex: 1 }}>
-            <div className="alert-label">{a.organisme}</div>
-            <div className="alert-sub">{a.date_expiration ? `Échéance : ${new Date(a.date_expiration).toLocaleDateString('fr-FR')}` : ''}</div>
-          </div>
-          <Badge statut={a.statut} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 
 function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsFolderId }) {
   const [tab, setTab] = useState('infos');
@@ -1026,7 +1154,7 @@ function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsF
     <div>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-        <button className="btn" onClick={onBack} style={{ padding: '6px 10px' }}>← Projets</button>
+        <button className="btn btn-desktop-back" onClick={onBack} style={{ padding: '6px 10px' }}>← Projets</button>
         <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, width: 40, height: 40 }}>
           {projet.nom?.slice(0, 2).toUpperCase()}
         </div>
@@ -1430,65 +1558,8 @@ function ClientsView({ clients, onNewClient, onOpenClient }) {
 
 // ── Tâches view ───────────────────────────────────────────────────────────────
 
-function NewTaskModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ titre: '', priorite: 'Normal', date: '', description: '' });
-  const [loading, setLoading] = useState(false);
-  function set(k, v) { setForm(p => ({ ...p, [k]: v })); }
-
-  async function submit() {
-    if (!form.titre) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`${API}/taches`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      const task = await res.json();
-      onCreated(task);
-      onClose();
-    } catch(e) { console.error(e); }
-    finally { setLoading(false); }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-title">Nouvelle tâche</div>
-        <div className="form-group">
-          <label className="form-label">Titre *</label>
-          <input className="form-input" value={form.titre} onChange={e => set('titre', e.target.value)} placeholder="Ex : Renouveler licence, préparer dossier DRAC..." autoFocus />
-        </div>
-        <div className="form-grid">
-          <div className="form-group">
-            <label className="form-label">Priorité</label>
-            <select className="form-input" value={form.priorite} onChange={e => set('priorite', e.target.value)}>
-              {['URGENT', 'Attention', 'Normal'].map(p => <option key={p}>{p}</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Deadline</label>
-            <input className="form-input" type="date" value={form.date} onChange={e => set('date', e.target.value)} />
-          </div>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Description</label>
-          <input className="form-input" value={form.description} onChange={e => set('description', e.target.value)} placeholder="Détails optionnels..." />
-        </div>
-        <div className="modal-footer">
-          <button className="btn" onClick={onClose}>Annuler</button>
-          <button className="btn btn-primary" onClick={submit} disabled={!form.titre || loading}>
-            {loading ? 'Création...' : 'Créer →'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function TachesView({ taches, setTaches }) {
   const [filter, setFilter] = useState('all');
-  const [showNew, setShowNew] = useState(false);
 
   const filtered = taches.filter(t => {
     if (filter === 'pending') return !t.done;
@@ -1508,16 +1579,11 @@ function TachesView({ taches, setTaches }) {
     }
   }
 
-  function handleCreated(task) {
-    setTaches(prev => [task, ...prev]);
-  }
-
   return (
     <div>
-      {showNew && <NewTaskModal onClose={() => setShowNew(false)} onCreated={handleCreated} />}
       <div className="section-header">
         <div className="section-title">Tâches</div>
-        <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ Nouvelle tâche</button>
+        <button className="btn btn-primary">+ Nouvelle tâche</button>
       </div>
       <div className="tabs">
         {[['all', 'Toutes'], ['pending', 'En cours'], ['done', 'Terminées']].map(([k, l]) => (
@@ -1525,7 +1591,6 @@ function TachesView({ taches, setTaches }) {
         ))}
       </div>
       <div className="card">
-        {filtered.length === 0 && <div className="empty"><div className="empty-text">Aucune tâche.</div></div>}
         {filtered.map(t => (
           <div key={t.id} className="task-row">
             <div className={`task-check ${t.done ? 'done' : ''}`} onClick={() => toggle(t.id)}>
@@ -1533,7 +1598,7 @@ function TachesView({ taches, setTaches }) {
             </div>
             <div className="task-body" style={{ opacity: t.done ? 0.45 : 1 }}>
               <div className="task-title" style={{ textDecoration: t.done ? 'line-through' : 'none' }}>{t.titre}</div>
-              <div className="task-meta">{t.client_detecte || t.client} · Source : {t.source} · Deadline : {t.date}</div>
+              <div className="task-meta">{t.client} · Source : {t.source} · Deadline : {t.date}</div>
             </div>
             <Badge statut={t.done ? 'OK' : t.priorite} />
           </div>
@@ -1545,49 +1610,26 @@ function TachesView({ taches, setTaches }) {
 
 // ── Subventions pipeline view ─────────────────────────────────────────────────
 
-function SubventionsView({ clients }) {
+function SubventionsView() {
   const COLS = ['À préparer', 'Déposée', 'En instruction', 'Accordée', 'Versée'];
-
-  // Aggrège toutes les subventions de tous les projets de tous les clients
-  const allSubs = [];
-  (clients || []).forEach(client => {
-    (client.projets || []).forEach(projet => {
-      (projet.subventions || []).forEach(sub => {
-        allSubs.push({ ...sub, _client: client.nom || client.client_data?.nom_usuel, _projet: projet.nom });
-      });
-    });
-  });
-
-  // Groupe par statut
-  const byCol = {};
-  COLS.forEach(c => { byCol[c] = allSubs.filter(s => s.statut === c); });
-  const totalAccorde = allSubs.filter(s => s.statut === 'Accordée' || s.statut === 'Versée')
-    .reduce((sum, s) => sum + (Number(s.montant_accorde) || Number(s.montant_demande) || 0), 0);
-  const totalDemande = allSubs.reduce((sum, s) => sum + (Number(s.montant_demande) || 0), 0);
-
   return (
     <div>
       <div className="section-header">
         <div className="section-title">Pipeline subventions</div>
-        <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-          {allSubs.length} subvention(s) · {totalDemande.toLocaleString('fr-FR')} € demandés · <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{totalAccorde.toLocaleString('fr-FR')} € obtenus</span>
-        </div>
+        <button className="btn btn-primary">+ Ajouter</button>
       </div>
       <div className="pipeline">
         {COLS.map(col => (
           <div key={col} className="pipeline-col">
-            <div className="pipeline-header">{col} <span style={{ opacity: 0.5 }}>({byCol[col].length})</span></div>
-            {byCol[col].length === 0 ? (
-              <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text3)', border: '1px dashed var(--border)', borderRadius: 6, textAlign: 'center' }}>Aucune</div>
-            ) : byCol[col].map((s, i) => (
-              <div key={i} className="pipeline-card">
-                <div className="pipeline-card-name">{s.financeur}</div>
-                <div className="pipeline-card-sub">{s._client} · {Number(s.montant_demande || 0).toLocaleString('fr-FR')} €</div>
-                {s._projet && <div className="pipeline-card-sub" style={{ fontStyle: 'italic' }}>{s._projet}</div>}
-              </div>
-            ))}
+            <div className="pipeline-header">{col} <span style={{ opacity: 0.5 }}>(0)</span></div>
+            <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text3)', border: '1px dashed var(--border)', borderRadius: 6, textAlign: 'center' }}>
+              Aucune
+            </div>
           </div>
         ))}
+      </div>
+      <div style={{ marginTop: 20, padding: 16, background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>
+        Le suivi des subventions sera connecté aux dossiers clients dans une prochaine version.
       </div>
     </div>
   );
@@ -1851,7 +1893,17 @@ function App() {
 
       <div className="main">
         <header className="topbar">
-          <div className="topbar-title">{titles[view]}</div>
+          <div className="topbar-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* Bouton retour mobile dans la topbar */}
+            {selectedClient && (
+              <button
+                onClick={() => setSelectedClient(null)}
+                style={{ display: 'none', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px 4px 0', color: 'var(--accent)', fontSize: 18, lineHeight: 1 }}
+                className="btn-back-mobile"
+              >←</button>
+            )}
+            {titles[view]}
+          </div>
           <div className="topbar-right">
             {view === 'clients' && !selectedClient && <>
               <button className="btn" onClick={() => setShowImport(true)}>📥 Importer un Excel</button>
@@ -1859,19 +1911,39 @@ function App() {
             </>}
           </div>
         </header>
+        <div className="mobile-readonly-banner">
+          👁 Mode consultation — modifications sur ordinateur uniquement
+        </div>
 
         <main className="content">
           {view === 'dashboard' && <DashboardView data={data} taches={taches} onNewClient={() => setShowModal(true)} setView={setView} />}
           {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
           {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
-          {view === 'subventions' && <SubventionsView clients={data?.clients || []} />}
+          {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
         </main>
       </div>
 
       {showModal && <NewClientModal onClose={() => setShowModal(false)} onCreated={fetchDashboard} />}
       {showImport && <ImportExcelModal slug={null} onClose={() => setShowImport(false)} onDone={() => { fetchDashboard(); setShowImport(false); }} />}
+
+      {/* Barre navigation mobile */}
+      <nav className="mobile-nav">
+        <div className="mobile-nav-inner">
+          {navItems.map(item => (
+            <button
+              key={item.key}
+              className={`mobile-nav-item ${view === item.key ? 'active' : ''}`}
+              onClick={() => { setView(item.key); setSelectedClient(null); }}
+            >
+              {item.badge ? <span className="mobile-nav-badge">{item.badge}</span> : null}
+              {item.icon}
+              <span>{item.label.split(' ')[0]}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }

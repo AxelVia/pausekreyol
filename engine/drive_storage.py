@@ -81,7 +81,7 @@ def drive_update_file(file_id: str, local_path: Path):
     service.files().update(fileId=file_id, media_body=media).execute()
 
 
-def drive_upload_json(data: "dict | list", name: str, parent_id: str) -> str:
+def drive_upload_json(data: dict, name: str, parent_id: str) -> str:
     from googleapiclient.http import MediaIoBaseUpload
     service = _get_service()
     content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -91,7 +91,7 @@ def drive_upload_json(data: "dict | list", name: str, parent_id: str) -> str:
     return f["id"]
 
 
-def drive_update_json(file_id: str, data: "dict | list"):
+def drive_update_json(file_id: str, data: dict):
     from googleapiclient.http import MediaIoBaseUpload
     service = _get_service()
     content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -103,6 +103,14 @@ def drive_read_json(file_id: str) -> dict:
     service = _get_service()
     content = service.files().get_media(fileId=file_id).execute()
     return json.loads(content)
+
+
+def drive_download_json(name: str, parent_id: str):
+    """Télécharge et parse un fichier JSON depuis Drive. Retourne None si non trouvé."""
+    file_id = drive_find_file(name, parent_id)
+    if not file_id:
+        return None
+    return drive_read_json(file_id)
 
 
 def drive_find_file(name: str, parent_id: str) -> Optional[str]:
@@ -277,7 +285,7 @@ def drive_download_file(file_id: str, local_path: Path):
             _, done = downloader.next_chunk()
 
 
-def drive_upload_json(data: "dict | list", name: str, parent_id: str) -> str:
+def drive_upload_json(data: dict, name: str, parent_id: str) -> str:
     """Upload un dict JSON comme fichier texte sur Drive."""
     service = _get_service()
     content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -289,7 +297,7 @@ def drive_upload_json(data: "dict | list", name: str, parent_id: str) -> str:
     return f["id"]
 
 
-def drive_update_json(file_id: str, data: "dict | list"):
+def drive_update_json(file_id: str, data: dict):
     """Met à jour un fichier JSON existant sur Drive."""
     from googleapiclient.http import MediaIoBaseUpload
     service = _get_service()
@@ -437,76 +445,3 @@ def download_client_excel(client_slug: str, local_dir: Path) -> Optional[Path]:
     local_path = local_dir / file_info["name"]
     drive_download_file(file_info["id"], local_path)
     return local_path
-
-
-# ── Persistance tasks.json + processed_emails.json sur Drive ──────────────────
-
-def _get_tasks_file_id(root_id: str) -> Optional[str]:
-    """Retourne l'ID Drive de tasks.json ou None."""
-    return drive_find_file("tasks.json", root_id)
-
-
-def save_tasks_to_drive(tasks: list) -> None:
-    """Sauvegarde tasks.json sur Drive (dossier racine PauseKreyol)."""
-    if not IS_PROD:
-        return
-    try:
-        root_id = get_root_folder_id()
-        existing_id = _get_tasks_file_id(root_id)
-        if existing_id:
-            drive_update_json(existing_id, tasks)
-        else:
-            drive_upload_json(tasks, "tasks.json", root_id)
-        logger.info(f"tasks.json synchronisé sur Drive ({len(tasks)} tâche(s))")
-    except Exception as e:
-        logger.warning(f"Drive sync tasks.json : {e}")
-
-
-def load_tasks_from_drive() -> list:
-    """Charge tasks.json depuis Drive au démarrage."""
-    if not IS_PROD:
-        return []
-    try:
-        root_id = get_root_folder_id()
-        fid = _get_tasks_file_id(root_id)
-        if fid:
-            data = drive_read_json(fid)
-            # drive_read_json retourne un dict ou une list
-            if isinstance(data, list):
-                logger.info(f"{len(data)} tâche(s) restaurée(s) depuis Drive")
-                return data
-    except Exception as e:
-        logger.warning(f"Chargement tasks.json depuis Drive : {e}")
-    return []
-
-
-def save_processed_emails_to_drive(ids: set) -> None:
-    """Sauvegarde la liste des mails traités sur Drive."""
-    if not IS_PROD:
-        return
-    try:
-        root_id = get_root_folder_id()
-        existing_id = drive_find_file("processed_emails.json", root_id)
-        data = list(ids)
-        if existing_id:
-            drive_update_json(existing_id, data)
-        else:
-            drive_upload_json(data, "processed_emails.json", root_id)
-    except Exception as e:
-        logger.warning(f"Drive sync processed_emails.json : {e}")
-
-
-def load_processed_emails_from_drive() -> set:
-    """Charge la liste des mails traités depuis Drive au démarrage."""
-    if not IS_PROD:
-        return set()
-    try:
-        root_id = get_root_folder_id()
-        fid = drive_find_file("processed_emails.json", root_id)
-        if fid:
-            data = drive_read_json(fid)
-            if isinstance(data, list):
-                return set(data)
-    except Exception as e:
-        logger.warning(f"Chargement processed_emails.json depuis Drive : {e}")
-    return set()

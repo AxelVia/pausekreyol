@@ -139,9 +139,6 @@ def detect_client_from_email(sender_email: str, clients_dir) -> Optional[str]:
             if e.lower() in sender_email.lower():
                 return cd.get("nom_usuel") or cd.get("nom_officiel")
     return None
-
-
-def analyze_with_claude(mail_details: dict, excel_summary: dict) -> dict:
     """
     Claude analyse le mail + l'Excel et retourne une tâche structurée.
     Retourne : { titre, priorite, description, client_detecte, actions_suggérées }
@@ -241,6 +238,61 @@ def create_task(task_data: dict, mail_details: dict) -> dict:
 
     logger.info(f"Tâche créée : {task['titre']} [{task['priorite']}]")
     return task
+
+
+# ── Analyse IA ────────────────────────────────────────────────────────────────
+
+def analyze_with_claude(mail_details: dict, excel_summary: dict) -> dict:
+    """Appelle Claude pour analyser un mail + Excel et retourner une tâche structurée."""
+    import anthropic as anthropic_sdk
+    import json as json_mod
+    import os as os_mod
+
+    client = anthropic_sdk.Anthropic(api_key=os_mod.environ.get("ANTHROPIC_API_KEY", ""))
+
+    prompt = f"""Tu es l'assistant de Pause Kreyol, une administratrice de production culturelle.
+
+Analyse ce mail et le résumé du fichier Excel joint, puis génère une tâche structurée.
+
+MAIL :
+- De : {mail_details.get('from', '?')}
+- Objet : {mail_details.get('subject', '?')}
+- Corps : {(mail_details.get('body', '') or '')[:500]}
+- Client détecté : {mail_details.get('client_hint', 'Non identifié')}
+
+RÉSUMÉ EXCEL :
+{json_mod.dumps(excel_summary, ensure_ascii=False, indent=2)[:1500]}
+
+Réponds UNIQUEMENT en JSON valide :
+{{
+  "titre": "Titre court et actionnable de la tâche",
+  "priorite": "URGENT ou Attention ou Normal",
+  "description": "Description en français naturel de ce qu'il faut faire (2-3 phrases)",
+  "client_detecte": "Nom du client ou null",
+  "actions_suggerees": ["action 1", "action 2"],
+  "impacts_detectes": ["budget", "artistes", etc.]
+}}"""
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+        return json_mod.loads(raw)
+    except Exception as e:
+        logger.error(f"Erreur analyse Claude : {e}")
+        return {
+            "titre": f"Mail reçu — {mail_details.get('subject', '?')}",
+            "priorite": "Normal",
+            "description": f"Mail de {mail_details.get('from', '?')} avec Excel joint. Analyse IA indisponible.",
+            "client_detecte": mail_details.get("client_hint"),
+            "actions_suggerees": ["Consulter le fichier Excel joint"],
+            "impacts_detectes": [],
+        }
 
 
 # ── Boucle principale ─────────────────────────────────────────────────────────

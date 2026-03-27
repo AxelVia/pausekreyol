@@ -85,17 +85,29 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Erreur restauration Drive : {e}")
 
-    # Restaure tasks.json depuis Drive au démarrage
-    if env == "production" and os.getenv("GOOGLE_DRIVE_FOLDER_ID"):
+        # Restaure tasks.json depuis Drive
         try:
-            from engine.drive_storage import load_tasks_from_drive
-            tasks_from_drive = load_tasks_from_drive()
-            if tasks_from_drive:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            tasks_data = drive_download_json("tasks.json", root_id)
+            if tasks_data:
                 TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-                TASKS_FILE.write_text(json.dumps(tasks_from_drive, ensure_ascii=False, indent=2))
-                logger.info(f"{len(tasks_from_drive)} tâche(s) restaurée(s) depuis Drive")
+                TASKS_FILE.write_text(json.dumps(tasks_data, ensure_ascii=False, indent=2))
+                logger.info(f"tasks.json restauré depuis Drive ({len(tasks_data)} tâches)")
         except Exception as e:
-            logger.error(f"Erreur restauration tasks.json depuis Drive : {e}")
+            logger.warning(f"tasks.json non restauré : {e}")
+
+        # Restaure processed_emails.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            processed = drive_download_json(".processed_emails.json", root_id)
+            if processed:
+                pe_path = CLIENTS_DIR / ".processed_emails.json"
+                pe_path.write_text(json.dumps(processed, ensure_ascii=False))
+                logger.info("processed_emails.json restauré depuis Drive")
+        except Exception as e:
+            logger.warning(f"processed_emails.json non restauré : {e}")
 
     scheduler = None
     if env == "production" and gmail_token:
@@ -112,9 +124,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PauseKreyol API", version="0.1.0", lifespan=lifespan)
 
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://pausekreyol.vercel.app")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "*")],
+    allow_origins=["*"] if os.getenv("ENV") != "production" else [FRONTEND_URL],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -410,12 +423,51 @@ def root():
 TASKS_FILE = CLIENTS_DIR / "tasks.json"
 
 
+def _save_tasks(tasks: list):
+    """Sauvegarde tasks.json localement et sur Drive."""
+    TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("tasks.json", root_id)
+            if file_id:
+                drive_update_json(file_id, tasks)
+            else:
+                drive_upload_json(tasks, "tasks.json", root_id)
+        except Exception as e:
+            logger.warning(f"tasks.json non sauvegardé sur Drive : {e}")
+
+
 @app.get("/taches")
 def get_taches():
     """Retourne toutes les tâches."""
     if not TASKS_FILE.exists():
         return []
     return json.loads(TASKS_FILE.read_text())
+
+
+@app.post("/taches")
+def create_tache(body: dict):
+    """Crée une tâche manuellement."""
+    task = {
+        "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_manual",
+        "created_at": datetime.now().isoformat(),
+        "source": "Manuel",
+        "titre": body.get("titre", "Sans titre"),
+        "priorite": body.get("priorite", "Normal"),
+        "description": body.get("description", ""),
+        "deadline": body.get("deadline"),
+        "client_detecte": body.get("client_detecte"),
+        "client_slug": body.get("client_slug"),
+        "type": "manuel",
+        "done": False,
+    }
+    tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+    tasks.append(task)
+    _save_tasks(tasks)
+    return task
 
 
 @app.patch("/taches/{task_id}")
@@ -427,42 +479,9 @@ def update_tache(task_id: str, body: dict):
     for t in tasks:
         if t["id"] == task_id:
             t.update(body)
-            TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
-            try:
-                from engine.drive_storage import save_tasks_to_drive
-                save_tasks_to_drive(tasks)
-            except Exception as e:
-                logger.warning(f"Drive sync tâche update : {e}")
+            _save_tasks(tasks)
             return t
     raise HTTPException(status_code=404, detail="Tâche non trouvée")
-
-
-@app.post("/taches", status_code=201)
-def create_tache(body: dict):
-    """Crée une tâche manuellement."""
-    task = {
-        "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        "created_at": datetime.now().isoformat(),
-        "source": "Manuel",
-        "titre": body.get("titre", "Nouvelle tâche"),
-        "priorite": body.get("priorite", "Normal"),
-        "description": body.get("description", ""),
-        "client_detecte": body.get("client_detecte"),
-        "client_slug": body.get("client_slug"),
-        "type": "manuel",
-        "date": body.get("date"),
-        "done": False,
-    }
-    TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
-    tasks.append(task)
-    TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
-    try:
-        from engine.drive_storage import save_tasks_to_drive
-        save_tasks_to_drive(tasks)
-    except Exception as e:
-        logger.warning(f"Drive sync nouvelle tâche : {e}")
-    return task
 
 
 @app.post("/agent/run")
