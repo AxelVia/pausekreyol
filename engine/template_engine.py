@@ -67,6 +67,7 @@ SAS_MAPPING = {
     }
 }
 
+# Mapping Budget/Dossier subvention (PARAMETRES → propage vers tous les onglets)
 BUDGET_MAPPING = {
     "PARAMETRES": {
         "B4": "nom_projet",
@@ -81,6 +82,21 @@ BUDGET_MAPPING = {
         "B16": "email_contact",
         "B17": "telephone",
         "B18": "adresse_siege",
+    }
+}
+
+# Mapping Fiche prospect (FICHE PROJET — données asso pré-remplies)
+PROSPECT_MAPPING = {
+    "FICHE PROJET": {
+        "B5":  "nom_usuel",         # Association
+        "B6":  "siret",             # SIRET
+        "B7":  "licence_type1",     # Licence spectacle
+        "B8":  "adresse_siege",     # Siège social
+        "B9":  "president",         # Présidente
+        "B10": "email_contact",     # Contact prod
+        "B13": "nom_projet",        # Nom projet
+        "B14": "lieu_projet",       # Lieu
+        "B18": "date_debut_projet", # Date début
     }
 }
 
@@ -214,7 +230,12 @@ def create_client_folder(client_data: dict) -> Path:
 
 
 def create_project(client_slug: str, project_data: dict) -> Path:
-    """Crée un nouveau projet pour un client existant."""
+    """
+    Crée un nouveau projet pour un client existant.
+    Génère 2 fichiers Excel :
+    - FICHE_PROSPECT : collecte infos + artistes + budget simplifié + faisabilité
+    - DOSSIER_SUBVENTION : budget maître complet + salaires + ETPT + Mairie + partenaires
+    """
     matches = list(CLIENTS_DIR.glob(f"{client_slug}*"))
     if not matches:
         raise ValueError(f"Client '{client_slug}' non trouvé")
@@ -227,20 +248,41 @@ def create_project(client_slug: str, project_data: dict) -> Path:
 
     nom_projet = project_data.get("nom_projet", "PROJET")
     slug_projet = "".join(c if c.isalnum() or c in " _-" else "_" for c in nom_projet).replace(" ", "_")
-    budget_name = f"BUDGET_{slug_projet}.xlsx"
 
     projet_dir = client_dir / "projets" / slug_projet
     projet_dir.mkdir(parents=True, exist_ok=True)
 
-    # Génère le budget en mémoire
-    budget_src = TEMPLATES_DIR / "TEMPLATE_BUDGET_PROJET.xlsx"
-    wb = load_workbook(str(budget_src))
-    filled = _fill_workbook(wb, BUDGET_MAPPING, merged)
-    budget_bytes = _workbook_to_bytes(wb)
-    (projet_dir / budget_name).write_bytes(budget_bytes)
-    print(f"  ✅ Projet '{nom_projet}' : {budget_name} ({filled} cellules pré-remplies)")
+    fichiers_generes = []
+    drive_ids = {}
 
-    # Met à jour le meta
+    # ── 1. Fiche prospect (collecte + artistes + faisabilité) ──────
+    prospect_src = TEMPLATES_DIR / "TEMPLATE_FICHE_PROSPECT.xlsx"
+    if prospect_src.exists():
+        prospect_name = f"FICHE_PROSPECT_{slug_projet}.xlsx"
+        wb_prospect = load_workbook(str(prospect_src))
+        # Titre dynamique
+        ws_fp = wb_prospect["FICHE PROJET"]
+        ws_fp["A1"] = f"FICHE DE COLLECTE PROSPECT — {nom_projet}"
+        filled = _fill_workbook(wb_prospect, PROSPECT_MAPPING, merged)
+        prospect_bytes = _workbook_to_bytes(wb_prospect)
+        (projet_dir / prospect_name).write_bytes(prospect_bytes)
+        fichiers_generes.append(prospect_name)
+        print(f"  ✅ Fiche prospect : {prospect_name} ({filled} cellules pré-remplies)")
+    else:
+        prospect_bytes = None
+        prospect_name = None
+
+    # ── 2. Dossier subvention complet (budget maître + tous onglets) ─
+    subv_src = TEMPLATES_DIR / "TEMPLATE_DOSSIER_SUBVENTION.xlsx"
+    subv_name = f"DOSSIER_SUBVENTION_{slug_projet}.xlsx"
+    wb_subv = load_workbook(str(subv_src))
+    filled = _fill_workbook(wb_subv, BUDGET_MAPPING, merged)
+    subv_bytes = _workbook_to_bytes(wb_subv)
+    (projet_dir / subv_name).write_bytes(subv_bytes)
+    fichiers_generes.append(subv_name)
+    print(f"  ✅ Dossier subvention : {subv_name} ({filled} cellules pré-remplies)")
+
+    # ── 3. Met à jour le meta ───────────────────────────────────────
     projet_entry = {
         "nom": nom_projet,
         "slug": slug_projet,
@@ -252,43 +294,48 @@ def create_project(client_slug: str, project_data: dict) -> Path:
         },
         "lieu": project_data.get("lieu_projet"),
         "code_aap": project_data.get("code_aap"),
+        "fichiers": fichiers_generes,
     }
     meta["projets"].append(projet_entry)
 
-    # Historisation
+    # ── 4. Historisation ────────────────────────────────────────────
     try:
         from engine.historisation import append_event, add_timestamps
         meta = add_timestamps(meta, "creation_projet", {"nom_projet": nom_projet})
         append_event(client_dir, "creation_projet", {
             "nom_projet": nom_projet,
             "slug_projet": slug_projet,
-            "lieu": project_data.get("lieu_projet"),
-            "dates": projet_entry["dates"],
+            "fichiers": fichiers_generes,
         })
     except Exception as e:
         print(f"  ⚠️  Historisation ignorée : {e}")
 
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
-    # Upload Drive
+    # ── 5. Upload Drive ─────────────────────────────────────────────
     try:
-        from engine.drive_storage import drive_get_or_create_folder, drive_upload_bytes, drive_upload_json, drive_find_file
+        from engine.drive_storage import (
+            drive_get_or_create_folder, drive_upload_bytes,
+            drive_find_file, drive_update_json
+        )
         import os
         if os.getenv("ENV") == "production" and meta.get("drive_projets_folder_id"):
             projets_folder_id = meta["drive_projets_folder_id"]
             projet_drive_id = drive_get_or_create_folder(slug_projet, projets_folder_id)
-            drive_upload_bytes(budget_bytes, budget_name, projet_drive_id)
-            print(f"  ✅ Drive : {budget_name} uploadé")
 
-            # Mise à jour client.json sur Drive
+            if prospect_bytes and prospect_name:
+                drive_upload_bytes(prospect_bytes, prospect_name, projet_drive_id)
+                print(f"  ✅ Drive : {prospect_name}")
+
+            drive_upload_bytes(subv_bytes, subv_name, projet_drive_id)
+            print(f"  ✅ Drive : {subv_name}")
+
+            # Met à jour client.json sur Drive
             client_folder_id = meta.get("drive_folder_id")
             if client_folder_id:
                 meta_id = drive_find_file("client.json", client_folder_id)
                 if meta_id:
-                    from engine.drive_storage import drive_update_json
                     drive_update_json(meta_id, meta)
-                else:
-                    drive_upload_json(meta, "client.json", client_folder_id)
     except Exception as e:
         print(f"  ⚠️  Drive upload projet ignoré : {e}")
 

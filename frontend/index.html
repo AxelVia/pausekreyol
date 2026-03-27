@@ -812,22 +812,31 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 
           {/* Budgets projets */}
           {(detail.projets || []).map((p, i) => (
-            <a
-              key={i}
-              href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ textDecoration: 'none' }}
-            >
-              <div className="client-row" style={{ cursor: 'pointer' }}>
-                <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 12 }}>BDG</div>
-                <div className="client-info">
-                  <div className="client-name">Budget — {p.nom}</div>
-                  <div className="client-meta">Budget maître, salaires, ETPT, Mairie de Paris</div>
-                </div>
-                <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir dans Sheets →</span>
+            <div key={i}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '10px 0 6px', borderTop: i > 0 ? '1px solid var(--border)' : 'none' }}>
+                📋 {p.nom}
               </div>
-            </a>
+              <a href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <div className="client-row" style={{ cursor: 'pointer', paddingLeft: 8 }}>
+                  <div className="client-avatar" style={{ background: '#FEF3C7', color: '#92400E', borderRadius: 8, fontSize: 11 }}>PRO</div>
+                  <div className="client-info">
+                    <div className="client-name">Fiche prospect — {p.nom}</div>
+                    <div className="client-meta">Collecte infos · Artistes · Faisabilité</div>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--accent)' }}>Sheets →</span>
+                </div>
+              </a>
+              <a href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <div className="client-row" style={{ cursor: 'pointer', paddingLeft: 8 }}>
+                  <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 11 }}>SUB</div>
+                  <div className="client-info">
+                    <div className="client-name">Dossier subvention — {p.nom}</div>
+                    <div className="client-meta">Budget maître · Salaires · ETPT · Mairie · Partenaires</div>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--accent)' }}>Sheets →</span>
+                </div>
+              </a>
+            </div>
           ))}
 
           {!detail.drive_asso_id && !detail.drive_projets_folder_id && (
