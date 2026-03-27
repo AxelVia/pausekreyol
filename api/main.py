@@ -503,7 +503,171 @@ def add_subvention(slug: str, slug_projet: str, body: dict):
     return sub
 
 
-@app.patch("/clients/{slug}/projets/{slug_projet}/subventions/{sub_id}")
+@app.post("/clients/{slug}/projets/{slug_projet}/sync")
+def sync_projet(slug: str, slug_projet: str):
+    """
+    Analyse les Excel Association + Projet via Claude.
+    Détecte les incohérences et crée une tâche de validation.
+    """
+    client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)
+    cd = meta.get("client_data", {})
+
+    # ── Collecte les données de référence depuis client.json ──────────────
+    asso_data = {
+        "nom_officiel": cd.get("nom_officiel"),
+        "siret": cd.get("siret"),
+        "licence_type1": cd.get("licence_type1"),
+        "president": cd.get("president"),
+        "email_contact": cd.get("email_contact"),
+        "adresse_siege": cd.get("adresse_siege"),
+    }
+
+    projet_data = {
+        "nom": projet.get("nom"),
+        "lieu": projet.get("lieu"),
+        "dates": projet.get("dates", {}),
+        "code_aap": projet.get("code_aap"),
+        "subventions": projet.get("subventions", []),
+        "statut": projet.get("statut"),
+    }
+
+    # ── Essaie de lire les Excel depuis Drive ─────────────────────────────
+    excel_summaries = {}
+    drive_info = projet.get("drive", {})
+
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import _get_service
+            service = _get_service()
+
+            for label, file_id in [
+                ("asso", meta.get("drive_asso_id")),
+                ("subvention", drive_info.get("dossier_subvention_id")),
+                ("prospect", drive_info.get("fiche_prospect_id")),
+            ]:
+                if not file_id:
+                    continue
+                try:
+                    content = service.files().get_media(fileId=file_id).execute()
+                    import tempfile as tmp_mod
+                    with tmp_mod.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                        tmp.write(content)
+                        tmp_path = Path(tmp.name)
+                    from engine.excel_reader import read_client_summary
+                    if label == "asso":
+                        summary = read_client_summary(tmp_path.parent)
+                    else:
+                        from openpyxl import load_workbook
+                        wb = load_workbook(str(tmp_path), data_only=True)
+                        summary = {s: {} for s in wb.sheetnames}
+                        for sname in wb.sheetnames[:3]:
+                            ws = wb[sname]
+                            rows = []
+                            for row in ws.iter_rows(max_row=8, values_only=True):
+                                vals = [str(v) for v in row if v is not None]
+                                if vals:
+                                    rows.append(vals[:4])
+                            summary[sname] = rows
+                    excel_summaries[label] = summary
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception as e:
+                    logger.warning(f"Lecture Excel {label} : {e}")
+        except Exception as e:
+            logger.warning(f"Drive auth pour sync : {e}")
+
+    # ── Analyse Claude ────────────────────────────────────────────────────
+    import anthropic as anthropic_sdk
+    ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+
+    prompt = f"""Tu es l'assistant de Pause Kreyol, une administratrice de production culturelle.
+
+Analyse la cohérence entre les données de l'Association et du Projet.
+
+DONNÉES ASSOCIATION (référence) :
+{json.dumps(asso_data, ensure_ascii=False, indent=2)}
+
+DONNÉES PROJET :
+{json.dumps(projet_data, ensure_ascii=False, indent=2)}
+
+RÉSUMÉS EXCEL :
+{json.dumps(excel_summaries, ensure_ascii=False, indent=2) if excel_summaries else "Non disponibles (mode dev)"}
+
+Vérifie :
+1. Les infos de l'asso (SIRET, nom, contacts) sont-elles cohérentes dans les fichiers projet ?
+2. Le statut du projet est-il cohérent avec les subventions et les dates ?
+3. Des données importantes semblent-elles manquantes ou incohérentes ?
+4. Le bilan de l'asso devrait-il être mis à jour (si le projet est "réalisé") ?
+
+Réponds UNIQUEMENT en JSON valide :
+{{
+  "nb_ecarts": <nombre>,
+  "ecarts": [
+    {{
+      "description": "Description courte de l'écart",
+      "fichier": "Association ou Projet",
+      "champ": "nom du champ concerné",
+      "valeur_asso": "valeur dans l'asso",
+      "valeur_projet": "valeur dans le projet",
+      "action_suggeree": "ce qu'il faudrait faire"
+    }}
+  ],
+  "analyse_claude": "Résumé en 2-3 phrases de l'état de synchronisation",
+  "mise_a_jour_asso_requise": true/false,
+  "actions_prioritaires": ["action 1", "action 2"]
+}}"""
+
+    try:
+        response = ai.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+        analyse = json.loads(raw)
+    except Exception as e:
+        analyse = {
+            "nb_ecarts": 0,
+            "ecarts": [],
+            "analyse_claude": f"Analyse non disponible : {e}",
+            "mise_a_jour_asso_requise": False,
+            "actions_prioritaires": [],
+        }
+
+    # ── Crée une tâche si des écarts sont détectés ────────────────────────
+    task_id = None
+    if analyse.get("nb_ecarts", 0) > 0:
+        task = {
+            "id": f"task_sync_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "created_at": datetime.now().isoformat(),
+            "source": "Synchronisation",
+            "titre": f"Synchroniser les données — {projet.get('nom')} / {cd.get('nom_usuel') or cd.get('nom_officiel')}",
+            "priorite": "Attention",
+            "description": analyse.get("analyse_claude", ""),
+            "client_detecte": cd.get("nom_usuel") or cd.get("nom_officiel"),
+            "client_slug": slug,
+            "type": "sync_excel",
+            "actions_suggerees": analyse.get("actions_prioritaires", []),
+            "impacts_detectes": [e.get("champ") for e in analyse.get("ecarts", [])],
+            "changements": {e.get("champ"): {
+                "avant": e.get("valeur_projet"),
+                "après": e.get("valeur_asso"),
+                "action": e.get("action_suggeree"),
+            } for e in analyse.get("ecarts", []) if e.get("champ")},
+            "nouvelles_donnees": asso_data,
+            "done": False,
+        }
+        tasks_file = CLIENTS_DIR / "tasks.json"
+        tasks = json.loads(tasks_file.read_text()) if tasks_file.exists() else []
+        tasks.append(task)
+        tasks_file.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
+        task_id = task["id"]
+
+    return {
+        **analyse,
+        "task_id": task_id,
+    }
 def update_subvention(slug: str, slug_projet: str, sub_id: int, body: dict):
     """Met à jour une subvention (statut, montant accordé...)."""
     client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)

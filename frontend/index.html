@@ -933,6 +933,7 @@ function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsF
   const [showAddSub, setShowAddSub] = useState(false);
   const [statut, setStatut] = useState(projet.statut || 'en_construction');
   const [savingStatut, setSavingStatut] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const cd = clientMeta.client_data || {};
   const slug = clientMeta.slug;
@@ -1106,31 +1107,75 @@ function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsF
 
       {/* Fichiers Drive */}
       {tab === 'fichiers' && (
-        <div className="card">
-          <div className="card-header"><div className="card-title">Fichiers Google Drive</div></div>
-          {driveProjetsFolderId ? <>
-            <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-              <div className="client-row" style={{ cursor: 'pointer' }}>
-                <div className="client-avatar" style={{ background: '#FEF3C7', color: '#92400E', borderRadius: 8, fontSize: 11 }}>PRO</div>
-                <div className="client-info">
-                  <div className="client-name">Fiche prospect — {projet.nom}</div>
-                  <div className="client-meta">Collecte infos · Artistes · Faisabilité</div>
+        <div>
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card-header">
+              <div className="card-title">Fichiers Google Drive</div>
+              <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setSyncing(true)}>
+                🔄 Synchroniser
+              </button>
+            </div>
+
+            {projet.drive?.fiche_prospect_id ? (
+              <a href={`https://docs.google.com/spreadsheets/d/${projet.drive.fiche_prospect_id}/edit`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <div className="client-row" style={{ cursor: 'pointer' }}>
+                  <div className="client-avatar" style={{ background: '#FEF3C7', color: '#92400E', borderRadius: 8, fontSize: 11 }}>PRO</div>
+                  <div className="client-info">
+                    <div className="client-name">Fiche prospect — {projet.nom}</div>
+                    <div className="client-meta">Collecte infos · Artistes · Faisabilité</div>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir dans Sheets →</span>
                 </div>
-                <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir →</span>
-              </div>
-            </a>
-            <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-              <div className="client-row" style={{ cursor: 'pointer' }}>
-                <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 11 }}>SUB</div>
-                <div className="client-info">
-                  <div className="client-name">Dossier subvention — {projet.nom}</div>
-                  <div className="client-meta">Budget maître · Salaires · ETPT · Mairie · Partenaires</div>
+              </a>
+            ) : driveProjetsFolderId && (
+              <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <div className="client-row" style={{ cursor: 'pointer' }}>
+                  <div className="client-avatar" style={{ background: '#FEF3C7', color: '#92400E', borderRadius: 8, fontSize: 11 }}>PRO</div>
+                  <div className="client-info">
+                    <div className="client-name">Fiche prospect — {projet.nom}</div>
+                    <div className="client-meta">Collecte infos · Artistes · Faisabilité</div>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--accent)' }}>Dossier Drive →</span>
                 </div>
-                <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir →</span>
-              </div>
-            </a>
-          </> : (
-            <div className="empty"><div className="empty-text">Fichiers non synchronisés sur Drive.</div></div>
+              </a>
+            )}
+
+            {projet.drive?.dossier_subvention_id ? (
+              <a href={`https://docs.google.com/spreadsheets/d/${projet.drive.dossier_subvention_id}/edit`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <div className="client-row" style={{ cursor: 'pointer' }}>
+                  <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 11 }}>SUB</div>
+                  <div className="client-info">
+                    <div className="client-name">Dossier subvention — {projet.nom}</div>
+                    <div className="client-meta">Budget maître · Salaires · ETPT · Mairie · Partenaires</div>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir dans Sheets →</span>
+                </div>
+              </a>
+            ) : driveProjetsFolderId && (
+              <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <div className="client-row" style={{ cursor: 'pointer' }}>
+                  <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 11 }}>SUB</div>
+                  <div className="client-info">
+                    <div className="client-name">Dossier subvention — {projet.nom}</div>
+                    <div className="client-meta">Budget maître · Salaires · ETPT · Mairie · Partenaires</div>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--accent)' }}>Dossier Drive →</span>
+                </div>
+              </a>
+            )}
+
+            {!driveProjetsFolderId && !projet.drive && (
+              <div className="empty"><div className="empty-text">Fichiers non synchronisés sur Drive.</div></div>
+            )}
+          </div>
+
+          {syncing && (
+            <SyncModal
+              projet={projet}
+              clientMeta={clientMeta}
+              onClose={() => setSyncing(false)}
+              onTaskCreated={() => { setSyncing(false); if (onRefresh) onRefresh(); }}
+            />
           )}
         </div>
       )}
@@ -1150,6 +1195,119 @@ function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsF
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Modal synchronisation Excel ───────────────────────────────────────────────
+
+function SyncModal({ projet, clientMeta, onClose, onTaskCreated }) {
+  const [step, setStep] = useState('confirm'); // confirm | loading | result
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  const slug = clientMeta.slug;
+
+  async function runSync() {
+    setStep('loading');
+    try {
+      const res = await fetch(`${API}/clients/${slug}/projets/${projet.slug}/sync`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setResult(data);
+      setStep('result');
+    } catch (e) {
+      setError(e.message);
+      setStep('confirm');
+    }
+  }
+
+  async function valider() {
+    try {
+      await fetch(`${API}/taches/${result.task_id}/valider`, { method: 'POST' });
+      onTaskCreated();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">🔄 Synchroniser les Excel</div>
+
+        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
+
+        {step === 'confirm' && (
+          <>
+            <div className="modal-sub">
+              Claude va analyser les deux fichiers Excel du projet et l'Excel Association, vérifier la cohérence des données, et proposer les mises à jour nécessaires.
+            </div>
+            <div style={{ background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', padding: '12px 14px', fontSize: 13, marginBottom: 16 }}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>Ce qui sera vérifié :</div>
+              <div style={{ color: 'var(--text2)', lineHeight: 1.8 }}>
+                • Les infos de l'Association (SIRET, nom, contacts) sont-elles à jour dans le Dossier Subvention ?<br/>
+                • Les taux de charges correspondent-ils aux paramètres actuels ?<br/>
+                • Le bilan de l'Association reflète-t-il les données du projet ?<br/>
+                • Des informations manquantes ou incohérentes ?
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={onClose}>Annuler</button>
+              <button className="btn btn-primary" onClick={runSync}>Lancer l'analyse →</button>
+            </div>
+          </>
+        )}
+
+        {step === 'loading' && (
+          <div className="empty" style={{ padding: '40px 0' }}>
+            <div style={{ fontSize: 24, marginBottom: 12 }}>⏳</div>
+            <div style={{ fontSize: 14, fontWeight: 500 }}>Claude analyse les fichiers…</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Lecture des Excel Association + Projet en cours</div>
+          </div>
+        )}
+
+        {step === 'result' && result && (
+          <>
+            <div style={{ background: result.nb_ecarts > 0 ? 'var(--warn-light)' : 'var(--accent-light)', borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>
+              {result.nb_ecarts > 0
+                ? <><strong>{result.nb_ecarts} écart(s) détecté(s)</strong> — une tâche de validation a été créée</>
+                : <><strong>✅ Tout est synchronisé</strong> — aucune modification nécessaire</>
+              }
+            </div>
+
+            {result.ecarts && result.ecarts.length > 0 && (
+              <div style={{ maxHeight: 250, overflowY: 'auto', marginBottom: 14 }}>
+                {result.ecarts.map((e, i) => (
+                  <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                    <div style={{ fontWeight: 500 }}>{e.description}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>{e.fichier} · {e.champ}</div>
+                    {e.valeur_asso && <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 2 }}>Association : {e.valeur_asso} → Projet : {e.valeur_projet}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {result.analyse_claude && (
+              <div style={{ background: 'var(--surface2)', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: 'var(--text2)', marginBottom: 14 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Analyse Claude :</div>
+                {result.analyse_claude}
+              </div>
+            )}
+
+            <div className="modal-footer">
+              <button className="btn" onClick={onClose}>Fermer</button>
+              {result.task_id && (
+                <button className="btn btn-primary" onClick={valider}>
+                  ✓ Valider et appliquer →
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

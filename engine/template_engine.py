@@ -323,12 +323,26 @@ def create_project(client_slug: str, project_data: dict) -> Path:
             projets_folder_id = meta["drive_projets_folder_id"]
             projet_drive_id = drive_get_or_create_folder(slug_projet, projets_folder_id)
 
-            if prospect_bytes and prospect_name:
-                drive_upload_bytes(prospect_bytes, prospect_name, projet_drive_id)
-                print(f"  ✅ Drive : {prospect_name}")
+            # Stocke les IDs individuels des fichiers
+            drive_fichiers = {}
 
-            drive_upload_bytes(subv_bytes, subv_name, projet_drive_id)
-            print(f"  ✅ Drive : {subv_name}")
+            if prospect_bytes and prospect_name:
+                fid = drive_upload_bytes(prospect_bytes, prospect_name, projet_drive_id)
+                drive_fichiers["fiche_prospect_id"] = fid
+                drive_fichiers["fiche_prospect_name"] = prospect_name
+                print(f"  ✅ Drive : {prospect_name} (id={fid})")
+
+            fid = drive_upload_bytes(subv_bytes, subv_name, projet_drive_id)
+            drive_fichiers["dossier_subvention_id"] = fid
+            drive_fichiers["dossier_subvention_name"] = subv_name
+            drive_fichiers["projet_folder_id"] = projet_drive_id
+            print(f"  ✅ Drive : {subv_name} (id={fid})")
+
+            # Enrichit l'entrée projet avec les IDs Drive
+            for p in meta["projets"]:
+                if p["slug"] == slug_projet:
+                    p["drive"] = drive_fichiers
+                    break
 
             # Met à jour client.json sur Drive
             client_folder_id = meta.get("drive_folder_id")
@@ -336,6 +350,7 @@ def create_project(client_slug: str, project_data: dict) -> Path:
                 meta_id = drive_find_file("client.json", client_folder_id)
                 if meta_id:
                     drive_update_json(meta_id, meta)
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
     except Exception as e:
         print(f"  ⚠️  Drive upload projet ignoré : {e}")
 
