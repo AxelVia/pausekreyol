@@ -120,6 +120,17 @@ def drive_list_folders(parent_id: str) -> list:
     return results.get("files", [])
 
 
+def drive_upload_bytes(content: bytes, name: str, parent_id: str) -> str:
+    """Upload des bytes directement vers Drive sans passer par le filesystem."""
+    from googleapiclient.http import MediaIoBaseUpload
+    service = _get_service()
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    meta_body = {"name": name, "parents": [parent_id]}
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime)
+    f = service.files().create(body=meta_body, media_body=media, fields="id").execute()
+    return f["id"]
+
+
 # ── Opérations haut niveau ────────────────────────────────────────────────────
 
 def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
@@ -132,24 +143,26 @@ def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
 
     client_folder_id = drive_get_or_create_folder(slug, root_id)
     meta["drive_folder_id"] = client_folder_id
-    logger.info(f"Dossier Drive client : {client_folder_id}")
-
-    # Debug — liste les fichiers dans client_dir
-    logger.info(f"client_dir = {client_dir}")
-    logger.info(f"client_dir existe = {client_dir.exists()}")
-    xlsx_files = list(client_dir.glob("*.xlsx"))
-    logger.info(f"Excel trouvés dans client_dir : {xlsx_files}")
+    logger.info(f"Dossier Drive : {client_folder_id} | client_dir={client_dir} | exists={client_dir.exists()}")
 
     # Upload tous les Excel du dossier client
-    for xlsx in client_dir.glob("*.xlsx"):
+    xlsx_files = list(client_dir.glob("*.xlsx"))
+    logger.info(f"Excel trouvés localement : {[f.name for f in xlsx_files]}")
+
+    for xlsx in xlsx_files:
         existing_id = drive_find_file(xlsx.name, client_folder_id)
+        content = xlsx.read_bytes()
         if existing_id:
-            drive_update_file(existing_id, xlsx)
+            from googleapiclient.http import MediaIoBaseUpload
+            service = _get_service()
+            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime)
+            service.files().update(fileId=existing_id, media_body=media).execute()
             meta["drive_asso_id"] = existing_id
         else:
-            fid = drive_upload_file(xlsx, xlsx.name, client_folder_id)
+            fid = drive_upload_bytes(content, xlsx.name, client_folder_id)
             meta["drive_asso_id"] = fid
-        logger.info(f"Excel uploadé : {xlsx.name}")
+        logger.info(f"✅ Excel uploadé : {xlsx.name}")
 
     # Dossier projets
     projets_folder_id = drive_get_or_create_folder("projets", client_folder_id)
@@ -159,11 +172,16 @@ def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
     if projets_local.exists():
         for xlsx in projets_local.glob("*.xlsx"):
             existing_id = drive_find_file(xlsx.name, projets_folder_id)
+            content = xlsx.read_bytes()
             if existing_id:
-                drive_update_file(existing_id, xlsx)
+                from googleapiclient.http import MediaIoBaseUpload
+                service = _get_service()
+                mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime)
+                service.files().update(fileId=existing_id, media_body=media).execute()
             else:
-                drive_upload_file(xlsx, xlsx.name, projets_folder_id)
-            logger.info(f"Budget uploadé : {xlsx.name}")
+                drive_upload_bytes(content, xlsx.name, projets_folder_id)
+            logger.info(f"✅ Budget uploadé : {xlsx.name}")
 
     # Upload client.json
     meta_file_id = drive_find_file("client.json", client_folder_id)
@@ -171,7 +189,7 @@ def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
         drive_update_json(meta_file_id, meta)
     else:
         drive_upload_json(meta, "client.json", client_folder_id)
-    logger.info("client.json synchronisé")
+    logger.info("✅ client.json synchronisé")
 
     return meta
 
