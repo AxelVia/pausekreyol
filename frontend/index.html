@@ -790,20 +790,9 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
         />
       )}
 
-      {/* Alertes placeholder */}
+      {/* Alertes */}
       {tab === 'alertes' && (
-        <div className="card">
-          <div className="empty">
-            <div className="empty-text">Les alertes se calculent depuis l'Excel Association. Ouvrez le fichier sur Google Drive pour les renseigner.</div>
-          </div>
-          {detail.drive_folder_id && (
-            <div style={{ textAlign: 'center', marginTop: 12 }}>
-              <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
-                Ouvrir le dossier Drive →
-              </a>
-            </div>
-          )}
-        </div>
+        <AlertesClientTab slug={slug} driveFolderId={detail.drive_folder_id} />
       )}
 
       {/* Documents */}
@@ -929,6 +918,46 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 }
 
 // ── Vue détail projet ─────────────────────────────────────────────────────────
+// ── Alertes onglet client (fetch réel) ───────────────────────────────────────
+
+function AlertesClientTab({ slug, driveFolderId }) {
+  const [alertes, setAlertes] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API}/clients/${slug}/alertes`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { setAlertes(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch(() => { setAlertes([]); setLoading(false); });
+  }, [slug]);
+
+  if (loading) return <div className="card"><div className="empty"><div className="empty-text">Chargement des alertes…</div></div></div>;
+
+  return (
+    <div className="card">
+      {(alertes.length === 0) ? (
+        <div className="empty">
+          <div className="empty-text">Aucune alerte détectée. Renseignez les dates dans l'Excel Association sur Drive pour les activer.</div>
+          {driveFolderId && (
+            <div style={{ marginTop: 8 }}>
+              <a href={`https://drive.google.com/drive/folders/${driveFolderId}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>Ouvrir sur Drive →</a>
+            </div>
+          )}
+        </div>
+      ) : alertes.map((a, i) => (
+        <div key={i} className="alert-row">
+          <AlertDot statut={a.statut} />
+          <div style={{ flex: 1 }}>
+            <div className="alert-label">{a.organisme}</div>
+            <div className="alert-sub">{a.date_expiration ? `Échéance : ${new Date(a.date_expiration).toLocaleDateString('fr-FR')}` : ''}</div>
+          </div>
+          <Badge statut={a.statut} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 
 function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsFolderId }) {
   const [tab, setTab] = useState('infos');
@@ -1401,8 +1430,65 @@ function ClientsView({ clients, onNewClient, onOpenClient }) {
 
 // ── Tâches view ───────────────────────────────────────────────────────────────
 
+function NewTaskModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({ titre: '', priorite: 'Normal', date: '', description: '' });
+  const [loading, setLoading] = useState(false);
+  function set(k, v) { setForm(p => ({ ...p, [k]: v })); }
+
+  async function submit() {
+    if (!form.titre) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/taches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const task = await res.json();
+      onCreated(task);
+      onClose();
+    } catch(e) { console.error(e); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">Nouvelle tâche</div>
+        <div className="form-group">
+          <label className="form-label">Titre *</label>
+          <input className="form-input" value={form.titre} onChange={e => set('titre', e.target.value)} placeholder="Ex : Renouveler licence, préparer dossier DRAC..." autoFocus />
+        </div>
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Priorité</label>
+            <select className="form-input" value={form.priorite} onChange={e => set('priorite', e.target.value)}>
+              {['URGENT', 'Attention', 'Normal'].map(p => <option key={p}>{p}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Deadline</label>
+            <input className="form-input" type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Description</label>
+          <input className="form-input" value={form.description} onChange={e => set('description', e.target.value)} placeholder="Détails optionnels..." />
+        </div>
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={submit} disabled={!form.titre || loading}>
+            {loading ? 'Création...' : 'Créer →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TachesView({ taches, setTaches }) {
   const [filter, setFilter] = useState('all');
+  const [showNew, setShowNew] = useState(false);
 
   const filtered = taches.filter(t => {
     if (filter === 'pending') return !t.done;
@@ -1422,11 +1508,16 @@ function TachesView({ taches, setTaches }) {
     }
   }
 
+  function handleCreated(task) {
+    setTaches(prev => [task, ...prev]);
+  }
+
   return (
     <div>
+      {showNew && <NewTaskModal onClose={() => setShowNew(false)} onCreated={handleCreated} />}
       <div className="section-header">
         <div className="section-title">Tâches</div>
-        <button className="btn btn-primary">+ Nouvelle tâche</button>
+        <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ Nouvelle tâche</button>
       </div>
       <div className="tabs">
         {[['all', 'Toutes'], ['pending', 'En cours'], ['done', 'Terminées']].map(([k, l]) => (
@@ -1434,6 +1525,7 @@ function TachesView({ taches, setTaches }) {
         ))}
       </div>
       <div className="card">
+        {filtered.length === 0 && <div className="empty"><div className="empty-text">Aucune tâche.</div></div>}
         {filtered.map(t => (
           <div key={t.id} className="task-row">
             <div className={`task-check ${t.done ? 'done' : ''}`} onClick={() => toggle(t.id)}>
@@ -1441,7 +1533,7 @@ function TachesView({ taches, setTaches }) {
             </div>
             <div className="task-body" style={{ opacity: t.done ? 0.45 : 1 }}>
               <div className="task-title" style={{ textDecoration: t.done ? 'line-through' : 'none' }}>{t.titre}</div>
-              <div className="task-meta">{t.client} · Source : {t.source} · Deadline : {t.date}</div>
+              <div className="task-meta">{t.client_detecte || t.client} · Source : {t.source} · Deadline : {t.date}</div>
             </div>
             <Badge statut={t.done ? 'OK' : t.priorite} />
           </div>
@@ -1453,26 +1545,49 @@ function TachesView({ taches, setTaches }) {
 
 // ── Subventions pipeline view ─────────────────────────────────────────────────
 
-function SubventionsView() {
+function SubventionsView({ clients }) {
   const COLS = ['À préparer', 'Déposée', 'En instruction', 'Accordée', 'Versée'];
+
+  // Aggrège toutes les subventions de tous les projets de tous les clients
+  const allSubs = [];
+  (clients || []).forEach(client => {
+    (client.projets || []).forEach(projet => {
+      (projet.subventions || []).forEach(sub => {
+        allSubs.push({ ...sub, _client: client.nom || client.client_data?.nom_usuel, _projet: projet.nom });
+      });
+    });
+  });
+
+  // Groupe par statut
+  const byCol = {};
+  COLS.forEach(c => { byCol[c] = allSubs.filter(s => s.statut === c); });
+  const totalAccorde = allSubs.filter(s => s.statut === 'Accordée' || s.statut === 'Versée')
+    .reduce((sum, s) => sum + (Number(s.montant_accorde) || Number(s.montant_demande) || 0), 0);
+  const totalDemande = allSubs.reduce((sum, s) => sum + (Number(s.montant_demande) || 0), 0);
+
   return (
     <div>
       <div className="section-header">
         <div className="section-title">Pipeline subventions</div>
-        <button className="btn btn-primary">+ Ajouter</button>
+        <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+          {allSubs.length} subvention(s) · {totalDemande.toLocaleString('fr-FR')} € demandés · <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{totalAccorde.toLocaleString('fr-FR')} € obtenus</span>
+        </div>
       </div>
       <div className="pipeline">
         {COLS.map(col => (
           <div key={col} className="pipeline-col">
-            <div className="pipeline-header">{col} <span style={{ opacity: 0.5 }}>(0)</span></div>
-            <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text3)', border: '1px dashed var(--border)', borderRadius: 6, textAlign: 'center' }}>
-              Aucune
-            </div>
+            <div className="pipeline-header">{col} <span style={{ opacity: 0.5 }}>({byCol[col].length})</span></div>
+            {byCol[col].length === 0 ? (
+              <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text3)', border: '1px dashed var(--border)', borderRadius: 6, textAlign: 'center' }}>Aucune</div>
+            ) : byCol[col].map((s, i) => (
+              <div key={i} className="pipeline-card">
+                <div className="pipeline-card-name">{s.financeur}</div>
+                <div className="pipeline-card-sub">{s._client} · {Number(s.montant_demande || 0).toLocaleString('fr-FR')} €</div>
+                {s._projet && <div className="pipeline-card-sub" style={{ fontStyle: 'italic' }}>{s._projet}</div>}
+              </div>
+            ))}
           </div>
         ))}
-      </div>
-      <div style={{ marginTop: 20, padding: 16, background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>
-        Le suivi des subventions sera connecté aux dossiers clients dans une prochaine version.
       </div>
     </div>
   );
@@ -1750,7 +1865,7 @@ function App() {
           {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
           {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
-          {view === 'subventions' && <SubventionsView />}
+          {view === 'subventions' && <SubventionsView clients={data?.clients || []} />}
           {view === 'alertes' && <AlertesView data={data} />}
         </main>
       </div>

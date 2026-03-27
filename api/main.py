@@ -85,6 +85,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Erreur restauration Drive : {e}")
 
+    # Restaure tasks.json depuis Drive au démarrage
+    if env == "production" and os.getenv("GOOGLE_DRIVE_FOLDER_ID"):
+        try:
+            from engine.drive_storage import load_tasks_from_drive
+            tasks_from_drive = load_tasks_from_drive()
+            if tasks_from_drive:
+                TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                TASKS_FILE.write_text(json.dumps(tasks_from_drive, ensure_ascii=False, indent=2))
+                logger.info(f"{len(tasks_from_drive)} tâche(s) restaurée(s) depuis Drive")
+        except Exception as e:
+            logger.error(f"Erreur restauration tasks.json depuis Drive : {e}")
+
     scheduler = None
     if env == "production" and gmail_token:
         scheduler = BackgroundScheduler()
@@ -102,7 +114,7 @@ app = FastAPI(title="PauseKreyol API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[os.getenv("FRONTEND_URL", "*")],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -416,8 +428,41 @@ def update_tache(task_id: str, body: dict):
         if t["id"] == task_id:
             t.update(body)
             TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
+            try:
+                from engine.drive_storage import save_tasks_to_drive
+                save_tasks_to_drive(tasks)
+            except Exception as e:
+                logger.warning(f"Drive sync tâche update : {e}")
             return t
     raise HTTPException(status_code=404, detail="Tâche non trouvée")
+
+
+@app.post("/taches", status_code=201)
+def create_tache(body: dict):
+    """Crée une tâche manuellement."""
+    task = {
+        "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "created_at": datetime.now().isoformat(),
+        "source": "Manuel",
+        "titre": body.get("titre", "Nouvelle tâche"),
+        "priorite": body.get("priorite", "Normal"),
+        "description": body.get("description", ""),
+        "client_detecte": body.get("client_detecte"),
+        "client_slug": body.get("client_slug"),
+        "type": "manuel",
+        "date": body.get("date"),
+        "done": False,
+    }
+    TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+    tasks.append(task)
+    TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
+    try:
+        from engine.drive_storage import save_tasks_to_drive
+        save_tasks_to_drive(tasks)
+    except Exception as e:
+        logger.warning(f"Drive sync nouvelle tâche : {e}")
+    return task
 
 
 @app.post("/agent/run")
