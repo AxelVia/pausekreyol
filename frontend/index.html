@@ -553,8 +553,8 @@ function DashboardView({ data, taches, onNewClient, setView }) {
         </div>
         <div className="metric-card accent-info" onClick={() => setView('subventions')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Subventions pipeline</div>
-          <div className="metric-value">—</div>
-          <div className="metric-sub">à configurer</div>
+          <div className="metric-value">{data?.nb_subventions || 0}</div>
+          <div className="metric-sub">toutes associations</div>
         </div>
       </div>
 
@@ -644,6 +644,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
   const [showNewProject, setShowNewProject] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [selectedProjet, setSelectedProjet] = useState(null);
 
   function load() {
     setLoading(true);
@@ -746,7 +747,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
       )}
 
       {/* Projets */}
-      {tab === 'projets' && (
+      {tab === 'projets' && !selectedProjet && (
         <div className="card">
           {projets.length === 0 && (
             <div className="empty">
@@ -755,16 +756,38 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
             </div>
           )}
           {projets.map((p, i) => (
-            <div key={i} className="client-row">
+            <div key={i} className="client-row" onClick={() => setSelectedProjet(p)} style={{ cursor: 'pointer' }}>
               <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8 }}>P{i + 1}</div>
               <div className="client-info">
                 <div className="client-name">{p.nom}</div>
-                <div className="client-meta">Créé le {p.created_at?.slice(0, 10)}</div>
+                <div className="client-meta">
+                  Créé le {p.created_at?.slice(0, 10)}
+                  {p.lieu && ` · ${p.lieu}`}
+                  {p.dates?.debut && ` · ${p.dates.debut}`}
+                </div>
               </div>
-              <Badge statut={p.statut === 'en_construction' ? 'Attention' : 'OK'} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Badge statut={
+                  p.statut === 'realise' ? 'OK' :
+                  p.statut === 'depose' ? 'Attention' :
+                  p.statut === 'en_construction' ? 'Normal' : 'Normal'
+                } />
+                <span style={{ fontSize: 18, color: 'var(--text3)' }}>›</span>
+              </div>
             </div>
           ))}
         </div>
+      )}
+
+      {/* Détail projet */}
+      {tab === 'projets' && selectedProjet && (
+        <ProjetDetailView
+          projet={selectedProjet}
+          clientMeta={detail}
+          onBack={() => setSelectedProjet(null)}
+          onRefresh={load}
+          driveProjetsFolderId={detail.drive_projets_folder_id}
+        />
       )}
 
       {/* Alertes placeholder */}
@@ -898,6 +921,286 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
           })()}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Vue détail projet ─────────────────────────────────────────────────────────
+
+function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsFolderId }) {
+  const [tab, setTab] = useState('infos');
+  const [subventions, setSubventions] = useState(projet.subventions || []);
+  const [showAddSub, setShowAddSub] = useState(false);
+  const [statut, setStatut] = useState(projet.statut || 'en_construction');
+  const [savingStatut, setSavingStatut] = useState(false);
+
+  const cd = clientMeta.client_data || {};
+  const slug = clientMeta.slug;
+
+  const STATUTS = [
+    { val: 'en_construction', label: 'En construction', color: 'badge-gray' },
+    { val: 'en_cours', label: 'En cours', color: 'badge-info' },
+    { val: 'depose', label: 'Déposé', color: 'badge-warn' },
+    { val: 'realise', label: 'Réalisé', color: 'badge-green' },
+    { val: 'archive', label: 'Archivé', color: 'badge-gray' },
+  ];
+
+  const SUB_STATUTS = ['À préparer', 'Déposée', 'En instruction', 'Accordée', 'Refusée', 'Versée'];
+
+  async function saveStatut(newStatut) {
+    setSavingStatut(true);
+    try {
+      await fetch(`${API}/clients/${slug}/projets/${projet.slug}/statut`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ statut: newStatut }),
+      });
+      setStatut(newStatut);
+      if (onRefresh) onRefresh();
+    } catch (e) { console.error(e); }
+    finally { setSavingStatut(false); }
+  }
+
+  async function addSubvention(sub) {
+    const updated = [...subventions, { ...sub, id: Date.now() }];
+    setSubventions(updated);
+    setShowAddSub(false);
+    try {
+      await fetch(`${API}/clients/${slug}/projets/${projet.slug}/subventions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub),
+      });
+      if (onRefresh) onRefresh();
+    } catch (e) { console.error(e); }
+  }
+
+  async function updateSubStatut(id, newStatut) {
+    setSubventions(prev => prev.map(s => s.id === id ? { ...s, statut: newStatut } : s));
+    try {
+      await fetch(`${API}/clients/${slug}/projets/${projet.slug}/subventions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ statut: newStatut }),
+      });
+    } catch (e) { console.error(e); }
+  }
+
+  const totalDemande = subventions.reduce((s, x) => s + (Number(x.montant_demande) || 0), 0);
+  const totalAccorde = subventions.reduce((s, x) => s + (Number(x.montant_accorde) || 0), 0);
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <button className="btn" onClick={onBack} style={{ padding: '6px 10px' }}>← Projets</button>
+        <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, width: 40, height: 40 }}>
+          {projet.nom?.slice(0, 2).toUpperCase()}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>{projet.nom}</div>
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+            {cd.nom_usuel || cd.nom_officiel}
+            {projet.lieu && ` · ${projet.lieu}`}
+            {projet.dates?.debut && ` · ${projet.dates.debut}`}
+          </div>
+        </div>
+        {/* Sélecteur statut */}
+        <select
+          value={statut}
+          onChange={e => saveStatut(e.target.value)}
+          disabled={savingStatut}
+          style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border2)', fontSize: 12, background: 'var(--surface)', cursor: 'pointer' }}
+        >
+          {STATUTS.map(s => <option key={s.val} value={s.val}>{s.label}</option>)}
+        </select>
+      </div>
+
+      <div className="tabs">
+        {[['infos', 'Informations'], ['subventions', `Subventions (${subventions.length})`], ['fichiers', 'Fichiers Drive'], ['artistes', 'Artistes']].map(([k, l]) => (
+          <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* Infos */}
+      {tab === 'infos' && (
+        <div className="grid-2">
+          <div className="card">
+            <div className="card-header"><div className="card-title">Détails du projet</div></div>
+            {[
+              ['Nom', projet.nom],
+              ['Lieu', projet.lieu],
+              ['Date début', projet.dates?.debut],
+              ['Date fin', projet.dates?.fin],
+              ['Code AAP', projet.code_aap],
+              ['Statut', STATUTS.find(s => s.val === statut)?.label],
+              ['Créé le', projet.created_at?.slice(0, 10)],
+            ].filter(([, v]) => v).map(([label, val], i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <span style={{ color: 'var(--text3)' }}>{label}</span>
+                <span style={{ fontWeight: 500 }}>{val}</span>
+              </div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="card-header"><div className="card-title">Synthèse financière</div></div>
+            <div className="metric-card" style={{ marginBottom: 10 }}>
+              <div className="metric-label">Total demandé</div>
+              <div className="metric-value" style={{ fontSize: 20 }}>{totalDemande.toLocaleString('fr-FR')} €</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-label">Total accordé</div>
+              <div className="metric-value" style={{ fontSize: 20, color: 'var(--accent)' }}>{totalAccorde.toLocaleString('fr-FR')} €</div>
+            </div>
+            {totalDemande > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>Taux d'obtention</div>
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: `${Math.min(100, totalAccorde / totalDemande * 100)}%`, background: 'var(--accent-mid)' }} />
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>{Math.round(totalAccorde / totalDemande * 100)}%</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Subventions */}
+      {tab === 'subventions' && (
+        <div>
+          <div className="section-header">
+            <div className="section-title" style={{ fontSize: 14 }}>Demandes de subvention</div>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowAddSub(true)}>+ Ajouter</button>
+          </div>
+          <div className="card">
+            {subventions.length === 0 && (
+              <div className="empty"><div className="empty-text">Aucune demande. Ajoutez les financeurs sollicités.</div></div>
+            )}
+            {subventions.map((s, i) => (
+              <div key={i} className="client-row">
+                <div className="client-avatar" style={{ background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 8, fontSize: 11 }}>
+                  {s.financeur?.slice(0, 3).toUpperCase()}
+                </div>
+                <div className="client-info">
+                  <div className="client-name">{s.financeur}</div>
+                  <div className="client-meta">
+                    Demandé : {Number(s.montant_demande || 0).toLocaleString('fr-FR')} €
+                    {s.montant_accorde && ` · Accordé : ${Number(s.montant_accorde).toLocaleString('fr-FR')} €`}
+                    {s.deadline && ` · Deadline : ${s.deadline}`}
+                  </div>
+                </div>
+                <select
+                  value={s.statut || 'À préparer'}
+                  onChange={e => updateSubStatut(s.id, e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border2)', fontSize: 11, background: 'var(--surface)' }}
+                >
+                  {SUB_STATUTS.map(st => <option key={st} value={st}>{st}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          {showAddSub && <AddSubventionModal onClose={() => setShowAddSub(false)} onAdd={addSubvention} />}
+        </div>
+      )}
+
+      {/* Fichiers Drive */}
+      {tab === 'fichiers' && (
+        <div className="card">
+          <div className="card-header"><div className="card-title">Fichiers Google Drive</div></div>
+          {driveProjetsFolderId ? <>
+            <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+              <div className="client-row" style={{ cursor: 'pointer' }}>
+                <div className="client-avatar" style={{ background: '#FEF3C7', color: '#92400E', borderRadius: 8, fontSize: 11 }}>PRO</div>
+                <div className="client-info">
+                  <div className="client-name">Fiche prospect — {projet.nom}</div>
+                  <div className="client-meta">Collecte infos · Artistes · Faisabilité</div>
+                </div>
+                <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir →</span>
+              </div>
+            </a>
+            <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+              <div className="client-row" style={{ cursor: 'pointer' }}>
+                <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 11 }}>SUB</div>
+                <div className="client-info">
+                  <div className="client-name">Dossier subvention — {projet.nom}</div>
+                  <div className="client-meta">Budget maître · Salaires · ETPT · Mairie · Partenaires</div>
+                </div>
+                <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir →</span>
+              </div>
+            </a>
+          </> : (
+            <div className="empty"><div className="empty-text">Fichiers non synchronisés sur Drive.</div></div>
+          )}
+        </div>
+      )}
+
+      {/* Artistes */}
+      {tab === 'artistes' && (
+        <div className="card">
+          <div className="empty">
+            <div className="empty-text">La liste des artistes est dans la Fiche Prospect sur Drive.</div>
+            {driveProjetsFolderId && (
+              <div style={{ marginTop: 8 }}>
+                <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
+                  Ouvrir sur Drive →
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Modal ajout subvention ────────────────────────────────────────────────────
+
+function AddSubventionModal({ onClose, onAdd }) {
+  const [form, setForm] = useState({ financeur: '', montant_demande: '', montant_accorde: '', deadline: '', statut: 'À préparer', notes: '' });
+  function set(k, v) { setForm(p => ({ ...p, [k]: v })); }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">Nouvelle demande de subvention</div>
+        <div className="form-group">
+          <label className="form-label">Financeur *</label>
+          <input className="form-input" value={form.financeur} onChange={e => set('financeur', e.target.value)} placeholder="Mairie de Paris, DRAC IDF, CNM..." autoFocus />
+        </div>
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Montant demandé (€)</label>
+            <input className="form-input" type="number" value={form.montant_demande} onChange={e => set('montant_demande', e.target.value)} placeholder="10000" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Montant accordé (€)</label>
+            <input className="form-input" type="number" value={form.montant_accorde} onChange={e => set('montant_accorde', e.target.value)} placeholder="0" />
+          </div>
+        </div>
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Deadline dépôt</label>
+            <input className="form-input" type="date" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Statut</label>
+            <select className="form-input" value={form.statut} onChange={e => set('statut', e.target.value)}>
+              {['À préparer','Déposée','En instruction','Accordée','Refusée','Versée'].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Notes</label>
+          <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Conditions, contacts, remarques..." />
+        </div>
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={() => form.financeur && onAdd(form)} disabled={!form.financeur}>
+            Ajouter →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

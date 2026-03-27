@@ -290,34 +290,68 @@ def post_project(slug: str, data: ProjectCreate):
 
 @app.get("/dashboard")
 def get_dashboard():
-    """
-    Vue globale pour le dashboard principal :
-    - liste des clients actifs
-    - toutes les alertes toutes associations confondues
-    """
     clients = list_clients()
     all_alerts = []
 
     for client in clients:
         slug = client["slug"]
         matches = list(CLIENTS_DIR.glob(f"{slug}*"))
-        if matches:
-            try:
-                alerts = read_alerts(matches[0])
-                for a in alerts:
-                    a["client"] = client["nom"]
-                    a["slug"] = slug
-                all_alerts.extend(alerts)
-            except Exception:
-                pass
+        if not matches:
+            continue
+        client_dir = matches[0]
+        try:
+            # Essaie de lire l'Excel local
+            alerts = read_alerts(client_dir)
+            # Si vide, essaie de télécharger depuis Drive
+            if not alerts:
+                meta_path = client_dir / "client.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    drive_asso_id = meta.get("drive_asso_id")
+                    if drive_asso_id and os.getenv("ENV") == "production":
+                        try:
+                            from engine.drive_storage import _get_service
+                            import tempfile as tmpmod
+                            service = _get_service()
+                            content = service.files().get_media(fileId=drive_asso_id).execute()
+                            with tmpmod.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                                tmp.write(content)
+                                tmp_path = Path(tmp.name)
+                            # Sauvegarde local pour la prochaine fois
+                            asso_files = list(client_dir.glob("STRUCTURE_*.xlsx"))
+                            if not asso_files:
+                                import shutil
+                                shutil.copy(tmp_path, client_dir / f"STRUCTURE_{slug}.xlsx")
+                            alerts = read_alerts(client_dir)
+                            Path(tmp_path).unlink(missing_ok=True)
+                        except Exception as e:
+                            logger.warning(f"Drive download pour alertes {slug} : {e}")
 
-    # Trier par urgence : EXPIRÉ > URGENT > Attention > OK
+            for a in alerts:
+                a["client"] = client["nom"]
+                a["slug"] = slug
+            all_alerts.extend(alerts)
+        except Exception:
+            pass
+
     priority = {"EXPIRÉ": 0, "URGENT": 1, "Attention": 2, "OK": 3, "—": 4}
     all_alerts.sort(key=lambda x: priority.get(x.get("statut", "—"), 4))
+
+    # Compte les subventions dans le pipeline
+    nb_subventions = 0
+    for client in clients:
+        matches = list(CLIENTS_DIR.glob(f"{client['slug']}*"))
+        if matches:
+            meta_path = matches[0] / "client.json"
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text())
+                for p in meta.get("projets", []):
+                    nb_subventions += len(p.get("subventions", []))
 
     return {
         "nb_clients": len(clients),
         "nb_alertes_urgentes": sum(1 for a in all_alerts if a.get("statut") in ("EXPIRÉ", "URGENT")),
+        "nb_subventions": nb_subventions,
         "clients": clients,
         "alertes": all_alerts,
     }
@@ -364,6 +398,136 @@ def trigger_agent():
         return {"status": "ok", "new_tasks": len(tasks or [])}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Routes projet ─────────────────────────────────────────────────────────────
+
+def _get_projet(slug: str, slug_projet: str):
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    client_dir = matches[0]
+    meta_path = client_dir / "client.json"
+    meta = json.loads(meta_path.read_text())
+    projet = next((p for p in meta.get("projets", []) if p["slug"] == slug_projet), None)
+    if not projet:
+        raise HTTPException(status_code=404, detail="Projet non trouvé")
+    return client_dir, meta_path, meta, projet
+
+
+@app.patch("/clients/{slug}/projets/{slug_projet}/statut")
+def update_projet_statut(slug: str, slug_projet: str, body: dict):
+    """Met à jour le statut d'un projet."""
+    client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)
+    new_statut = body.get("statut")
+    if not new_statut:
+        raise HTTPException(status_code=400, detail="statut requis")
+
+    for p in meta["projets"]:
+        if p["slug"] == slug_projet:
+            p["statut"] = new_statut
+            p["statut_updated_at"] = datetime.now().isoformat()
+            break
+
+    try:
+        from engine.historisation import append_event, add_timestamps
+        meta = add_timestamps(meta, "changement_statut_projet", {
+            "projet": slug_projet, "nouveau_statut": new_statut
+        })
+        append_event(client_dir, "changement_statut_projet", {
+            "projet": slug_projet, "statut": new_statut
+        })
+    except Exception as e:
+        logger.warning(f"Historisation statut : {e}")
+
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    # Sync Drive
+    try:
+        from engine.drive_storage import drive_find_file, drive_update_json
+        meta_id = drive_find_file("client.json", meta.get("drive_folder_id", ""))
+        if meta_id:
+            drive_update_json(meta_id, meta)
+    except Exception as e:
+        logger.warning(f"Drive sync statut : {e}")
+
+    return {"status": "updated", "nouveau_statut": new_statut}
+
+
+@app.post("/clients/{slug}/projets/{slug_projet}/subventions")
+def add_subvention(slug: str, slug_projet: str, body: dict):
+    """Ajoute une demande de subvention à un projet."""
+    client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)
+
+    sub = {
+        "id": int(datetime.now().timestamp() * 1000),
+        "created_at": datetime.now().isoformat(),
+        "financeur": body.get("financeur", ""),
+        "montant_demande": body.get("montant_demande", 0),
+        "montant_accorde": body.get("montant_accorde", 0),
+        "deadline": body.get("deadline"),
+        "statut": body.get("statut", "À préparer"),
+        "notes": body.get("notes", ""),
+    }
+
+    for p in meta["projets"]:
+        if p["slug"] == slug_projet:
+            if "subventions" not in p:
+                p["subventions"] = []
+            p["subventions"].append(sub)
+            break
+
+    try:
+        from engine.historisation import append_event, add_timestamps
+        meta = add_timestamps(meta, "ajout_subvention", {
+            "projet": slug_projet, "financeur": sub["financeur"],
+            "montant": sub["montant_demande"]
+        })
+        append_event(client_dir, "ajout_subvention", {
+            "projet": slug_projet, "financeur": sub["financeur"],
+            "montant_demande": sub["montant_demande"],
+        })
+    except Exception as e:
+        logger.warning(f"Historisation subvention : {e}")
+
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    try:
+        from engine.drive_storage import drive_find_file, drive_update_json
+        meta_id = drive_find_file("client.json", meta.get("drive_folder_id", ""))
+        if meta_id:
+            drive_update_json(meta_id, meta)
+    except Exception as e:
+        logger.warning(f"Drive sync subvention : {e}")
+
+    return sub
+
+
+@app.patch("/clients/{slug}/projets/{slug_projet}/subventions/{sub_id}")
+def update_subvention(slug: str, slug_projet: str, sub_id: int, body: dict):
+    """Met à jour une subvention (statut, montant accordé...)."""
+    client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)
+
+    for p in meta["projets"]:
+        if p["slug"] == slug_projet:
+            for s in p.get("subventions", []):
+                if s["id"] == sub_id:
+                    s.update(body)
+                    s["updated_at"] = datetime.now().isoformat()
+                    break
+            break
+
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    try:
+        from engine.drive_storage import drive_find_file, drive_update_json
+        meta_id = drive_find_file("client.json", meta.get("drive_folder_id", ""))
+        if meta_id:
+            drive_update_json(meta_id, meta)
+    except Exception as e:
+        logger.warning(f"Drive sync subvention update : {e}")
+
+    return {"status": "updated"}
 
 
 # ── Import Excel ──────────────────────────────────────────────────────────────
