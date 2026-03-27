@@ -756,16 +756,71 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
         </div>
       )}
 
-      {/* Documents placeholder */}
+      {/* Documents */}
       {tab === 'documents' && (
         <div className="card">
-          <div className="empty">
-            <div className="empty-text">Checklist documents disponible dans l'Excel Association sur Google Drive.</div>
+          <div className="card-header">
+            <div className="card-title">Fichiers Google Drive</div>
+            <div className="card-subtitle">Cliquez pour ouvrir et éditer directement</div>
           </div>
+
+          {/* Fichier association */}
+          {detail.drive_asso_id && (
+            <a
+              href={`https://docs.google.com/spreadsheets/d/${detail.drive_asso_id}/edit`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: 'none' }}
+            >
+              <div className="client-row" style={{ cursor: 'pointer' }}>
+                <div className="client-avatar" style={{ background: '#E8F5E9', color: '#2E7D32', borderRadius: 8, fontSize: 12 }}>XLS</div>
+                <div className="client-info">
+                  <div className="client-name">Fiche Association / Structure</div>
+                  <div className="client-meta">Identité, caisses, finances, RH, dashboard alertes</div>
+                </div>
+                <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir dans Sheets →</span>
+              </div>
+            </a>
+          )}
+
+          {/* Budgets projets */}
+          {(detail.projets || []).map((p, i) => (
+            <a
+              key={i}
+              href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: 'none' }}
+            >
+              <div className="client-row" style={{ cursor: 'pointer' }}>
+                <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 12 }}>BDG</div>
+                <div className="client-info">
+                  <div className="client-name">Budget — {p.nom}</div>
+                  <div className="client-meta">Budget maître, salaires, ETPT, Mairie de Paris</div>
+                </div>
+                <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir dans Sheets →</span>
+              </div>
+            </a>
+          ))}
+
+          {!detail.drive_asso_id && !detail.drive_projets_folder_id && (
+            <div className="empty">
+              <div className="empty-text">Fichiers non encore synchronisés sur Drive.</div>
+              {detail.drive_folder_id && (
+                <div style={{ marginTop: 8 }}>
+                  <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
+                    Ouvrir le dossier Drive →
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Lien dossier Drive complet */}
           {detail.drive_folder_id && (
-            <div style={{ textAlign: 'center', marginTop: 12 }}>
-              <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
-                Ouvrir le dossier Drive →
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', textAlign: 'right' }}>
+              <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ fontSize: 12, color: 'var(--text3)' }}>
+                Voir le dossier Drive complet →
               </a>
             </div>
           )}
