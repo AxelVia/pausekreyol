@@ -553,8 +553,8 @@ function DashboardView({ data, taches, onNewClient, setView }) {
         </div>
         <div className="metric-card accent-info" onClick={() => setView('subventions')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Subventions pipeline</div>
-          <div className="metric-value">7</div>
-          <div className="metric-sub">en cours de suivi</div>
+          <div className="metric-value">—</div>
+          <div className="metric-sub">à configurer</div>
         </div>
       </div>
 
@@ -562,26 +562,33 @@ function DashboardView({ data, taches, onNewClient, setView }) {
         <div className="card">
           <div className="card-header">
             <div>
-              <div className="card-title">Calendrier — 2 semaines</div>
-              <div className="card-subtitle">Deadlines et échéances</div>
+              <div className="card-title">Prochaines échéances</div>
+              <div className="card-subtitle">Issues des alertes de conformité</div>
             </div>
           </div>
-          <CalendarStrip />
-          <div className="divider" />
-          <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <div style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--accent-mid)' }} />
-              <span>Dossier Mairie Paris — HOB (16 avr.)</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <div style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--accent-mid)' }} />
-              <span>URSSAF paiement — HOB (5 avr.)</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#D97706' }} />
-              <span>Renouvellement licence — Tropik (30 avr.)</span>
-            </div>
-          </div>
+          {(() => {
+            const upcoming = (data?.alertes || [])
+              .filter(a => a.date_expiration && a.statut !== 'OK' && a.statut !== '—')
+              .sort((a, b) => new Date(a.date_expiration) - new Date(b.date_expiration))
+              .slice(0, 5);
+            if (upcoming.length === 0) return (
+              <div className="empty" style={{ padding: '20px 0' }}>
+                <div className="empty-text">Aucune échéance — renseignez les dates dans les Excel sur Drive.</div>
+              </div>
+            );
+            return upcoming.map((a, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <AlertDot statut={a.statut} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500 }}>{a.organisme}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{a.client}</div>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
+                  {new Date(a.date_expiration).toLocaleDateString('fr-FR')}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
 
         <div className="card">
@@ -955,6 +962,7 @@ function TachesView({ taches, setTaches }) {
 // ── Subventions pipeline view ─────────────────────────────────────────────────
 
 function SubventionsView() {
+  const COLS = ['À préparer', 'Déposée', 'En instruction', 'Accordée', 'Versée'];
   return (
     <div>
       <div className="section-header">
@@ -962,20 +970,17 @@ function SubventionsView() {
         <button className="btn btn-primary">+ Ajouter</button>
       </div>
       <div className="pipeline">
-        {Object.entries(MOCK.pipeline).map(([col, cards]) => (
+        {COLS.map(col => (
           <div key={col} className="pipeline-col">
-            <div className="pipeline-header">{col} <span style={{ opacity: 0.5 }}>({cards.length})</span></div>
-            {cards.map((c, i) => (
-              <div key={i} className="pipeline-card">
-                <div className="pipeline-card-name">{c.nom}</div>
-                <div className="pipeline-card-sub">{c.client}</div>
-                <div style={{ marginTop: 6 }}>
-                  <span className="badge badge-green">{c.montant}</span>
-                </div>
-              </div>
-            ))}
+            <div className="pipeline-header">{col} <span style={{ opacity: 0.5 }}>(0)</span></div>
+            <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text3)', border: '1px dashed var(--border)', borderRadius: 6, textAlign: 'center' }}>
+              Aucune
+            </div>
           </div>
         ))}
+      </div>
+      <div style={{ marginTop: 20, padding: 16, background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>
+        Le suivi des subventions sera connecté aux dossiers clients dans une prochaine version.
       </div>
     </div>
   );
