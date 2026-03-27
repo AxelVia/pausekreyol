@@ -288,7 +288,32 @@ def post_project(slug: str, data: ProjectCreate):
 
 # ── Dashboard global ──────────────────────────────────────────────────────────
 
-@app.get("/dashboard")
+@app.get("/templates/doc-synchronisation")
+def download_doc_sync():
+    """Télécharge la documentation de synchronisation."""
+    from fastapi.responses import FileResponse
+    doc_path = Path(__file__).parent.parent / "templates" / "DOC_SYNCHRONISATION.xlsx"
+    if not doc_path.exists():
+        raise HTTPException(status_code=404, detail="Documentation non trouvée")
+    return FileResponse(
+        str(doc_path),
+        filename="DOC_SYNCHRONISATION_PauseKreyol.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@app.get("/templates/collecte-client")
+def download_collecte_client():
+    """Télécharge le template de collecte client à envoyer aux prospects."""
+    from fastapi.responses import FileResponse
+    path = Path(__file__).parent.parent / "templates" / "TEMPLATE_COLLECTE_CLIENT.xlsx"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Template non trouvé")
+    return FileResponse(
+        str(path),
+        filename="COLLECTE_CLIENT_PauseKreyol.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 def get_dashboard():
     clients = list_clients()
     all_alerts = []

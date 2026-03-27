@@ -877,9 +877,12 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 
           {/* Lien dossier Drive complet */}
           {detail.drive_folder_id && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', textAlign: 'right' }}>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ fontSize: 12, color: 'var(--text3)' }}>
                 Voir le dossier Drive complet →
+              </a>
+              <a href={`${API}/templates/doc-synchronisation`} target="_blank" style={{ fontSize: 12, color: 'var(--accent)' }}>
+                📖 Télécharger la documentation de synchronisation
               </a>
             </div>
           )}
@@ -1253,6 +1256,9 @@ function SyncModal({ projet, clientMeta, onClose, onTaskCreated }) {
                 • Le bilan de l'Association reflète-t-il les données du projet ?<br/>
                 • Des informations manquantes ou incohérentes ?
               </div>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>
+              📖 <a href="https://docs.google.com/spreadsheets" target="_blank" style={{ color: 'var(--accent)' }}>Consulter la documentation de synchronisation</a> pour comprendre les règles appliquées.
             </div>
             <div className="modal-footer">
               <button className="btn" onClick={onClose}>Annuler</button>
