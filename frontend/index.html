@@ -730,6 +730,14 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
                 <span style={{ fontWeight: 500 }}>{val}</span>
               </div>
             ))}
+            {cd.emails_surveillance?.length > 0 && (
+              <div style={{ padding: '10px 0' }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>📧 Emails surveillés par l'agent</div>
+                {cd.emails_surveillance.map((email, i) => (
+                  <div key={i} style={{ fontSize: 13, padding: '2px 0', color: 'var(--accent)' }}>{email}</div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
