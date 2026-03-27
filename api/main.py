@@ -314,6 +314,9 @@ def download_collecte_client():
         filename="COLLECTE_CLIENT_PauseKreyol.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+
+@app.get("/dashboard")
 def get_dashboard():
     clients = list_clients()
     all_alerts = []
