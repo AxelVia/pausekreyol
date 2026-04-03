@@ -1823,12 +1823,54 @@ function ClientsView({ clients, onNewClient, onOpenClient }) {
 // ── Tâches view ───────────────────────────────────────────────────────────────
 
 function TachesView({ taches, setTaches }) {
-  const [filter, setFilter] = useState('all');
+  const [filterStatut, setFilterStatut] = useState('pending');
+  const [filterCategorie, setFilterCategorie] = useState('all');
+  const [showNew, setShowNew] = useState(false);
+  const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '' });
 
+  // Catégories avec couleurs et icônes
+  const CATEGORIES = {
+    finance:        { label: 'Finance',        icon: '💰', color: '#1B5E20', bg: '#E8F5E9' },
+    gestion_client: { label: 'Gestion client', icon: '👥', color: '#1565C0', bg: '#E3F2FD' },
+    subvention:     { label: 'Subvention',     icon: '🏛', color: '#6A1B9A', bg: '#F3E5F5' },
+    admin:          { label: 'Admin',          icon: '📋', color: '#E65100', bg: '#FFF3E0' },
+    comm:           { label: 'Comm',           icon: '📣', color: '#00695C', bg: '#E0F2F1' },
+    devis:          { label: 'Devis',          icon: '📝', color: '#5D4037', bg: '#EFEBE9' },
+    facture:        { label: 'Facture',        icon: '🧾', color: '#37474F', bg: '#ECEFF1' },
+    manuel:         { label: 'Manuel',         icon: '✏️', color: '#546E7A', bg: '#ECEFF1' },
+    relance_devis:  { label: 'Relance devis',  icon: '🔔', color: '#F57F17', bg: '#FFFDE7' },
+    relance_facture:{ label: 'Relance paiement',icon: '⚠️', color: '#B71C1C', bg: '#FFEBEE' },
+    acompte:        { label: 'Acompte',        icon: '💳', color: '#1565C0', bg: '#E3F2FD' },
+    validation:     { label: 'Validation',     icon: '✅', color: '#2E7D32', bg: '#E8F5E9' },
+    archivage:      { label: 'Archivage',      icon: '📦', color: '#455A64', bg: '#ECEFF1' },
+  };
+
+  function catFor(t) {
+    if (t.type && CATEGORIES[t.type]) return t.type;
+    if (t.categorie && CATEGORIES[t.categorie]) return t.categorie;
+    // Détection automatique depuis source/type
+    if (t.type === 'validation_import') return 'gestion_client';
+    if (t.type === 'sync_excel') return 'admin';
+    if (t.source === 'Gmail') return 'gestion_client';
+    if (t.source === 'Facture') return 'facture';
+    if (t.source === 'Devis') return 'devis';
+    if (t.source === 'Faisabilité') return 'subvention';
+    if (t.source === 'Création client') return 'gestion_client';
+    return 'admin';
+  }
+
+  // Filtre
   const filtered = taches.filter(t => {
-    if (filter === 'pending') return !t.done;
-    if (filter === 'done') return t.done;
-    return true;
+    const statutOk = filterStatut === 'all' ? true : filterStatut === 'pending' ? !t.done : t.done;
+    const catOk = filterCategorie === 'all' ? true : catFor(t) === filterCategorie;
+    return statutOk && catOk;
+  });
+
+  // Compte par catégorie (non terminées)
+  const countsByCat = {};
+  taches.filter(t => !t.done).forEach(t => {
+    const c = catFor(t);
+    countsByCat[c] = (countsByCat[c] || 0) + 1;
   });
 
   function toggle(id) {
@@ -1843,31 +1885,176 @@ function TachesView({ taches, setTaches }) {
     }
   }
 
+  async function createTask() {
+    if (!newTask.titre) return;
+    try {
+      const res = await fetch(`${API}/taches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTask),
+      });
+      if (res.ok) {
+        const t = await res.json();
+        setTaches(prev => [t, ...prev]);
+        setShowNew(false);
+        setNewTask({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '' });
+      }
+    } catch {}
+  }
+
+  const urgentCount = taches.filter(t => !t.done && t.priorite === 'URGENT').length;
+
   return (
     <div>
-      <div className="section-header">
-        <div className="section-title">Tâches</div>
-        <button className="btn btn-primary">+ Nouvelle tâche</button>
-      </div>
-      <div className="tabs">
-        {[['all', 'Toutes'], ['pending', 'En cours'], ['done', 'Terminées']].map(([k, l]) => (
-          <button key={k} className={`tab ${filter === k ? 'active' : ''}`} onClick={() => setFilter(k)}>{l}</button>
-        ))}
-      </div>
-      <div className="card">
-        {filtered.map(t => (
-          <div key={t.id} className="task-row">
-            <div className={`task-check ${t.done ? 'done' : ''}`} onClick={() => toggle(t.id)}>
-              {t.done && <svg width="10" height="10" viewBox="0 0 10 10"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" /></svg>}
-            </div>
-            <div className="task-body" style={{ opacity: t.done ? 0.45 : 1 }}>
-              <div className="task-title" style={{ textDecoration: t.done ? 'line-through' : 'none' }}>{t.titre}</div>
-              <div className="task-meta">{t.client} · Source : {t.source} · Deadline : {t.date}</div>
-            </div>
-            <Badge statut={t.done ? 'OK' : t.priorite} />
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>
+            Tâches
+            {urgentCount > 0 && <span style={{ marginLeft: 8, background: 'var(--danger)', color: 'white', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 }}>{urgentCount} urgentes</span>}
           </div>
+        </div>
+        <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Nouvelle tâche</button>
+      </div>
+
+      {/* Filtres catégorie — chips horizontaux */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        <button
+          onClick={() => setFilterCategorie('all')}
+          style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500, border: '1.5px solid', cursor: 'pointer', transition: 'all 0.15s',
+            background: filterCategorie === 'all' ? 'var(--accent)' : 'var(--surface)',
+            color: filterCategorie === 'all' ? 'white' : 'var(--text2)',
+            borderColor: filterCategorie === 'all' ? 'var(--accent)' : 'var(--border2)',
+          }}>
+          Toutes {filterStatut === 'pending' && `(${taches.filter(t => !t.done).length})`}
+        </button>
+        {Object.entries(CATEGORIES).map(([key, cat]) => {
+          const count = countsByCat[key] || 0;
+          if (count === 0 && filterStatut === 'pending') return null;
+          return (
+            <button key={key}
+              onClick={() => setFilterCategorie(key)}
+              style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500, border: '1.5px solid', cursor: 'pointer', transition: 'all 0.15s',
+                background: filterCategorie === key ? cat.color : cat.bg,
+                color: filterCategorie === key ? 'white' : cat.color,
+                borderColor: cat.color + '40',
+              }}>
+              {cat.icon} {cat.label} {count > 0 && `(${count})`}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Filtres statut */}
+      <div className="tabs" style={{ marginBottom: 14 }}>
+        {[['pending', 'En cours'], ['all', 'Toutes'], ['done', 'Terminées']].map(([k, l]) => (
+          <button key={k} className={`tab ${filterStatut === k ? 'active' : ''}`} onClick={() => setFilterStatut(k)}>{l}</button>
         ))}
       </div>
+
+      {/* Liste */}
+      <div className="card">
+        {filtered.length === 0 && (
+          <div className="empty">
+            <div className="empty-icon">✅</div>
+            <div className="empty-text">{filterStatut === 'pending' ? 'Aucune tâche en cours dans cette catégorie.' : 'Aucune tâche.'}</div>
+          </div>
+        )}
+        {filtered.map(t => {
+          const cat = CATEGORIES[catFor(t)] || CATEGORIES.admin;
+          return (
+            <div key={t.id} className="task-row" style={{ alignItems: 'flex-start', padding: '12px 0' }}>
+              <div className={`task-check ${t.done ? 'done' : ''}`} onClick={() => toggle(t.id)} style={{ marginTop: 2 }}>
+                {t.done && <svg width="10" height="10" viewBox="0 0 10 10"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" /></svg>}
+              </div>
+              <div className="task-body" style={{ opacity: t.done ? 0.4 : 1, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
+                  {/* Badge catégorie */}
+                  <span style={{ background: cat.bg, color: cat.color, fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10 }}>
+                    {cat.icon} {cat.label}
+                  </span>
+                  {/* Badge priorité */}
+                  {!t.done && t.priorite === 'URGENT' && (
+                    <span style={{ background: 'var(--danger-light)', color: 'var(--danger)', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10 }}>URGENT</span>
+                  )}
+                  {!t.done && t.priorite === 'Attention' && (
+                    <span style={{ background: 'var(--warn-light)', color: 'var(--warn)', fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10 }}>Attention</span>
+                  )}
+                </div>
+                <div className="task-title" style={{ textDecoration: t.done ? 'line-through' : 'none' }}>{t.titre}</div>
+                <div className="task-meta" style={{ marginTop: 3 }}>
+                  {t.client_detecte && <span>{t.client_detecte} · </span>}
+                  <span>Source : {t.source}</span>
+                  {t.deadline && <span> · ⏰ {t.deadline}</span>}
+                </div>
+                {t.description && !t.done && (
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, fontStyle: 'italic' }}>
+                    {t.description.slice(0, 120)}{t.description.length > 120 ? '…' : ''}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Modal nouvelle tâche */}
+      {showNew && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowNew(false)}>
+          <div className="modal">
+            <div className="modal-title">✏️ Nouvelle tâche</div>
+
+            <div className="form-group">
+              <label className="form-label">Titre *</label>
+              <input className="form-input" value={newTask.titre} onChange={e => setNewTask(p => ({ ...p, titre: e.target.value }))}
+                placeholder="Relancer HOB pour les statuts..." autoFocus />
+            </div>
+
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Catégorie</label>
+                <select className="form-input" value={newTask.categorie} onChange={e => setNewTask(p => ({ ...p, categorie: e.target.value }))}>
+                  {Object.entries(CATEGORIES).filter(([k]) => ['finance','gestion_client','subvention','admin','comm','devis','facture','manuel'].includes(k)).map(([k, cat]) => (
+                    <option key={k} value={k}>{cat.icon} {cat.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Priorité</label>
+                <select className="form-input" value={newTask.priorite} onChange={e => setNewTask(p => ({ ...p, priorite: e.target.value }))}>
+                  <option value="Normal">Normal</option>
+                  <option value="Attention">Attention</option>
+                  <option value="URGENT">URGENT</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Client associé</label>
+                <input className="form-input" value={newTask.client_detecte} onChange={e => setNewTask(p => ({ ...p, client_detecte: e.target.value }))}
+                  placeholder="Nom du client (optionnel)" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Deadline</label>
+                <input className="form-input" type="date" value={newTask.deadline} onChange={e => setNewTask(p => ({ ...p, deadline: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Description</label>
+              <textarea className="form-input" rows={3} value={newTask.description}
+                onChange={e => setNewTask(p => ({ ...p, description: e.target.value }))}
+                placeholder="Détails, contexte, liens utiles..." style={{ resize: 'vertical' }} />
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowNew(false)}>Annuler</button>
+              <button className="btn btn-primary" onClick={createTask} disabled={!newTask.titre}>Créer →</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

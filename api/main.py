@@ -475,7 +475,8 @@ def create_tache(body: dict):
         "deadline": body.get("deadline"),
         "client_detecte": body.get("client_detecte"),
         "client_slug": body.get("client_slug"),
-        "type": "manuel",
+        "categorie": body.get("categorie", "admin"),
+        "type": body.get("type", "manuel"),
         "done": False,
     }
     tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
