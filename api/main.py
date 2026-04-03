@@ -527,11 +527,13 @@ def _get_projet(slug: str, slug_projet: str):
 
 @app.patch("/clients/{slug}/projets/{slug_projet}/statut")
 def update_projet_statut(slug: str, slug_projet: str, body: dict):
-    """Met à jour le statut d'un projet."""
+    """Met à jour le statut d'un projet. Si 'réalisé', déclenche la rétroaction vers l'Association."""
     client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)
     new_statut = body.get("statut")
     if not new_statut:
         raise HTTPException(status_code=400, detail="statut requis")
+
+    old_statut = projet.get("statut")
 
     for p in meta["projets"]:
         if p["slug"] == slug_projet:
@@ -550,6 +552,14 @@ def update_projet_statut(slug: str, slug_projet: str, body: dict):
     except Exception as e:
         logger.warning(f"Historisation statut : {e}")
 
+    # ── Rétroaction Projet → Association si statut = réalisé ──────────────
+    retroaction_info = None
+    if new_statut == "realise" and old_statut != "realise":
+        try:
+            retroaction_info = _retroaction_projet_asso(meta, projet, client_dir, meta_path)
+        except Exception as e:
+            logger.warning(f"Rétroaction projet→asso : {e}")
+
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
     # Sync Drive
@@ -561,7 +571,86 @@ def update_projet_statut(slug: str, slug_projet: str, body: dict):
     except Exception as e:
         logger.warning(f"Drive sync statut : {e}")
 
-    return {"status": "updated", "nouveau_statut": new_statut}
+    return {"status": "updated", "nouveau_statut": new_statut, "retroaction": retroaction_info}
+
+
+def _retroaction_projet_asso(meta: dict, projet: dict, client_dir, meta_path) -> dict:
+    """
+    Quand un projet passe à 'réalisé' :
+    - Calcule le total subventions accordées + montant billetterie du projet
+    - Met à jour le bilan N de l'association dans client.json
+    - Crée une tâche pour mettre à jour l'Excel Association sur Drive
+    """
+    cd = meta.get("client_data", {})
+    nom_projet = projet.get("nom", "?")
+    nom_client = cd.get("nom_usuel") or cd.get("nom_officiel", "?")
+
+    # Calcule les totaux du projet
+    subventions = projet.get("subventions", [])
+    total_accorde = sum(float(s.get("montant_accorde") or 0) for s in subventions)
+    total_demande = sum(float(s.get("montant_demande") or 0) for s in subventions)
+    nb_subventions = len([s for s in subventions if s.get("statut") in ("Accordée", "Versée")])
+
+    # Enrichit le projet avec le résumé financier
+    for p in meta["projets"]:
+        if p["slug"] == projet["slug"]:
+            p["bilan_financier"] = {
+                "total_subventions_demandees": total_demande,
+                "total_subventions_accordees": total_accorde,
+                "nb_subventions_obtenues": nb_subventions,
+                "date_realisation": datetime.now().strftime("%d/%m/%Y"),
+            }
+            break
+
+    # Met à jour l'historique projets réalisés dans client_data
+    historique = cd.setdefault("historique_projets", [])
+    historique.append({
+        "nom": nom_projet,
+        "slug": projet["slug"],
+        "date_realisation": datetime.now().strftime("%d/%m/%Y"),
+        "total_subventions_accordees": total_accorde,
+        "nb_subventions": nb_subventions,
+    })
+    cd["historique_projets"] = historique[-20:]  # Garde les 20 derniers
+
+    # Crée une tâche pour mettre à jour l'Excel Association
+    tache_info = {
+        "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_retroaction",
+        "created_at": datetime.now().isoformat(),
+        "source": "Rétroaction projet",
+        "titre": f"Mettre à jour le bilan Association — {nom_client} après {nom_projet}",
+        "priorite": "Attention",
+        "categorie": "admin",
+        "description": (
+            f"Le projet '{nom_projet}' est marqué comme réalisé. "
+            f"Mettre à jour l'onglet BILAN ASSO et HISTORIQUE de l'Excel Association sur Drive. "
+            f"Subventions accordées : {total_accorde:,.0f} € sur {total_demande:,.0f} € demandés "
+            f"({nb_subventions} subvention(s) obtenue(s))."
+        ),
+        "client_detecte": nom_client,
+        "client_slug": meta["slug"],
+        "type": "validation",
+        "done": False,
+        "retroaction": True,
+        "projet_slug": projet["slug"],
+        "montants": {
+            "total_accorde": total_accorde,
+            "total_demande": total_demande,
+            "nb_subventions": nb_subventions,
+        }
+    }
+
+    tasks_file = CLIENTS_DIR / "tasks.json"
+    tasks = json.loads(tasks_file.read_text()) if tasks_file.exists() else []
+    tasks.append(tache_info)
+    _save_tasks(tasks)
+
+    logger.info(f"Rétroaction : {nom_projet} réalisé — tâche MAJ bilan asso créée")
+    return {
+        "tache_creee": True,
+        "total_accorde": total_accorde,
+        "nb_subventions": nb_subventions,
+    }
 
 
 @app.post("/clients/{slug}/projets/{slug_projet}/subventions")

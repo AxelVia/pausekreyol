@@ -936,53 +936,135 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 
       {/* Infos */}
       {tab === 'infos' && (
-        <div className="grid-2">
-          <div className="card">
-            <div className="card-header"><div className="card-title">Identité</div></div>
-            {[
-              ['Nom officiel', cd.nom_officiel],
-              ['Nom usuel', cd.nom_usuel],
-              cd.siret && ['SIRET', cd.siret],
-              cd.ninea && ['NINEA', cd.ninea],
-              cd.rccm && ['RCCM', cd.rccm],
-              cd.date_creation && ['Date de création', cd.date_creation],
-              cd.adresse_siege && ['Adresse', cd.adresse_siege],
-            ].filter(Boolean).map(([label, val], i) => val && (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                <span style={{ color: 'var(--text3)' }}>{label}</span>
-                <span style={{ fontWeight: 500, textAlign: 'right', maxWidth: '60%' }}>{val}</span>
-              </div>
-            ))}
+        <div>
+          <div className="grid-2" style={{ marginBottom: 12 }}>
+            {/* Identité */}
+            <div className="card">
+              <div className="card-header"><div className="card-title">Identité</div></div>
+              {[
+                ['Nom officiel', cd.nom_officiel],
+                cd.nom_usuel && ['Nom usuel', cd.nom_usuel],
+                cd.statut_juridique && ['Statut juridique', cd.statut_juridique],
+                cd.implantation && ['Implantation', cd.implantation],
+                cd.categorie && ['Catégorie', cd.categorie],
+                cd.marche_cible && ['Marché cible', cd.marche_cible],
+                cd.domaines_artistiques && ['Domaines', cd.domaines_artistiques],
+                cd.siret && ['SIRET', cd.siret],
+                cd.ninea && ['NINEA', cd.ninea],
+                cd.rccm && ['RCCM', cd.rccm],
+                cd.numero_rna && ['N° RNA', cd.numero_rna],
+                cd.date_creation && ['Date création', cd.date_creation],
+                cd.adresse_siege && ['Adresse', cd.adresse_siege],
+              ].filter(Boolean).map(([label, val], i) => val && (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text3)', flexShrink: 0 }}>{label}</span>
+                  <span style={{ fontWeight: 500, textAlign: 'right', maxWidth: '58%' }}>{val}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Contacts & licences */}
+            <div className="card">
+              <div className="card-header"><div className="card-title">Contacts & licences</div></div>
+              {[
+                cd.president && ['Président(e) / DG', cd.president],
+                cd.tresorier && ['Trésorier(e)', cd.tresorier],
+                cd.secretaire && ['Secrétaire', cd.secretaire],
+                cd.directeur_artistique && ['Dir. artistique', cd.directeur_artistique],
+                cd.email_contact && ['Email', cd.email_contact],
+                cd.telephone && ['Téléphone', cd.telephone],
+                cd.site_internet && ['Site web', cd.site_internet],
+                cd.licence_statut && ['Licence spectacle', cd.licence_statut],
+                cd.licence_type1 && ['N° licence', cd.licence_type1],
+                cd.date_expiration_licence && ['Expiration licence', cd.date_expiration_licence],
+                cd.societe_droits && ['Société droits', cd.societe_droits],
+              ].filter(Boolean).map(([label, val], i) => val && (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text3)', flexShrink: 0 }}>{label}</span>
+                  <span style={{ fontWeight: 500, textAlign: 'right', maxWidth: '58%' }}>{val}</span>
+                </div>
+              ))}
+              {cd.emails_surveillance?.length > 0 && (
+                <div style={{ padding: '10px 0' }}>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>📧 Emails surveillés</div>
+                  {cd.emails_surveillance.map((email, i) => (
+                    <div key={i} style={{ fontSize: 12, padding: '2px 0', color: 'var(--accent)' }}>{email}</div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="card">
-            <div className="card-header"><div className="card-title">Contacts & licences</div></div>
-            {[
-              cd.president && ['Président(e) / DG', cd.president],
-              cd.tresorier && ['Trésorier(e)', cd.tresorier],
-              cd.email_contact && ['Email', cd.email_contact],
-              cd.telephone && ['Téléphone', cd.telephone],
-              cd.licence_type1 && ['Licence Type 1', cd.licence_type1],
-              cd.licence_type2 && ['Licence Type 2', cd.licence_type2],
-            ].filter(Boolean).map(([label, val], i) => val && (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                <span style={{ color: 'var(--text3)' }}>{label}</span>
-                <span style={{ fontWeight: 500 }}>{val}</span>
+          <div className="grid-2">
+            {/* Association — champs spécifiques */}
+            {cd.type_structure === 'asso_france' && (
+              <div className="card">
+                <div className="card-header"><div className="card-title">Vie associative</div></div>
+                {[
+                  ['Dernière AG', cd.date_derniere_ag],
+                  ['Clôtures comptables', cd.clotures_comptables],
+                  ['N° RNA', cd.numero_rna],
+                  ['N° URSSAF', cd.numero_urssaf],
+                  ['N° GUSO', cd.numero_guso],
+                  ['N° Audiens', cd.numero_audiens],
+                  ['N° AFDAS', cd.numero_afdas],
+                  ['N° Congés Spectacles', cd.numero_conges_spectacles],
+                  ['Mutuelle', cd.mutuelle],
+                  ['N° agrément AEM', cd.numero_aem],
+                ].filter(([, v]) => v).map(([label, val], i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                    <span style={{ color: 'var(--text3)' }}>{label}</span>
+                    <span style={{ fontWeight: val === 'Non' || val?.includes('Non') ? 400 : 500, color: val === 'Oui — validées AG' ? 'var(--accent)' : val?.includes('Non') ? 'var(--danger)' : 'var(--text)' }}>{val}</span>
+                  </div>
+                ))}
+                {/* Warning clôtures */}
+                {cd.clotures_comptables && !cd.clotures_comptables.includes('Oui') && (
+                  <div style={{ marginTop: 8, background: 'var(--warn-light)', color: 'var(--warn)', padding: '8px 10px', borderRadius: 6, fontSize: 12 }}>
+                    ⚠️ Clôtures comptables non validées — à régulariser
+                  </div>
+                )}
               </div>
-            ))}
-            {cd.emails_surveillance?.length > 0 && (
-              <div style={{ padding: '10px 0' }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>📧 Emails surveillés par l'agent</div>
-                {cd.emails_surveillance.map((email, i) => (
-                  <div key={i} style={{ fontSize: 13, padding: '2px 0', color: 'var(--accent)' }}>{email}</div>
+            )}
+
+            {/* Banque */}
+            {(cd.banque || cd.iban) && (
+              <div className="card">
+                <div className="card-header"><div className="card-title">Coordonnées bancaires</div></div>
+                {[
+                  ['Banque', cd.banque],
+                  ['IBAN', cd.iban],
+                  ['BIC', cd.bic],
+                  ['Titulaire', cd.titulaire_compte],
+                ].filter(([, v]) => v).map(([label, val], i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                    <span style={{ color: 'var(--text3)' }}>{label}</span>
+                    <span style={{ fontWeight: 500, fontFamily: label === 'IBAN' ? 'monospace' : 'inherit', fontSize: label === 'IBAN' ? 11 : 13 }}>{val}</span>
+                  </div>
                 ))}
               </div>
             )}
           </div>
+
+          {/* Historique projets réalisés */}
+          {cd.historique_projets?.length > 0 && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <div className="card-header"><div className="card-title">📁 Historique projets réalisés</div></div>
+              {cd.historique_projets.map((p, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                  <div>
+                    <div style={{ fontWeight: 500 }}>{p.nom}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>Réalisé le {p.date_realisation}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--accent)' }}>{(p.total_subventions_accordees || 0).toLocaleString('fr-FR')} € obtenus</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>{p.nb_subventions} subvention(s)</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
-
-      {/* Projets */}
       {tab === 'projets' && !selectedProjet && (
         <div className="card">
           {projets.length === 0 && (
@@ -1216,7 +1298,72 @@ function FacturationClient({ slug, nomClient }) {
     return <span style={{ background: s.bg, color: s.color, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 }}>{s.label}</span>;
   }
 
-  async function changeStatut(type, id, statut) {
+  function printDevis(d) {
+    const prestations = (d.prestations || []).filter(p => p.description);
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Devis ${d.numero}</title>
+<style>
+  body { font-family: Arial, sans-serif; color: #1a1916; margin: 0; padding: 32px; font-size: 13px; }
+  h1 { color: #2D5016; font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #888; font-size: 11px; margin-bottom: 24px; }
+  .header { display: flex; justify-content: space-between; margin-bottom: 32px; }
+  .from { }
+  .to { text-align: right; }
+  .label { font-size: 10px; color: #888; text-transform: uppercase; margin-bottom: 2px; }
+  .val { font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  th { background: #2D5016; color: white; padding: 8px 10px; text-align: left; font-size: 11px; }
+  td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+  .total-block { margin-top: 16px; text-align: right; }
+  .total-row { display: flex; justify-content: flex-end; gap: 40px; padding: 6px 0; font-size: 13px; }
+  .total-final { font-size: 16px; font-weight: 700; color: #2D5016; border-top: 2px solid #2D5016; padding-top: 8px; margin-top: 4px; }
+  .conditions { margin-top: 32px; font-size: 11px; color: #888; border-top: 1px solid #eee; padding-top: 16px; }
+  @media print { body { padding: 16px; } }
+</style></head><body>
+<h1>DEVIS</h1>
+<div class="sub">${d.numero} · Émis le ${d.date_emission || new Date().toLocaleDateString('fr-FR')}</div>
+<div class="header">
+  <div class="from">
+    <div class="label">De</div>
+    <div class="val">Pause Kreyol</div>
+    <div>Administration de production culturelle</div>
+    <div>contact@pausekreyol.fr</div>
+  </div>
+  <div class="to">
+    <div class="label">Pour</div>
+    <div class="val">${d.client_nom || '—'}</div>
+    ${d.periode ? `<div>Période : ${d.periode}</div>` : ''}
+  </div>
+</div>
+<table>
+  <thead><tr><th>Description</th><th>Type / Formule</th><th style="text-align:center">Qté</th><th style="text-align:right">Tarif unitaire</th><th style="text-align:right">Sous-total</th></tr></thead>
+  <tbody>
+    ${prestations.map(p => `<tr>
+      <td>${p.description}</td>
+      <td style="color:#666">${p.type || '—'}</td>
+      <td style="text-align:center">${p.quantite}</td>
+      <td style="text-align:right">${(p.tarif_unitaire || 0).toLocaleString('fr-FR')} €</td>
+      <td style="text-align:right;font-weight:500">${(p.sous_total || 0).toLocaleString('fr-FR')} €</td>
+    </tr>`).join('')}
+  </tbody>
+</table>
+<div class="total-block">
+  <div class="total-row"><span>Total HT</span><span>${(d.total_ht || 0).toLocaleString('fr-FR')} €</span></div>
+  <div class="total-row"><span>TVA (Art. 293B du CGI)</span><span>0 €</span></div>
+  <div class="total-row total-final"><span>Total TTC</span><span>${(d.total_ht || 0).toLocaleString('fr-FR')} €</span></div>
+  ${d.acompte_pct > 0 ? `<div class="total-row" style="color:#666"><span>Acompte à la signature (${d.acompte_pct}%)</span><span>${(d.acompte_montant || 0).toLocaleString('fr-FR')} €</span></div>` : ''}
+  ${d.acompte_pct > 0 ? `<div class="total-row" style="color:#666"><span>Solde à la livraison</span><span>${(d.solde || 0).toLocaleString('fr-FR')} €</span></div>` : ''}
+</div>
+${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-radius:6px;font-size:12px;color:#555">${d.notes}</div>` : ''}
+<div class="conditions">
+  <strong>Conditions :</strong> Validité ${d.validite_jours || 30} jours · Délai de paiement 30 jours nets · Pénalités de retard : 3× le taux légal · TVA non applicable — Art. 293B du CGI
+</div>
+</body></html>`;
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => w.print(), 500);
+  }
     await fetch(`${API}/${type}/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1293,6 +1440,7 @@ function FacturationClient({ slug, nomClient }) {
                   {['validé', 'signé'].includes(d.statut) && !d.factures_liees?.length && (
                     <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => creerFacture(d)}>🧾 Facturer</button>
                   )}
+                  <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => printDevis(d)} title="Télécharger PDF">🖨</button>
                 </div>
               </div>
             </div>
@@ -2843,6 +2991,15 @@ function DevisFacturesView() {
     return <span style={{ background: s.bg, color: s.color, padding: '3px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{s.label}</span>;
   }
 
+  function printDevis(d) {
+    const prestations = (d.prestations || []).filter(p => p.description);
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Devis ${d.numero}</title><style>body{font-family:Arial,sans-serif;color:#1a1916;margin:0;padding:32px;font-size:13px}h1{color:#2D5016;font-size:22px;margin:0 0 4px}.sub{color:#888;font-size:11px;margin-bottom:24px}.header{display:flex;justify-content:space-between;margin-bottom:32px}.label{font-size:10px;color:#888;text-transform:uppercase;margin-bottom:2px}.val{font-weight:600}table{width:100%;border-collapse:collapse;margin:20px 0}th{background:#2D5016;color:white;padding:8px 10px;text-align:left;font-size:11px}td{padding:8px 10px;border-bottom:1px solid #eee}.total-block{margin-top:16px;text-align:right}.total-row{display:flex;justify-content:flex-end;gap:40px;padding:6px 0}.total-final{font-size:16px;font-weight:700;color:#2D5016;border-top:2px solid #2D5016;padding-top:8px}.conditions{margin-top:32px;font-size:11px;color:#888;border-top:1px solid #eee;padding-top:16px}</style></head><body><h1>DEVIS</h1><div class="sub">${d.numero} · Émis le ${d.date_emission || new Date().toLocaleDateString('fr-FR')}</div><div class="header"><div><div class="label">De</div><div class="val">Pause Kreyol</div><div>Administration de production culturelle</div></div><div style="text-align:right"><div class="label">Pour</div><div class="val">${d.client_nom || '—'}</div>${d.periode ? `<div>${d.periode}</div>` : ''}</div></div><table><thead><tr><th>Description</th><th>Type</th><th style="text-align:center">Qté</th><th style="text-align:right">Tarif</th><th style="text-align:right">Sous-total</th></tr></thead><tbody>${prestations.map(p => `<tr><td>${p.description}</td><td style="color:#666">${p.type||'—'}</td><td style="text-align:center">${p.quantite}</td><td style="text-align:right">${(p.tarif_unitaire||0).toLocaleString('fr-FR')} €</td><td style="text-align:right;font-weight:500">${(p.sous_total||0).toLocaleString('fr-FR')} €</td></tr>`).join('')}</tbody></table><div class="total-block"><div class="total-row"><span>Total HT</span><span>${(d.total_ht||0).toLocaleString('fr-FR')} €</span></div><div class="total-row"><span>TVA (Art. 293B CGI)</span><span>0 €</span></div><div class="total-row total-final"><span>Total TTC</span><span>${(d.total_ht||0).toLocaleString('fr-FR')} €</span></div>${d.acompte_pct>0?`<div class="total-row" style="color:#666"><span>Acompte (${d.acompte_pct}%)</span><span>${(d.acompte_montant||0).toLocaleString('fr-FR')} €</span></div><div class="total-row" style="color:#666"><span>Solde</span><span>${(d.solde||0).toLocaleString('fr-FR')} €</span></div>`:''}</div><div class="conditions">Validité ${d.validite_jours||30} jours · Paiement 30 jours nets · Pénalités 3× taux légal · TVA non applicable Art. 293B CGI</div></body></html>`;
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => w.print(), 500);
+  }
+
   async function changeStatutDevis(id, statut) {
     await fetch(`${API}/devis/${id}`, {
       method: 'PATCH',
@@ -2954,6 +3111,7 @@ function DevisFacturesView() {
                     <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }}
                       onClick={() => createFactureFromDevis(devis)}>🧾 Créer facture</button>
                   )}
+                  <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => printDevis(devis)} title="Imprimer / PDF">🖨</button>
                   {!['annulé', 'caduc'].includes(devis.statut) && (
                     <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
                       onClick={() => changeStatutDevis(devis.id, 'annulé')}>Annuler</button>
