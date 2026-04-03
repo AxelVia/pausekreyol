@@ -1375,3 +1375,393 @@ async def creer_projet_depuis_faisabilite(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE DEVIS & FACTURES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+DEVIS_FILE = CLIENTS_DIR / "devis.json"
+FACTURES_FILE = CLIENTS_DIR / "factures.json"
+
+TARIFS_STANDARD = [
+    {"label": "Supervision / Accompagnement",    "tarif": 30,  "unite": "€/heure"},
+    {"label": "Extra / Mission ponctuelle",       "tarif": 40,  "unite": "€/heure"},
+    {"label": "Clé en main",                      "tarif": 50,  "unite": "€/heure"},
+    {"label": "Forfait facilitation",             "tarif": 150, "unite": "€/forfait"},
+    {"label": "Forfait subvention (montage)",      "tarif": 210, "unite": "€/forfait"},
+    {"label": "Forfait administration & prod",     "tarif": 305, "unite": "€/mois"},
+    {"label": "Abonnement mensuel standard",       "tarif": 230, "unite": "€/mois"},
+    {"label": "Abonnement mensuel préférentiel",   "tarif": 200, "unite": "€/mois"},
+    {"label": "Mission AR&D",                      "tarif": 365, "unite": "€/mois"},
+    {"label": "Cours / Formation",                 "tarif": 48,  "unite": "€/heure"},
+    {"label": "Commission subvention obtenue",     "tarif": 10,  "unite": "%"},
+    {"label": "Bilan / Rapport financier",         "tarif": 350, "unite": "€/bilan"},
+    {"label": "Dépôt dossier subvention",          "tarif": 315, "unite": "€/dossier"},
+    {"label": "Rendez-vous démarrage",             "tarif": 350, "unite": "€/forfait"},
+]
+
+
+def _load_devis() -> list:
+    if DEVIS_FILE.exists():
+        return json.loads(DEVIS_FILE.read_text())
+    # Reconstruit depuis les client.json si nécessaire
+    all_devis = []
+    for client_dir in CLIENTS_DIR.iterdir():
+        mp = client_dir / "client.json"
+        if mp.exists():
+            meta = json.loads(mp.read_text())
+            for d in meta.get("devis", []):
+                d["client_slug"] = meta["slug"]
+                all_devis.append(d)
+    return all_devis
+
+
+def _save_devis(devis: list):
+    DEVIS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DEVIS_FILE.write_text(json.dumps(devis, ensure_ascii=False, indent=2))
+    # Sync Drive
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("devis.json", root_id)
+            if fid:
+                drive_update_json(fid, devis)
+            else:
+                drive_upload_json(devis, "devis.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync devis.json : {e}")
+
+
+def _load_factures() -> list:
+    if FACTURES_FILE.exists():
+        return json.loads(FACTURES_FILE.read_text())
+    return []
+
+
+def _save_factures(factures: list):
+    FACTURES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FACTURES_FILE.write_text(json.dumps(factures, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("factures.json", root_id)
+            if fid:
+                drive_update_json(fid, factures)
+            else:
+                drive_upload_json(factures, "factures.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync factures.json : {e}")
+
+
+def _next_numero_devis() -> str:
+    year = datetime.now().year
+    devis = _load_devis()
+    this_year = [d for d in devis if str(d.get("annee", "")) == str(year)]
+    n = len(this_year) + 1
+    return f"D{year}-{n:03d}"
+
+
+def _next_numero_facture() -> str:
+    year = datetime.now().year
+    factures = _load_factures()
+    this_year = [f for f in factures if str(f.get("annee", "")) == str(year)]
+    n = len(this_year) + 1
+    return f"FACTURE N°{year}-{n:03d}-PK"
+
+
+def _create_relance_tasks(devis: dict):
+    """Crée les tâches de relance automatiques pour un devis envoyé."""
+    tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+    nom = devis.get("client_nom", "?")
+    numero = devis.get("numero", "?")
+
+    # Relance signature à J+7 si pas signé
+    tasks.append({
+        "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_relance_sig",
+        "created_at": datetime.now().isoformat(),
+        "source": "Devis",
+        "titre": f"Relance signature devis — {nom} ({numero})",
+        "priorite": "Attention",
+        "description": f"Le devis {numero} envoyé à {nom} n'a pas été signé sous 7 jours. Relancer le client.",
+        "client_nom": nom,
+        "client_slug": devis.get("client_slug"),
+        "type": "relance_devis",
+        "devis_id": devis.get("id"),
+        "done": False,
+        "auto": True,
+    })
+    _save_tasks(tasks)
+
+
+def _create_facture_relance_tasks(facture: dict):
+    """Crée tâches de relance paiement : J-7, J-1, J, J+7."""
+    tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+    nom = facture.get("client_nom", "?")
+    numero = facture.get("numero", "?")
+    montant = facture.get("total_ht", 0)
+
+    for label, priorite, desc in [
+        ("Relance paiement J-7", "Attention",
+         f"La facture {numero} ({montant}€) arrive à échéance dans 7 jours. Vérifier le paiement."),
+        ("Relance paiement J-1", "URGENT",
+         f"La facture {numero} ({montant}€) expire demain. Contacter {nom} immédiatement."),
+        ("⚠️ Facture impayée — pénalités de retard", "URGENT",
+         f"La facture {numero} n'est pas payée à date. Rappeler les pénalités de retard (3× taux légal). Envoyer mise en demeure."),
+        ("🚨 URGENT — Relance manuelle impayé J+7", "URGENT",
+         f"La facture {numero} est impayée depuis 7 jours. Majoration de 10% applicable. Créer une facture de majoration et engager une procédure de recouvrement."),
+    ]:
+        tasks.append({
+            "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_fact",
+            "created_at": datetime.now().isoformat(),
+            "source": "Facture",
+            "titre": f"{label} — {nom} ({numero})",
+            "priorite": priorite,
+            "description": desc,
+            "client_nom": nom,
+            "client_slug": facture.get("client_slug"),
+            "type": "relance_facture",
+            "facture_id": facture.get("id"),
+            "done": False,
+            "auto": True,
+        })
+    _save_tasks(tasks)
+
+
+# ── Routes devis ──────────────────────────────────────────────────────────────
+
+@app.get("/devis")
+def get_all_devis():
+    """Retourne tous les devis."""
+    return _load_devis()
+
+
+@app.get("/devis/tarifs")
+def get_tarifs():
+    """Retourne les tarifs standard Pause Kreyol."""
+    return TARIFS_STANDARD
+
+
+@app.post("/devis")
+def create_devis(body: dict):
+    """Crée un nouveau devis."""
+    devis = _load_devis()
+
+    prestations = body.get("prestations", [])
+    total_ht = sum(
+        float(p.get("quantite", 1)) * float(p.get("tarif_unitaire", 0))
+        for p in prestations
+    )
+    acompte_pct = float(body.get("acompte_pct", 30))
+    acompte_montant = round(total_ht * acompte_pct / 100, 2)
+
+    new_devis = {
+        "id": f"devis_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "numero": body.get("numero") or _next_numero_devis(),
+        "annee": datetime.now().year,
+        "created_at": datetime.now().isoformat(),
+        "client_slug": body.get("client_slug", ""),
+        "client_nom": body.get("client_nom", ""),
+        "statut": "brouillon",   # brouillon | envoyé | signé | validé | annulé | caduc
+        "prestations": prestations,
+        "total_ht": round(total_ht, 2),
+        "tva": "Non applicable — Art. 293B du CGI",
+        "acompte_pct": acompte_pct,
+        "acompte_montant": acompte_montant,
+        "solde": round(total_ht - acompte_montant, 2),
+        "validite_jours": int(body.get("validite_jours", 30)),
+        "periode": body.get("periode", ""),
+        "date_emission": datetime.now().strftime("%d/%m/%Y"),
+        "notes": body.get("notes", ""),
+        "facilite_paiement": body.get("facilite_paiement", "1x"),  # 1x | 2x | 3x | manuel
+        "echeances": body.get("echeances", []),
+        "factures_liees": [],
+    }
+    devis.append(new_devis)
+    _save_devis(devis)
+    return new_devis
+
+
+@app.patch("/devis/{devis_id}")
+def update_devis(devis_id: str, body: dict):
+    """Met à jour un devis (statut, modifications)."""
+    devis = _load_devis()
+    d = next((x for x in devis if x["id"] == devis_id), None)
+    if not d:
+        raise HTTPException(status_code=404, detail="Devis non trouvé")
+
+    old_statut = d.get("statut")
+    d.update(body)
+
+    # Recalcule les totaux si prestations modifiées
+    if "prestations" in body:
+        total = sum(float(p.get("quantite", 1)) * float(p.get("tarif_unitaire", 0))
+                    for p in body["prestations"])
+        d["total_ht"] = round(total, 2)
+        acompte = round(total * float(d.get("acompte_pct", 30)) / 100, 2)
+        d["acompte_montant"] = acompte
+        d["solde"] = round(total - acompte, 2)
+
+    new_statut = d.get("statut")
+
+    # Transitions automatiques
+    if new_statut == "envoyé" and old_statut != "envoyé":
+        d["date_envoi"] = datetime.now().strftime("%d/%m/%Y")
+        _create_relance_tasks(d)
+
+    if new_statut in ("validé", "signé") and old_statut not in ("validé", "signé"):
+        d["date_signature"] = datetime.now().strftime("%d/%m/%Y")
+        # Tâche : valider réception acompte
+        tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+        tasks.append({
+            "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_acompte",
+            "created_at": datetime.now().isoformat(),
+            "source": "Devis",
+            "titre": f"Valider réception acompte — {d['client_nom']} ({d['numero']})",
+            "priorite": "Attention",
+            "description": f"Le devis {d['numero']} a été signé. Acompte attendu : {d.get('acompte_montant', 0)}€ ({d.get('acompte_pct', 30)}%). Confirmer la réception.",
+            "client_slug": d.get("client_slug"),
+            "type": "acompte",
+            "devis_id": devis_id,
+            "done": False,
+        })
+        _save_tasks(tasks)
+
+    if new_statut == "annulé":
+        d["date_annulation"] = datetime.now().strftime("%d/%m/%Y")
+
+    _save_devis(devis)
+    return d
+
+
+# ── Routes factures ───────────────────────────────────────────────────────────
+
+@app.get("/factures")
+def get_all_factures():
+    """Retourne toutes les factures."""
+    return _load_factures()
+
+
+@app.post("/factures")
+def create_facture(body: dict):
+    """Crée une facture (depuis un devis validé ou manuelle)."""
+    factures = _load_factures()
+    devis_id = body.get("devis_id")
+
+    # Récupère le devis lié si fourni
+    devis_lie = None
+    if devis_id:
+        devis = _load_devis()
+        devis_lie = next((d for d in devis if d["id"] == devis_id), None)
+
+    total_ht = float(body.get("total_ht", 0)) or (devis_lie["total_ht"] if devis_lie else 0)
+
+    facture = {
+        "id": f"facture_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "numero": body.get("numero") or _next_numero_facture(),
+        "annee": datetime.now().year,
+        "created_at": datetime.now().isoformat(),
+        "client_slug": body.get("client_slug") or (devis_lie.get("client_slug") if devis_lie else ""),
+        "client_nom": body.get("client_nom") or (devis_lie.get("client_nom") if devis_lie else ""),
+        "devis_id": devis_id,
+        "devis_numero": devis_lie.get("numero") if devis_lie else body.get("devis_numero", ""),
+        "statut": "à_faire",  # à_faire | envoyée | payée | annulée | en_retard
+        "prestations": body.get("prestations") or (devis_lie.get("prestations") if devis_lie else []),
+        "total_ht": round(total_ht, 2),
+        "tva": "Non applicable — Art. 293B du CGI",
+        "acompte_encaisse": float(body.get("acompte_encaisse", 0)),
+        "solde_a_payer": round(total_ht - float(body.get("acompte_encaisse", 0)), 2),
+        "date_emission": datetime.now().strftime("%d/%m/%Y"),
+        "delai_paiement_jours": int(body.get("delai_paiement_jours", 30)),
+        "periode": body.get("periode") or (devis_lie.get("periode") if devis_lie else ""),
+        "notes": body.get("notes", ""),
+        "facilite_paiement": body.get("facilite_paiement", "1x"),
+    }
+    factures.append(facture)
+    _save_factures(factures)
+
+    # Lie la facture au devis
+    if devis_lie:
+        devis_list = _load_devis()
+        for d in devis_list:
+            if d["id"] == devis_id:
+                d.setdefault("factures_liees", []).append(facture["id"])
+                d["statut"] = "facturé"
+                break
+        _save_devis(devis_list)
+
+    # Tâche : vérifier et envoyer la facture
+    tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+    tasks.append({
+        "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_facture",
+        "created_at": datetime.now().isoformat(),
+        "source": "Facture",
+        "titre": f"Vérifier et envoyer facture — {facture['client_nom']} ({facture['numero']})",
+        "priorite": "Attention",
+        "description": f"Facture {facture['numero']} de {facture['total_ht']}€ créée. Vérifier et envoyer au client.",
+        "client_slug": facture["client_slug"],
+        "type": "facture",
+        "facture_id": facture["id"],
+        "done": False,
+    })
+    _save_tasks(tasks)
+
+    return facture
+
+
+@app.patch("/factures/{facture_id}")
+def update_facture(facture_id: str, body: dict):
+    """Met à jour une facture (statut, paiement...)."""
+    factures = _load_factures()
+    f = next((x for x in factures if x["id"] == facture_id), None)
+    if not f:
+        raise HTTPException(status_code=404, detail="Facture non trouvée")
+
+    old_statut = f.get("statut")
+    f.update(body)
+    new_statut = f.get("statut")
+
+    if new_statut == "envoyée" and old_statut != "envoyée":
+        f["date_envoi"] = datetime.now().strftime("%d/%m/%Y")
+        _create_facture_relance_tasks(f)
+
+    if new_statut == "payée" and old_statut != "payée":
+        f["date_paiement"] = datetime.now().strftime("%d/%m/%Y")
+        # Annule les tâches de relance liées
+        tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+        for t in tasks:
+            if t.get("facture_id") == facture_id and t.get("auto"):
+                t["done"] = True
+        _save_tasks(tasks)
+
+    _save_factures(factures)
+    return f
+
+
+@app.get("/devis-factures/dashboard")
+def get_devis_factures_dashboard():
+    """Vue globale : métriques devis + factures."""
+    devis = _load_devis()
+    factures = _load_factures()
+
+    return {
+        "devis": {
+            "total": len(devis),
+            "valides": len([d for d in devis if d["statut"] in ("validé", "signé")]),
+            "en_cours": len([d for d in devis if d["statut"] in ("envoyé", "brouillon")]),
+            "annules": len([d for d in devis if d["statut"] == "annulé"]),
+            "ca_devis_valides": sum(d["total_ht"] for d in devis if d["statut"] in ("validé", "signé")),
+        },
+        "factures": {
+            "total": len(factures),
+            "payees": len([f for f in factures if f["statut"] == "payée"]),
+            "envoyees": len([f for f in factures if f["statut"] == "envoyée"]),
+            "a_faire": len([f for f in factures if f["statut"] == "à_faire"]),
+            "ca_encaisse": sum(f["total_ht"] for f in factures if f["statut"] == "payée"),
+            "en_attente": sum(f["solde_a_payer"] for f in factures if f["statut"] in ("envoyée", "à_faire")),
+        },
+        "liste_devis": sorted(devis, key=lambda x: x["created_at"], reverse=True),
+        "liste_factures": sorted(factures, key=lambda x: x["created_at"], reverse=True),
+    }

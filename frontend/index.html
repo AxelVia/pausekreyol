@@ -1612,6 +1612,395 @@ function TachesView({ taches, setTaches }) {
   );
 }
 
+// ── Devis & Factures ──────────────────────────────────────────────────────────
+
+function DevisFacturesView() {
+  const [tab, setTab] = useState('devis');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showNewDevis, setShowNewDevis] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/devis-factures/dashboard`);
+      if (res.ok) setData(await res.json());
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const STATUT_DEVIS = {
+    brouillon:  { label: 'Brouillon',  bg: 'var(--surface2)',      color: 'var(--text3)' },
+    envoyé:     { label: 'Envoyé',     bg: 'var(--info-light)',     color: 'var(--info)' },
+    signé:      { label: 'Signé',      bg: 'var(--warn-light)',     color: 'var(--warn)' },
+    validé:     { label: 'Validé',     bg: 'var(--accent-light)',   color: 'var(--accent)' },
+    facturé:    { label: 'Facturé',    bg: '#E8F5E9',              color: '#1B5E20' },
+    annulé:     { label: 'Annulé',     bg: 'var(--danger-light)',   color: 'var(--danger)' },
+    caduc:      { label: 'Caduc',      bg: 'var(--surface2)',      color: 'var(--text3)' },
+  };
+
+  const STATUT_FACTURE = {
+    à_faire:    { label: 'À faire',    bg: 'var(--warn-light)',    color: 'var(--warn)' },
+    envoyée:    { label: 'Envoyée',    bg: 'var(--info-light)',    color: 'var(--info)' },
+    payée:      { label: 'Payée',      bg: 'var(--accent-light)',  color: 'var(--accent)' },
+    annulée:    { label: 'Annulée',    bg: 'var(--danger-light)',  color: 'var(--danger)' },
+    en_retard:  { label: 'En retard',  bg: 'var(--danger-light)',  color: 'var(--danger)' },
+  };
+
+  function StatutBadge({ statut, map }) {
+    const s = map[statut] || { label: statut, bg: 'var(--surface2)', color: 'var(--text3)' };
+    return <span style={{ background: s.bg, color: s.color, padding: '3px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{s.label}</span>;
+  }
+
+  async function changeStatutDevis(id, statut) {
+    await fetch(`${API}/devis/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ statut }),
+    });
+    load();
+  }
+
+  async function createFactureFromDevis(devis) {
+    await fetch(`${API}/factures`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ devis_id: devis.id }),
+    });
+    load();
+    setTab('factures');
+  }
+
+  async function changeStatutFacture(id, statut) {
+    await fetch(`${API}/factures/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ statut }),
+    });
+    load();
+  }
+
+  const d = data?.devis || {};
+  const f = data?.factures || {};
+
+  return (
+    <div>
+      {/* Métriques */}
+      <div className="metrics-grid" style={{ marginBottom: 16 }}>
+        <div className="metric-card accent-green">
+          <div className="metric-label">CA devis validés</div>
+          <div className="metric-value">{(d.ca_devis_valides || 0).toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{d.valides || 0} devis</div>
+        </div>
+        <div className="metric-card accent-info">
+          <div className="metric-label">CA encaissé</div>
+          <div className="metric-value">{(f.ca_encaisse || 0).toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{f.payees || 0} factures payées</div>
+        </div>
+        <div className="metric-card accent-warn">
+          <div className="metric-label">En attente paiement</div>
+          <div className="metric-value">{(f.en_attente || 0).toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{f.envoyees || 0} facture(s) envoyée(s)</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Devis en cours</div>
+          <div className="metric-value">{d.en_cours || 0}</div>
+          <div className="metric-sub">brouillons + envoyés</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div className="tabs" style={{ marginBottom: 0 }}>
+          {[['devis', `Devis (${d.total || 0})`], ['factures', `Factures (${f.total || 0})`]].map(([k, l]) => (
+            <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
+          ))}
+        </div>
+        {tab === 'devis' && (
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNewDevis(true)}>+ Nouveau devis</button>
+        )}
+      </div>
+
+      {/* Liste devis */}
+      {tab === 'devis' && (
+        <div className="card">
+          {!data || (data.liste_devis || []).length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">📝</div>
+              <div className="empty-text">Aucun devis. Créez votre premier devis.</div>
+            </div>
+          ) : (data.liste_devis || []).map((devis, i) => (
+            <div key={devis.id} className="client-row" style={{ alignItems: 'flex-start', padding: '12px 0' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{devis.numero}</span>
+                  <StatutBadge statut={devis.statut} map={STATUT_DEVIS} />
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 2 }}>
+                  <strong>{devis.client_nom}</strong> · {devis.periode || 'Période non définie'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  {(devis.prestations || []).slice(0, 2).map(p => p.description).join(' · ')}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>{(devis.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Acompte : {devis.acompte_montant || 0} €</div>
+                <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  {devis.statut === 'brouillon' && (
+                    <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={() => changeStatutDevis(devis.id, 'envoyé')}>📤 Envoyer</button>
+                  )}
+                  {devis.statut === 'envoyé' && (
+                    <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={() => changeStatutDevis(devis.id, 'signé')}>✍️ Marquer signé</button>
+                  )}
+                  {devis.statut === 'signé' && (
+                    <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={() => changeStatutDevis(devis.id, 'validé')}>✅ Valider</button>
+                  )}
+                  {['validé', 'signé'].includes(devis.statut) && !devis.factures_liees?.length && (
+                    <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={() => createFactureFromDevis(devis)}>🧾 Créer facture</button>
+                  )}
+                  {!['annulé', 'caduc'].includes(devis.statut) && (
+                    <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                      onClick={() => changeStatutDevis(devis.id, 'annulé')}>Annuler</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Liste factures */}
+      {tab === 'factures' && (
+        <div className="card">
+          {!data || (data.liste_factures || []).length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">🧾</div>
+              <div className="empty-text">Aucune facture. Les factures sont créées depuis les devis validés.</div>
+            </div>
+          ) : (data.liste_factures || []).map((fac, i) => (
+            <div key={fac.id} className="client-row" style={{ alignItems: 'flex-start', padding: '12px 0' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{fac.numero}</span>
+                  <StatutBadge statut={fac.statut} map={STATUT_FACTURE} />
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 2 }}>
+                  <strong>{fac.client_nom}</strong>
+                  {fac.devis_numero && <span style={{ color: 'var(--text3)' }}> · Devis : {fac.devis_numero}</span>}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>{fac.periode}</div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>{(fac.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                {fac.acompte_encaisse > 0 && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Acompte : {fac.acompte_encaisse} €</div>}
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Solde : {fac.solde_a_payer} €</div>
+                <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                  {fac.statut === 'à_faire' && (
+                    <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={() => changeStatutFacture(fac.id, 'envoyée')}>📤 Envoyer</button>
+                  )}
+                  {fac.statut === 'envoyée' && (
+                    <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={() => changeStatutFacture(fac.id, 'payée')}>✅ Marquer payée</button>
+                  )}
+                  {fac.statut === 'envoyée' && (
+                    <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                      onClick={() => changeStatutFacture(fac.id, 'en_retard')}>⚠️ En retard</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showNewDevis && <NewDevisModal onClose={() => setShowNewDevis(false)} onCreated={() => { load(); setShowNewDevis(false); }} />}
+    </div>
+  );
+}
+
+// ── Modal nouveau devis ───────────────────────────────────────────────────────
+
+function NewDevisModal({ onClose, onCreated }) {
+  const [clients, setClients] = useState([]);
+  const [tarifs, setTarifs] = useState([]);
+  const [form, setForm] = useState({
+    client_slug: '', client_nom: '', periode: '',
+    acompte_pct: 30, facilite_paiement: '1x', notes: '',
+  });
+  const [prestations, setPrestations] = useState([
+    { description: '', type: '', quantite: 1, tarif_unitaire: 0, sous_total: 0 }
+  ]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch(`${API}/clients`).then(r => r.json()).then(d => setClients(d || [])).catch(() => {});
+    fetch(`${API}/devis/tarifs`).then(r => r.json()).then(d => setTarifs(d || [])).catch(() => {});
+  }, []);
+
+  function setF(k, v) { setForm(p => ({ ...p, [k]: v })); }
+
+  function updatePresta(i, k, v) {
+    setPrestations(prev => {
+      const next = [...prev];
+      next[i] = { ...next[i], [k]: v };
+      if (k === 'quantite' || k === 'tarif_unitaire') {
+        next[i].sous_total = (parseFloat(next[i].quantite) || 0) * (parseFloat(next[i].tarif_unitaire) || 0);
+      }
+      if (k === 'type') {
+        const tarif = tarifs.find(t => t.label === v);
+        if (tarif) {
+          next[i].tarif_unitaire = tarif.tarif;
+          next[i].sous_total = (parseFloat(next[i].quantite) || 1) * tarif.tarif;
+          if (!next[i].description) next[i].description = v;
+        }
+      }
+      return next;
+    });
+  }
+
+  function addLine() {
+    setPrestations(p => [...p, { description: '', type: '', quantite: 1, tarif_unitaire: 0, sous_total: 0 }]);
+  }
+
+  function removeLine(i) {
+    setPrestations(p => p.filter((_, idx) => idx !== i));
+  }
+
+  const total = prestations.reduce((s, p) => s + (parseFloat(p.sous_total) || 0), 0);
+  const acompte = Math.round(total * (parseFloat(form.acompte_pct) || 0) / 100 * 100) / 100;
+  const solde = Math.round((total - acompte) * 100) / 100;
+
+  async function submit() {
+    if (!form.client_nom) { setError('Client obligatoire'); return; }
+    if (!prestations.some(p => p.description)) { setError('Au moins une prestation obligatoire'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/devis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, prestations, total_ht: total }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      onCreated();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ width: 640, maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="modal-title">📝 Nouveau devis</div>
+        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 12 }}>{error}</div>}
+
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Client *</label>
+            <select className="form-input" value={form.client_slug}
+              onChange={e => {
+                const c = clients.find(x => x.slug === e.target.value);
+                setF('client_slug', e.target.value);
+                setF('client_nom', c ? (c.nom || c.nom_officiel) : '');
+              }}>
+              <option value="">Sélectionner...</option>
+              {clients.map(c => <option key={c.slug} value={c.slug}>{c.nom || c.nom_officiel}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Période</label>
+            <input className="form-input" value={form.periode} onChange={e => setF('periode', e.target.value)} placeholder="du JJ/MM/AAAA au JJ/MM/AAAA" />
+          </div>
+        </div>
+
+        {/* Prestations */}
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>Prestations *</div>
+        {prestations.map((p, i) => (
+          <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'flex-end' }}>
+            <div style={{ flex: 2 }}>
+              <input className="form-input" style={{ fontSize: 12 }} value={p.description}
+                onChange={e => updatePresta(i, 'description', e.target.value)} placeholder="Description" />
+            </div>
+            <div style={{ flex: 1.5 }}>
+              <select className="form-input" style={{ fontSize: 12 }} value={p.type}
+                onChange={e => updatePresta(i, 'type', e.target.value)}>
+                <option value="">Type / formule</option>
+                {tarifs.map(t => <option key={t.label} value={t.label}>{t.label} ({t.tarif} {t.unite})</option>)}
+              </select>
+            </div>
+            <div style={{ width: 60 }}>
+              <input className="form-input" style={{ fontSize: 12 }} type="number" value={p.quantite}
+                onChange={e => updatePresta(i, 'quantite', e.target.value)} min="0" step="0.5" />
+            </div>
+            <div style={{ width: 80 }}>
+              <input className="form-input" style={{ fontSize: 12 }} type="number" value={p.tarif_unitaire}
+                onChange={e => updatePresta(i, 'tarif_unitaire', e.target.value)} />
+            </div>
+            <div style={{ width: 80, textAlign: 'right', fontWeight: 600, fontSize: 13, paddingBottom: 8 }}>
+              {(p.sous_total || 0).toLocaleString('fr-FR')} €
+            </div>
+            <button onClick={() => removeLine(i)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', paddingBottom: 8 }}>✕</button>
+          </div>
+        ))}
+        <button className="btn" style={{ fontSize: 12, marginBottom: 14 }} onClick={addLine}>+ Ligne</button>
+
+        {/* Totaux */}
+        <div style={{ background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', padding: '12px', marginBottom: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
+            <span>Total HT</span><strong>{total.toLocaleString('fr-FR')} €</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12, color: 'var(--text3)' }}>
+            <span>TVA — Non applicable (Art. 293B du CGI)</span><span>0 €</span>
+          </div>
+          <div className="divider" />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 12 }}>Acompte (%)</span>
+            <input type="number" className="form-input" style={{ width: 70, fontSize: 12 }}
+              value={form.acompte_pct} onChange={e => setF('acompte_pct', e.target.value)} />
+            <span style={{ fontSize: 13, fontWeight: 500 }}>{acompte.toLocaleString('fr-FR')} €</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+            <span>Solde à la livraison</span><strong>{solde.toLocaleString('fr-FR')} €</strong>
+          </div>
+        </div>
+
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Facilité de paiement</label>
+            <select className="form-input" value={form.facilite_paiement} onChange={e => setF('facilite_paiement', e.target.value)}>
+              <option value="1x">1 fois (standard)</option>
+              <option value="2x">2 fois</option>
+              <option value="3x">3 fois</option>
+              <option value="manuel">Manuel (délais personnalisés)</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Notes</label>
+            <input className="form-input" value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Conditions particulières..." />
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+            {loading ? 'Création…' : 'Créer le devis →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Subventions pipeline view ─────────────────────────────────────────────────
 
 function SubventionsView() {
@@ -1958,11 +2347,12 @@ function App() {
     { key: 'dashboard', label: 'Tableau de bord', icon: icons.dashboard },
     { key: 'clients', label: 'Dossiers clients', icon: icons.clients },
     { key: 'taches', label: 'Tâches', icon: icons.taches, badge: urgentCount || null },
-    { key: 'subventions', label: 'Subventions', icon: icons.subventions },
+    { key: 'devis', label: 'Devis & Factures', icon: icons.subventions },
+    { key: 'subventions', label: 'Subventions', icon: icons.alertes },
     { key: 'alertes', label: 'Alertes', icon: icons.alertes, badge: data?.nb_alertes_urgentes || null },
   ];
 
-  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', subventions: 'Pipeline subventions', alertes: 'Alertes conformité' };
+  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', subventions: 'Pipeline subventions', alertes: 'Alertes conformité' };
 
   return (
     <div className="app">
@@ -2021,6 +2411,7 @@ function App() {
           {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
           {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
+          {view === 'devis' && <DevisFacturesView />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
         </main>
