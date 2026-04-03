@@ -1902,3 +1902,17 @@ Génère l'email complet avec l'objet."""
         return {"email": email_text, "client": client_nom, "type": email_type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur génération email : {e}")
+
+
+# ── Authentification ──────────────────────────────────────────────────────────
+
+@app.post("/auth/login")
+def login(body: dict):
+    """Vérifie le mot de passe. Simple et efficace."""
+    password = body.get("password", "")
+    expected = os.environ.get("APP_PASSWORD", "pausekreyol2026")
+
+    if not password or password != expected:
+        raise HTTPException(status_code=401, detail="Mot de passe incorrect")
+
+    return {"status": "ok", "message": "Authentifié"}

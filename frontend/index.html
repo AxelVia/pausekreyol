@@ -3316,6 +3316,15 @@ const icons = {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 function App() {
+  // ── Auth ────────────────────────────────────────────────────────────────
+  const [authed, setAuthed] = useState(() => sessionStorage.getItem('pk_auth') === '1');
+
+  if (!authed) return <LoginScreen onAuth={() => { sessionStorage.setItem('pk_auth', '1'); setAuthed(true); }} />;
+
+  return <AppContent />;
+}
+
+function AppContent() {
   const [view, setView] = useState('dashboard');
   const [selectedClient, setSelectedClient] = useState(null);
   const [data, setData] = useState({ nb_clients: 0, nb_alertes_urgentes: 0, clients: [], alertes: [] });
@@ -3394,10 +3403,15 @@ function App() {
         <div className="sidebar-bottom">
           <div className="user-chip">
             <div className="avatar">PK</div>
-            <div>
+            <div style={{ flex: 1 }}>
               <div className="user-name">Pause Kreyol</div>
               <div className="user-role">Admin de production</div>
             </div>
+            <button
+              onClick={() => { sessionStorage.removeItem('pk_auth'); window.location.reload(); }}
+              title="Se déconnecter"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14, padding: '4px', borderRadius: 4, lineHeight: 1 }}
+            >⏻</button>
           </div>
         </div>
       </aside>
@@ -3982,6 +3996,126 @@ function EditClientModal({ detail, onClose, onSaved, onDeleted }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Écran de connexion ────────────────────────────────────────────────────────
+
+function LoginScreen({ onAuth }) {
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [shake, setShake] = useState(false);
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    if (!password) return;
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        onAuth();
+      } else {
+        setError('Mot de passe incorrect');
+        setShake(true);
+        setTimeout(() => setShake(false), 600);
+      }
+    } catch {
+      setError('Impossible de contacter le serveur');
+    } finally {
+      setLoading(false);
+      setPassword('');
+    }
+  }
+
+  return (
+    <div style={{
+      minHeight: '100vh', background: 'var(--bg)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'DM Sans', sans-serif",
+    }}>
+      <div style={{
+        width: 380, padding: '48px 40px',
+        background: 'var(--surface)', borderRadius: 16,
+        boxShadow: '0 8px 40px rgba(0,0,0,0.10)',
+        animation: shake ? 'shake 0.4s ease' : 'none',
+      }}>
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: 14,
+            background: 'var(--accent)', display: 'inline-flex',
+            alignItems: 'center', justifyContent: 'center',
+            fontSize: 26, marginBottom: 14,
+          }}>🌿</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent)', letterSpacing: '-0.5px' }}>PauseKreyol</div>
+          <div style={{ fontSize: 13, color: 'var(--text3)', marginTop: 4 }}>Administration de production culturelle</div>
+        </div>
+
+        <form onSubmit={handleLogin}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
+              Mot de passe
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              autoFocus
+              placeholder="••••••••"
+              style={{
+                width: '100%', padding: '11px 14px',
+                borderRadius: 8, border: `1.5px solid ${error ? 'var(--danger)' : 'var(--border2)'}`,
+                fontSize: 15, fontFamily: 'inherit', background: 'var(--surface)',
+                outline: 'none', transition: 'border 0.15s',
+                boxSizing: 'border-box',
+              }}
+              onFocus={e => e.target.style.borderColor = 'var(--accent-mid)'}
+              onBlur={e => e.target.style.borderColor = error ? 'var(--danger)' : 'var(--border2)'}
+            />
+            {error && (
+              <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 6 }}>
+                {error}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !password}
+            style={{
+              width: '100%', padding: '12px',
+              background: loading || !password ? 'var(--border2)' : 'var(--accent)',
+              color: 'white', border: 'none', borderRadius: 8,
+              fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
+              cursor: loading || !password ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            {loading ? 'Connexion...' : 'Se connecter →'}
+          </button>
+        </form>
+
+        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: 'var(--text3)' }}>
+          Accès réservé — Pause Kreyol
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          20% { transform: translateX(-8px); }
+          40% { transform: translateX(8px); }
+          60% { transform: translateX(-5px); }
+          80% { transform: translateX(5px); }
+        }
+      `}</style>
     </div>
   );
 }
