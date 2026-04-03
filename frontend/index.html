@@ -844,7 +844,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
         <button className="btn" onClick={() => setShowEdit(true)}>✏️ Modifier</button>
       </div>
 
-      {showNewProject && <NewProjectModal slug={slug} onClose={() => setShowNewProject(false)} onCreated={() => { load(); if (onRefresh) onRefresh(); }} />}
+      {showNewProject && <NewProjectModal slug={slug} clientMeta={detail} onClose={() => setShowNewProject(false)} onCreated={() => { load(); if (onRefresh) onRefresh(); }} />}
       {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={handleSaved} onDeleted={() => { if (onRefresh) onRefresh(); onBack(); }} />}
       {showImport && <ImportExcelModal slug={slug} onClose={() => setShowImport(false)} onDone={handleSaved} />}
 
@@ -2214,68 +2214,202 @@ function ImportExcelModal({ slug, onClose, onDone }) {
   );
 }
 
-function NewProjectModal({ slug, onClose, onCreated }) {
-  const [form, setForm] = useState({ nom_projet: '', date_debut_projet: '', date_fin_projet: '', lieu_projet: '', code_aap: '' });
+function NewProjectModal({ slug, clientMeta, onClose, onCreated }) {
+  const [step, setStep] = useState('intro');  // intro | upload | analyse | verdict | creating
+  const [file, setFile] = useState(null);
+  const [analyse, setAnalyse] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  function set(k, v) { setForm(prev => ({ ...prev, [k]: v })); }
+  const cd = clientMeta?.client_data || {};
+  const nomClient = cd.nom_usuel || cd.nom_officiel || '?';
 
-  async function submit() {
-    if (!form.nom_projet) { setError('Nom du projet obligatoire.'); return; }
+  async function handleUpload(f) {
+    setFile(f);
+    setError('');
     setLoading(true);
+    setStep('analyse');
+    const form = new FormData();
+    form.append('file', f);
+    form.append('client_slug', slug);
     try {
-      const res = await fetch(`${API}/clients/${slug}/projets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      const res = await fetch(`${API}/projets/analyse-faisabilite`, {
+        method: 'POST', body: form
       });
       if (!res.ok) throw new Error(await res.text());
-      onCreated();
-      onClose();
+      const data = await res.json();
+      setAnalyse(data);
+      setStep('verdict');
     } catch (e) {
-      setError('Erreur : ' + e.message);
+      setError(e.message);
+      setStep('upload');
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleDecision(decision) {
+    // decision : 'accepte' | 'condition' | 'refuse'
+    setStep('creating');
+    setLoading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('client_slug', slug);
+      form.append('decision', decision);
+      form.append('analyse_id', analyse?.id || '');
+      const res = await fetch(`${API}/projets/creer-depuis-faisabilite`, {
+        method: 'POST', body: form
+      });
+      if (!res.ok) throw new Error(await res.text());
+      onCreated();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setStep('verdict');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const VERDICT_COLORS = {
+    'FAVORABLE': { bg: '#E8F5E9', color: '#1B5E20', icon: '✅' },
+    'SOUS CONDITIONS': { bg: '#FFF3E0', color: '#E65100', icon: '⚠️' },
+    'DÉFAVORABLE': { bg: '#FFEBEE', color: '#B71C1C', icon: '🚫' },
+  };
+  const vc = VERDICT_COLORS[analyse?.verdict] || VERDICT_COLORS['SOUS CONDITIONS'];
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-title">Nouveau projet</div>
-        <div className="modal-sub">Un budget Excel sera généré et synchronisé sur Drive.</div>
-        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
-        <div className="form-group">
-          <label className="form-label">Nom du projet *</label>
-          <input className="form-input" value={form.nom_projet} onChange={e => set('nom_projet', e.target.value)} placeholder="Bastet Festival #6 — Oct 2027" autoFocus />
-        </div>
-        <div className="form-grid">
-          <div className="form-group">
-            <label className="form-label">Date de début</label>
-            <input className="form-input" type="date" value={form.date_debut_projet} onChange={e => set('date_debut_projet', e.target.value)} />
+      <div className="modal" style={{ width: 600 }}>
+
+        {/* ── INTRO ────────────────────────────────────────────────────── */}
+        {step === 'intro' && <>
+          <div className="modal-title">📋 Nouveau projet</div>
+          <div className="modal-sub">La création d'un projet nécessite l'étude de faisabilité complétée.</div>
+
+          <div style={{ background: 'var(--accent-light)', borderRadius: 'var(--radius-sm)', padding: '14px 16px', marginBottom: 16 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--accent)', marginBottom: 8 }}>📋 Processus de création projet</div>
+            {[
+              ['1', 'Téléchargez le template et envoyez-le au client', true],
+              ['2', 'Le client remplit les hypothèses (budget, billetterie, partenaires)'],
+              ['3', 'Importez le fichier complété ici'],
+              ['4', 'Claude analyse la faisabilité et émet un verdict'],
+              ['5', 'Vous décidez : accepter, accepter sous conditions, ou refuser'],
+            ].map(([n, label, hasLink]) => (
+              <div key={n} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6, fontSize: 13 }}>
+                <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{n}</div>
+                <div>
+                  {label}
+                  {hasLink && <> — <a href={`${API}/templates/faisabilite-projet`} target="_blank" style={{ color: 'var(--accent)', fontWeight: 500 }}>Télécharger le template →</a></>}
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="form-group">
-            <label className="form-label">Date de fin</label>
-            <input className="form-input" type="date" value={form.date_fin_projet} onChange={e => set('date_fin_projet', e.target.value)} />
+
+          <div
+            style={{ border: '2px dashed var(--border2)', borderRadius: 'var(--radius)', padding: '28px', textAlign: 'center', cursor: 'pointer', background: 'var(--surface2)' }}
+            onClick={() => document.getElementById('proj-file-input').click()}
+          >
+            <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+            <div style={{ fontSize: 14, fontWeight: 500 }}>Importer le template de faisabilité complété</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>TEMPLATE_FAISABILITE_PROJET.xlsx (.xlsx uniquement)</div>
+            <input id="proj-file-input" type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+              onChange={e => e.target.files[0] && handleUpload(e.target.files[0])} />
           </div>
-        </div>
-        <div className="form-grid">
-          <div className="form-group">
-            <label className="form-label">Lieu</label>
-            <input className="form-input" value={form.lieu_projet} onChange={e => set('lieu_projet', e.target.value)} placeholder="La Place, Paris" />
+
+          {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginTop: 12 }}>{error}</div>}
+
+          <div className="modal-footer">
+            <button className="btn" onClick={onClose}>Annuler</button>
           </div>
-          <div className="form-group">
-            <label className="form-label">Code appel à projets</label>
-            <input className="form-input" value={form.code_aap} onChange={e => set('code_aap', e.target.value)} placeholder="HHP27S1" />
+        </>}
+
+        {/* ── ANALYSE ──────────────────────────────────────────────────── */}
+        {step === 'analyse' && (
+          <div className="empty" style={{ padding: '48px 0' }}>
+            <div style={{ fontSize: 28, marginBottom: 12 }}>🧠</div>
+            <div style={{ fontSize: 14, fontWeight: 500 }}>Claude analyse la faisabilité…</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Vérification des indicateurs financiers et réglementaires</div>
           </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn" onClick={onClose}>Annuler</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading}>
-            {loading ? 'Création…' : 'Créer le projet →'}
-          </button>
-        </div>
+        )}
+
+        {/* ── VERDICT ──────────────────────────────────────────────────── */}
+        {step === 'verdict' && analyse && <>
+          <div className="modal-title">🔍 Analyse de faisabilité — {analyse.nom_projet}</div>
+
+          {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 12 }}>{error}</div>}
+
+          {/* Verdict principal */}
+          <div style={{ background: vc.bg, borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 14, border: `1.5px solid ${vc.color}20` }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: vc.color, marginBottom: 6 }}>{vc.icon} {analyse.verdict}</div>
+            <div style={{ fontSize: 13, color: vc.color }}>{analyse.synthese}</div>
+          </div>
+
+          {/* Indicateurs */}
+          <div style={{ marginBottom: 14, maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+            {(analyse.indicateurs || []).map((ind, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderBottom: '1px solid var(--border)', fontSize: 12, background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                <span style={{ fontSize: 14 }}>{ind.statut === 'OK' ? '✅' : ind.statut === 'WARN' ? '⚠️' : ind.statut === 'ERROR' ? '🚫' : '❓'}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500 }}>{ind.label}</div>
+                  <div style={{ color: 'var(--text3)', fontSize: 11 }}>{ind.valeur} — Norme : {ind.norme}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Conditions si applicable */}
+          {analyse.conditions?.length > 0 && (
+            <div style={{ background: 'var(--warn-light)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: 14, fontSize: 12 }}>
+              <div style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 6 }}>Conditions à remplir :</div>
+              {analyse.conditions.map((c, i) => <div key={i} style={{ color: 'var(--warn)' }}>• {c}</div>)}
+            </div>
+          )}
+
+          {/* Chiffres clés */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            {[
+              ['Budget total', `${(analyse.budget_total || 0).toLocaleString('fr-FR')} €`],
+              ['Subventions', `${(analyse.total_subventions || 0).toLocaleString('fr-FR')} €`],
+              ['Billetterie', `${(analyse.total_billetterie || 0).toLocaleString('fr-FR')} €`],
+              ['Solde prév.', `${(analyse.solde || 0).toLocaleString('fr-FR')} €`],
+            ].map(([label, val]) => (
+              <div key={label} style={{ flex: 1, background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', padding: '8px', textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>{label}</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{val}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Décision */}
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10, textAlign: 'center' }}>
+            Votre décision pour ce projet :
+          </div>
+          <div className="modal-footer" style={{ justifyContent: 'center', gap: 10 }}>
+            <button className="btn" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}
+              onClick={() => handleDecision('refuse')}>
+              🚫 Refuser
+            </button>
+            <button className="btn" style={{ color: 'var(--warn)', borderColor: 'var(--warn)' }}
+              onClick={() => handleDecision('condition')}>
+              ⚠️ Accepter sous conditions
+            </button>
+            <button className="btn btn-primary"
+              onClick={() => handleDecision('accepte')}>
+              ✅ Accepter — Créer le projet
+            </button>
+          </div>
+        </>}
+
+        {/* ── CREATING ─────────────────────────────────────────────────── */}
+        {step === 'creating' && (
+          <div className="empty" style={{ padding: '48px 0' }}>
+            <div style={{ fontSize: 28, marginBottom: 12 }}>⏳</div>
+            <div style={{ fontSize: 14, fontWeight: 500 }}>Création du projet en cours…</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Génération des Excel Drive + fiche de faisabilité</div>
+          </div>
+        )}
       </div>
     </div>
   );

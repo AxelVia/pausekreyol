@@ -1079,3 +1079,299 @@ def valider_tache(task_id: str):
     TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
 
     return {"status": "validated", "task_id": task_id}
+
+
+# ── Faisabilité projet ────────────────────────────────────────────────────────
+
+@app.get("/templates/faisabilite-projet")
+def download_faisabilite_template():
+    """Télécharge le template d'étude de faisabilité projet."""
+    from fastapi.responses import FileResponse
+    path = Path(__file__).parent.parent / "templates" / "TEMPLATE_FAISABILITE_PROJET.xlsx"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Template non trouvé")
+    return FileResponse(
+        str(path),
+        filename="TEMPLATE_FAISABILITE_PROJET_PauseKreyol.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@app.post("/projets/analyse-faisabilite")
+async def analyse_faisabilite(
+    file: UploadFile = File(...),
+    client_slug: str = ""
+):
+    """
+    Parse le template de faisabilité et lance l'analyse Claude.
+    Retourne verdict + indicateurs + recommandations.
+    """
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
+
+    try:
+        from openpyxl import load_workbook
+        import anthropic as anthropic_sdk
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+
+        wb = load_workbook(str(tmp_path), data_only=True)
+        tmp_path.unlink()
+
+        # ── Extrait les données clés ──────────────────────────────────
+        params = {}
+        if "PARAMÈTRES" in wb.sheetnames:
+            ws = wb["PARAMÈTRES"]
+            params = {
+                "nom_projet":    ws["B4"].value,
+                "structure":     ws["B5"].value,
+                "dates":         ws["B13"].value,
+                "lieu":          ws["B14"].value,
+                "type_event":    ws["B15"].value,
+                "description":   ws["B16"].value,
+                "nb_seances":    ws["E15"].value,
+                "jauge_max":     ws["E14"].value,
+                "nb_jours":      ws["E13"].value,
+            }
+
+        # Budget global depuis la synthèse
+        budget_data = {}
+        if "PARAMÈTRES" in wb.sheetnames:
+            ws = wb["PARAMÈTRES"]
+            try:
+                charges_rows = []
+                recettes_rows = []
+                for row in ws.iter_rows(min_row=25, max_row=40, values_only=True):
+                    charges_rows.append(row)
+                budget_data["charges_prudent"] = ws.cell(
+                    row=26 + 8, column=2).value or 0
+                budget_data["recettes_prudent"] = ws.cell(
+                    row=26 + 8, column=6).value or 0
+            except Exception:
+                pass
+
+        # Billetterie
+        billetterie_total = 0
+        if "PARAMÈTRES" in wb.sheetnames:
+            try:
+                ws = wb["PARAMÈTRES"]
+                billetterie_total = ws["G23"].value or 0
+            except Exception:
+                pass
+
+        # Financements
+        fin_data = {}
+        if "FINANCEMENTS" in wb.sheetnames:
+            ws = wb["FINANCEMENTS"]
+            try:
+                # Cherche la ligne TOTAL
+                for row in ws.iter_rows(values_only=True):
+                    if row[0] and "TOTAL FINANCEMENTS" in str(row[0]):
+                        fin_data["total_prudent"] = row[2] or 0
+                        fin_data["total_optimiste"] = row[3] or 0
+                        break
+            except Exception:
+                pass
+
+        # ── Prépare le contexte pour Claude ──────────────────────────
+        client_context = {}
+        if client_slug:
+            matches = list(CLIENTS_DIR.glob(f"{client_slug}*"))
+            if matches:
+                meta = json.loads((matches[0] / "client.json").read_text())
+                client_context = {
+                    "nom": meta["client_data"].get("nom_officiel"),
+                    "categorie": meta["client_data"].get("categorie"),
+                    "licence": meta["client_data"].get("licence_type1"),
+                    "date_creation": meta["client_data"].get("date_creation"),
+                }
+
+        budget_total = float(budget_data.get("charges_prudent") or 0)
+        total_subs = float(fin_data.get("total_prudent") or 0)
+        total_bill = float(billetterie_total or 0)
+        solde = total_subs + total_bill - budget_total
+
+        ratio_sub = (total_subs / budget_total * 100) if budget_total > 0 else 0
+        ratio_bill = (total_bill / budget_total * 100) if budget_total > 0 else 0
+
+        # ── Appel Claude ──────────────────────────────────────────────
+        ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        prompt = f"""Tu es Pause Kreyol, une administratrice de production culturelle experte.
+Analyse la faisabilité financière de ce projet et fournis une évaluation structurée.
+
+PROJET :
+{json.dumps(params, ensure_ascii=False, indent=2)}
+
+CHIFFRES CLÉS :
+- Budget total charges : {budget_total:,.0f} €
+- Total financements (subventions + partenaires) : {total_subs:,.0f} €
+- Billetterie prévisionnelle : {total_bill:,.0f} €
+- Solde prévisionnel : {solde:,.0f} €
+- Ratio subventions/budget : {ratio_sub:.1f}%
+- Ratio billetterie/charges : {ratio_bill:.1f}%
+
+CLIENT :
+{json.dumps(client_context, ensure_ascii=False, indent=2)}
+
+Règles réglementaires à vérifier :
+- Subventions publiques < 80% du budget total (Art. R1611-1)
+- Subvention Mairie de Paris < 70% du budget (AAP)
+- Budget doit être équilibré (charges ≤ recettes totales)
+- Licence entrepreneur du spectacle obligatoire si diffuseur
+
+Réponds UNIQUEMENT en JSON valide :
+{{
+  "id": "analyse_{datetime.now().strftime('%Y%m%d_%H%M%S') if True else ''}",
+  "nom_projet": "...",
+  "verdict": "FAVORABLE" ou "SOUS CONDITIONS" ou "DÉFAVORABLE",
+  "synthese": "2-3 phrases résumant la situation",
+  "indicateurs": [
+    {{"label": "...", "valeur": "...", "norme": "...", "statut": "OK" ou "WARN" ou "ERROR" ou "INFO"}}
+  ],
+  "conditions": ["condition 1", "condition 2"],
+  "points_forts": ["point 1", "point 2"],
+  "points_attention": ["point 1", "point 2"],
+  "budget_total": {budget_total},
+  "total_subventions": {total_subs},
+  "total_billetterie": {total_bill},
+  "solde": {solde}
+}}"""
+
+        try:
+            response = ai.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = response.content[0].text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(raw)
+        except Exception as e:
+            # Fallback : analyse sans IA
+            result = {
+                "id": f"analyse_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "nom_projet": params.get("nom_projet", "?"),
+                "verdict": "SOUS CONDITIONS" if solde >= 0 else "DÉFAVORABLE",
+                "synthese": f"Budget de {budget_total:,.0f}€. Solde prévisionnel : {solde:,.0f}€.",
+                "indicateurs": [
+                    {"label": "Ratio subventions/budget", "valeur": f"{ratio_sub:.1f}%", "norme": "< 80%",
+                     "statut": "OK" if ratio_sub < 80 else "ERROR"},
+                    {"label": "Budget équilibré", "valeur": f"Solde {solde:,.0f}€", "norme": "≥ 0€",
+                     "statut": "OK" if solde >= 0 else "ERROR"},
+                    {"label": "Billetterie / charges", "valeur": f"{ratio_bill:.1f}%", "norme": "> 20%",
+                     "statut": "OK" if ratio_bill >= 20 else "WARN"},
+                ],
+                "conditions": [],
+                "points_forts": [],
+                "points_attention": ["Analyse IA indisponible — vérification manuelle requise"],
+                "budget_total": budget_total,
+                "total_subventions": total_subs,
+                "total_billetterie": total_bill,
+                "solde": solde,
+            }
+
+        # Ajoute les données brutes du fichier
+        result["params"] = params
+        result["client_slug"] = client_slug
+        result["fichier"] = file.filename
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/projets/creer-depuis-faisabilite")
+async def creer_projet_depuis_faisabilite(
+    file: UploadFile = File(...),
+    client_slug: str = "",
+    decision: str = "accepte",
+    analyse_id: str = ""
+):
+    """
+    Crée le projet après décision sur la faisabilité.
+    - accepte : crée le projet normalement
+    - condition : crée le projet avec statut 'en_attente_conditions'
+    - refuse : archive l'analyse sans créer de projet
+    """
+    if decision == "refuse":
+        # Tâche d'archivage
+        task = {
+            "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_refus",
+            "created_at": datetime.now().isoformat(),
+            "source": "Faisabilité",
+            "titre": f"Projet refusé — archiver le dossier de faisabilité",
+            "priorite": "Normal",
+            "description": "Le projet a été refusé suite à l'analyse de faisabilité. Archiver et informer le client.",
+            "client_slug": client_slug,
+            "type": "archivage",
+            "done": False,
+        }
+        tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+        tasks.append(task)
+        _save_tasks(tasks)
+        return {"status": "refuse", "message": "Projet refusé — tâche d'archivage créée"}
+
+    # Création du projet
+    try:
+        from openpyxl import load_workbook
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+
+        wb = load_workbook(str(tmp_path), data_only=True)
+        tmp_path.unlink()
+
+        # Extrait les données projet depuis PARAMÈTRES
+        project_data = {"nom_projet": "Nouveau projet"}
+        if "PARAMÈTRES" in wb.sheetnames:
+            ws = wb["PARAMÈTRES"]
+            project_data = {
+                "nom_projet":          str(ws["B4"].value or "Nouveau projet"),
+                "date_debut_projet":   str(ws["B13"].value or ""),
+                "lieu_projet":         str(ws["B14"].value or ""),
+                "description_projet":  str(ws["B16"].value or ""),
+            }
+
+        statut_initial = "en_attente_conditions" if decision == "condition" else "en_construction"
+        project_data["statut_initial"] = statut_initial
+        project_data["decision_faisabilite"] = decision
+        project_data["analyse_id"] = analyse_id
+
+        projet_dir = create_project(client_slug, project_data)
+        meta_path = list(CLIENTS_DIR.glob(f"{client_slug}*"))[0] / "client.json"
+        meta = json.loads(meta_path.read_text())
+
+        # Tâche selon décision
+        nom_projet = project_data["nom_projet"]
+        if decision == "condition":
+            task = {
+                "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_condition",
+                "created_at": datetime.now().isoformat(),
+                "source": "Faisabilité",
+                "titre": f"Projet sous conditions — négociation requise : {nom_projet}",
+                "priorite": "Attention",
+                "description": "Le projet a été accepté sous conditions. Préciser les conditions au client et obtenir son accord avant de débloquer le projet.",
+                "client_slug": client_slug,
+                "type": "validation",
+                "done": False,
+            }
+            tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+            tasks.append(task)
+            _save_tasks(tasks)
+
+        return {
+            "status": "created",
+            "decision": decision,
+            "slug": client_slug,
+            "nom_projet": nom_projet,
+            "statut": statut_initial,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
