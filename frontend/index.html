@@ -1533,9 +1533,13 @@ function ClientsView({ clients, onNewClient, onOpenClient }) {
     <div>
       <div className="card">
         {clients.length === 0 && (
-          <div className="empty">
+          <div className="empty" style={{ padding: '40px 20px' }}>
             <div className="empty-icon">📁</div>
-            <div className="empty-text">Aucun client. Créez votre premier dossier ou importez un Excel.</div>
+            <div className="empty-text" style={{ marginBottom: 8 }}>Aucun dossier client</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, maxWidth: 320, textAlign: 'center' }}>
+              Pour créer un dossier, envoyez la fiche de renseignements au client, puis importez-la une fois complétée.
+            </div>
+            <button className="btn btn-primary" onClick={onNewClient}>+ Créer un premier dossier</button>
           </div>
         )}
         {clients.map((c, i) => (
@@ -1919,7 +1923,6 @@ function App() {
   const [data, setData] = useState({ nb_clients: 0, nb_alertes_urgentes: 0, clients: [], alertes: [] });
   const [taches, setTaches] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [showImport, setShowImport] = useState(false);
 
   async function fetchTaches() {
     try {
@@ -2004,10 +2007,9 @@ function App() {
             {titles[view]}
           </div>
           <div className="topbar-right">
-            {view === 'clients' && !selectedClient && <>
-              <button className="btn" onClick={() => setShowImport(true)}>📥 Importer un Excel</button>
+            {view === 'clients' && !selectedClient && (
               <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nouveau client</button>
-            </>}
+            )}
           </div>
         </header>
         <div className="mobile-readonly-banner">
@@ -2025,7 +2027,6 @@ function App() {
       </div>
 
       {showModal && <NewClientModal onClose={() => setShowModal(false)} onCreated={fetchDashboard} />}
-      {showImport && <ImportExcelModal slug={null} onClose={() => setShowImport(false)} onDone={() => { fetchDashboard(); setShowImport(false); }} />}
 
       {/* Barre navigation mobile */}
       <nav className="mobile-nav">
