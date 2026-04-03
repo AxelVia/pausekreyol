@@ -1872,6 +1872,451 @@ function TachesView({ taches, setTaches }) {
   );
 }
 
+// ── Communication ─────────────────────────────────────────────────────────────
+
+function CommView({ clients }) {
+  const [tab, setTab] = useState('charte');
+  const [charte, setCharte] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pk_charte') || 'null'); } catch { return null; }
+  });
+  const [showCharteEditor, setShowCharteEditor] = useState(false);
+
+  // Générateur signature email
+  const [sigForm, setSigForm] = useState({ nom: 'Pause Kreyol', titre: 'Administration de production culturelle', email: 'contact@pausekreyol.fr', telephone: '', site: 'pausekreyol.fr', slogan: '' });
+  const [sigGenerated, setSigGenerated] = useState(false);
+
+  // Générateur email client
+  const [emailForm, setEmailForm] = useState({ client: '', type: 'onboarding', custom: '' });
+  const [emailResult, setEmailResult] = useState('');
+  const [emailLoading, setEmailLoading] = useState(false);
+
+  function setSig(k, v) { setSigForm(p => ({ ...p, [k]: v })); }
+  function setEF(k, v) { setEmailForm(p => ({ ...p, [k]: v })); }
+
+  function saveCharte(data) {
+    setCharte(data);
+    try { localStorage.setItem('pk_charte', JSON.stringify(data)); } catch {}
+    setShowCharteEditor(false);
+  }
+
+  async function generateEmail() {
+    if (!emailForm.type && !emailForm.custom) return;
+    setEmailLoading(true);
+    setEmailResult('');
+    try {
+      const client = clients.find(c => c.slug === emailForm.client);
+      const res = await fetch(`${API}/comm/generer-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_nom: client?.nom || emailForm.client || 'Client',
+          type: emailForm.type,
+          custom: emailForm.custom,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEmailResult(data.email);
+      }
+    } catch {}
+    setEmailLoading(false);
+  }
+
+  const C = charte?.couleurs || { primaire: '#2D5016', secondaire: '#5A8A32', neutre: '#F7F5F0', texte: '#1A1916' };
+
+  return (
+    <div>
+      <div className="tabs" style={{ marginBottom: 16 }}>
+        {[['charte', '🎨 Charte graphique'], ['signature', '✉️ Signature email'], ['emails', '📧 Modèles emails'], ['assets', '📁 Assets']].map(([k, l]) => (
+          <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* ── CHARTE GRAPHIQUE ───────────────────────────────────────────────── */}
+      {tab === 'charte' && (
+        <div>
+          <div className="grid-2" style={{ marginBottom: 16 }}>
+            {/* Couleurs */}
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Palette de couleurs</div>
+                <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowCharteEditor(true)}>
+                  {charte ? '✏️ Modifier' : '+ Configurer'}
+                </button>
+              </div>
+              {charte ? (
+                <div>
+                  {[['Couleur primaire', C.primaire], ['Couleur secondaire', C.secondaire], ['Fond / Neutre', C.neutre], ['Texte', C.texte]].map(([label, color]) => (
+                    <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: color, border: '1px solid var(--border)', flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'monospace' }}>{color}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty">
+                  <div className="empty-icon">🎨</div>
+                  <div className="empty-text">Configurez votre charte graphique pour centraliser les couleurs et polices.</div>
+                </div>
+              )}
+            </div>
+
+            {/* Typo & Identité */}
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Typographie & Identité</div>
+              </div>
+              {charte ? (
+                <div>
+                  {[
+                    ['Police principale', charte.typo?.principale || '—'],
+                    ['Police secondaire', charte.typo?.secondaire || '—'],
+                    ['Slogan', charte.identite?.slogan || '—'],
+                    ['Site web', charte.identite?.site || '—'],
+                    ['Email contact', charte.identite?.email || '—'],
+                  ].map(([label, val]) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                      <span style={{ color: 'var(--text3)' }}>{label}</span>
+                      <span style={{ fontWeight: 500 }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty"><div className="empty-text">Aucune charte configurée.</div></div>
+              )}
+            </div>
+          </div>
+
+          {/* Aperçu charte */}
+          {charte && (
+            <div className="card">
+              <div className="card-header"><div className="card-title">Aperçu de la charte</div></div>
+              <div style={{ padding: 20, background: C.neutre, borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                <div style={{ fontFamily: charte.typo?.principale || 'inherit', color: C.primaire, fontSize: 24, fontWeight: 700, marginBottom: 8 }}>
+                  Pause Kreyol
+                </div>
+                <div style={{ fontFamily: charte.typo?.secondaire || 'inherit', color: C.texte, fontSize: 14, marginBottom: 16 }}>
+                  {charte.identite?.slogan || 'Administration de production culturelle'}
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <div style={{ padding: '8px 18px', background: C.primaire, color: 'white', borderRadius: 6, fontSize: 13, fontWeight: 500 }}>Bouton principal</div>
+                  <div style={{ padding: '8px 18px', background: 'white', color: C.primaire, border: `1.5px solid ${C.primaire}`, borderRadius: 6, fontSize: 13, fontWeight: 500 }}>Bouton secondaire</div>
+                  <div style={{ padding: '8px 18px', background: C.secondaire, color: 'white', borderRadius: 6, fontSize: 13, fontWeight: 500 }}>Accentuation</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SIGNATURE EMAIL ────────────────────────────────────────────────── */}
+      {tab === 'signature' && (
+        <div className="grid-2">
+          <div className="card">
+            <div className="card-header"><div className="card-title">Paramètres de la signature</div></div>
+            {[
+              ['Nom / Structure', 'nom', 'Pause Kreyol'],
+              ['Titre / Fonction', 'titre', 'Administration de production culturelle'],
+              ['Email', 'email', 'contact@pausekreyol.fr'],
+              ['Téléphone', 'telephone', '+33 6 XX XX XX XX'],
+              ['Site web', 'site', 'pausekreyol.fr'],
+              ['Slogan (optionnel)', 'slogan', 'Libérer les artistes de l\'administratif'],
+            ].map(([label, key, placeholder]) => (
+              <div key={key} className="form-group" style={{ marginBottom: 10 }}>
+                <label className="form-label">{label}</label>
+                <input className="form-input" value={sigForm[key]} onChange={e => setSig(key, e.target.value)} placeholder={placeholder} />
+              </div>
+            ))}
+            <button className="btn btn-primary" onClick={() => setSigGenerated(true)}>Générer la signature →</button>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Aperçu</div>
+              {sigGenerated && (
+                <button className="btn" style={{ fontSize: 12 }} onClick={() => navigator.clipboard.writeText(document.getElementById('sig-html')?.innerText || '')}>
+                  📋 Copier
+                </button>
+              )}
+            </div>
+            <div id="sig-html" style={{ fontFamily: 'Arial, sans-serif', fontSize: 13, borderLeft: `4px solid ${C.primaire}`, paddingLeft: 16, paddingTop: 8, paddingBottom: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: C.primaire }}>{sigForm.nom}</div>
+              <div style={{ color: '#555', fontSize: 12, marginBottom: 6 }}>{sigForm.titre}</div>
+              {sigForm.telephone && <div style={{ color: '#333', fontSize: 12 }}>📞 {sigForm.telephone}</div>}
+              <div style={{ color: '#333', fontSize: 12 }}>✉️ {sigForm.email}</div>
+              {sigForm.site && <div style={{ color: C.primaire, fontSize: 12 }}>🌐 {sigForm.site}</div>}
+              {sigForm.slogan && <div style={{ marginTop: 8, fontStyle: 'italic', color: '#888', fontSize: 11 }}>"{sigForm.slogan}"</div>}
+            </div>
+            {!sigGenerated && <div className="empty" style={{ marginTop: 12 }}><div className="empty-text">Remplissez les champs et cliquez "Générer".</div></div>}
+          </div>
+        </div>
+      )}
+
+      {/* ── MODÈLES EMAILS ─────────────────────────────────────────────────── */}
+      {tab === 'emails' && (
+        <div className="grid-2">
+          <div className="card">
+            <div className="card-header"><div className="card-title">Générer un email</div></div>
+            <div className="form-group">
+              <label className="form-label">Client</label>
+              <select className="form-input" value={emailForm.client} onChange={e => setEF('client', e.target.value)}>
+                <option value="">— Sélectionner —</option>
+                {clients.map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Type d'email</label>
+              <select className="form-input" value={emailForm.type} onChange={e => setEF('type', e.target.value)}>
+                <option value="onboarding">Accueil nouveau client</option>
+                <option value="devis_envoi">Envoi d'un devis</option>
+                <option value="devis_relance">Relance devis non signé</option>
+                <option value="facture_envoi">Envoi d'une facture</option>
+                <option value="facture_relance">Relance facture impayée</option>
+                <option value="subvention_update">Mise à jour subvention</option>
+                <option value="projet_demarrage">Démarrage de projet</option>
+                <option value="bilan">Bilan de mission</option>
+                <option value="custom">Email personnalisé...</option>
+              </select>
+            </div>
+            {emailForm.type === 'custom' && (
+              <div className="form-group">
+                <label className="form-label">Décrivez l'email à générer</label>
+                <textarea className="form-input" rows={3} value={emailForm.custom} onChange={e => setEF('custom', e.target.value)} placeholder="Ex: Email pour demander les documents manquants au client avant le dépôt de subvention..." style={{ resize: 'vertical' }} />
+              </div>
+            )}
+            <button className="btn btn-primary" onClick={generateEmail} disabled={emailLoading}>
+              {emailLoading ? '⏳ Génération...' : '✨ Générer avec Claude →'}
+            </button>
+
+            {/* Modèles rapides */}
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase' }}>Modèles rapides</div>
+              {[
+                ['📩 Accueil client', 'onboarding'],
+                ['📤 Relance devis', 'devis_relance'],
+                ['⚠️ Relance facture', 'facture_relance'],
+                ['🎉 Démarrage projet', 'projet_demarrage'],
+              ].map(([label, type]) => (
+                <button key={type} className="btn" style={{ fontSize: 11, padding: '4px 10px', marginRight: 6, marginBottom: 6 }}
+                  onClick={() => { setEF('type', type); }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Email généré</div>
+              {emailResult && (
+                <button className="btn" style={{ fontSize: 12 }} onClick={() => navigator.clipboard.writeText(emailResult)}>
+                  📋 Copier
+                </button>
+              )}
+            </div>
+            {emailResult ? (
+              <div style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text)' }}>
+                {emailResult}
+              </div>
+            ) : (
+              <div className="empty">
+                <div className="empty-icon">📧</div>
+                <div className="empty-text">Sélectionnez un type d'email et cliquez "Générer" pour obtenir un brouillon rédigé par Claude.</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── ASSETS ─────────────────────────────────────────────────────────── */}
+      {tab === 'assets' && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Assets & Ressources</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>Liens vers vos fichiers Drive</div>
+          </div>
+          <AssetsList />
+        </div>
+      )}
+
+      {/* Modal éditeur charte */}
+      {showCharteEditor && (
+        <CharteEditor initial={charte} onSave={saveCharte} onClose={() => setShowCharteEditor(false)} />
+      )}
+    </div>
+  );
+}
+
+// ── Éditeur de charte ─────────────────────────────────────────────────────────
+
+function CharteEditor({ initial, onSave, onClose }) {
+  const [form, setForm] = useState(initial || {
+    couleurs: { primaire: '#2D5016', secondaire: '#5A8A32', neutre: '#F7F5F0', texte: '#1A1916' },
+    typo: { principale: 'DM Sans', secondaire: 'Georgia' },
+    identite: { slogan: '', site: '', email: '', telephone: '' },
+  });
+
+  function set(section, key, val) {
+    setForm(p => ({ ...p, [section]: { ...p[section], [key]: val } }));
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ width: 560 }}>
+        <div className="modal-title">🎨 Configurer la charte graphique</div>
+
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>Couleurs</div>
+        <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          {[['Couleur primaire', 'primaire'], ['Couleur secondaire', 'secondaire'], ['Fond / Neutre', 'neutre'], ['Couleur texte', 'texte']].map(([label, key]) => (
+            <div key={key} className="form-group">
+              <label className="form-label">{label}</label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="color" value={form.couleurs[key]} onChange={e => set('couleurs', key, e.target.value)}
+                  style={{ width: 40, height: 36, borderRadius: 6, border: '1px solid var(--border2)', cursor: 'pointer', padding: 2 }} />
+                <input className="form-input" value={form.couleurs[key]} onChange={e => set('couleurs', key, e.target.value)}
+                  style={{ fontFamily: 'monospace', fontSize: 12 }} placeholder="#000000" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', margin: '12px 0 8px' }}>Typographie</div>
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Police principale</label>
+            <select className="form-input" value={form.typo.principale} onChange={e => set('typo', 'principale', e.target.value)}>
+              {['DM Sans', 'Inter', 'Poppins', 'Montserrat', 'Lato', 'Open Sans', 'Raleway', 'Georgia', 'Playfair Display'].map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Police secondaire</label>
+            <select className="form-input" value={form.typo.secondaire} onChange={e => set('typo', 'secondaire', e.target.value)}>
+              {['DM Mono', 'Georgia', 'Playfair Display', 'Merriweather', 'Inter', 'Poppins', 'Lato'].map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', margin: '12px 0 8px' }}>Identité</div>
+        {[['Slogan', 'slogan', 'Administration de production culturelle'], ['Site web', 'site', 'pausekreyol.fr'], ['Email', 'email', 'contact@pausekreyol.fr'], ['Téléphone', 'telephone', '']].map(([label, key, ph]) => (
+          <div key={key} className="form-group" style={{ marginBottom: 8 }}>
+            <label className="form-label">{label}</label>
+            <input className="form-input" value={form.identite[key] || ''} onChange={e => set('identite', key, e.target.value)} placeholder={ph} />
+          </div>
+        ))}
+
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={() => onSave(form)}>Enregistrer →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Assets Drive ──────────────────────────────────────────────────────────────
+
+function AssetsList() {
+  const [assets, setAssets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pk_assets') || '[]'); } catch { return []; }
+  });
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ nom: '', type: 'logo', url: '', note: '' });
+
+  const TYPES = {
+    logo: { label: 'Logo', icon: '🖼' },
+    charte: { label: 'Charte graphique', icon: '🎨' },
+    template: { label: 'Template', icon: '📄' },
+    photo: { label: 'Photo / Visuel', icon: '📷' },
+    video: { label: 'Vidéo', icon: '🎬' },
+    autre: { label: 'Autre', icon: '📁' },
+  };
+
+  function save(list) {
+    setAssets(list);
+    try { localStorage.setItem('pk_assets', JSON.stringify(list)); } catch {}
+  }
+
+  function addAsset() {
+    if (!form.nom || !form.url) return;
+    save([...assets, { id: Date.now(), ...form }]);
+    setForm({ nom: '', type: 'logo', url: '', note: '' });
+    setShowAdd(false);
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowAdd(true)}>+ Ajouter un asset</button>
+      </div>
+
+      {assets.length === 0 ? (
+        <div className="empty">
+          <div className="empty-icon">📁</div>
+          <div className="empty-text">Ajoutez des liens vers vos fichiers Drive (logos, chartes, templates...)</div>
+        </div>
+      ) : (
+        <div>
+          {Object.entries(TYPES).map(([type, { label, icon }]) => {
+            const typeAssets = assets.filter(a => a.type === type);
+            if (!typeAssets.length) return null;
+            return (
+              <div key={type} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>{icon} {label}</div>
+                {typeAssets.map(a => (
+                  <div key={a.id} className="client-row" style={{ padding: '8px 0' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{a.nom}</div>
+                      {a.note && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{a.note}</div>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <a href={a.url} target="_blank" rel="noopener noreferrer" className="btn" style={{ fontSize: 11, padding: '3px 10px' }}>Ouvrir →</a>
+                      <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                        onClick={() => save(assets.filter(x => x.id !== a.id))}>✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
+          <div className="modal">
+            <div className="modal-title">Ajouter un asset</div>
+            <div className="form-group">
+              <label className="form-label">Nom *</label>
+              <input className="form-input" value={form.nom} onChange={e => setForm(p => ({ ...p, nom: e.target.value }))} placeholder="Logo PK couleur, Charte V2..." autoFocus />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Type</label>
+              <select className="form-input" value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value }))}>
+                {Object.entries(TYPES).map(([k, { label }]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Lien Drive / URL *</label>
+              <input className="form-input" value={form.url} onChange={e => setForm(p => ({ ...p, url: e.target.value }))} placeholder="https://drive.google.com/..." />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Note</label>
+              <input className="form-input" value={form.note} onChange={e => setForm(p => ({ ...p, note: e.target.value }))} placeholder="Version, usage, format..." />
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowAdd(false)}>Annuler</button>
+              <button className="btn btn-primary" onClick={addAsset} disabled={!form.nom || !form.url}>Ajouter →</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Calendriers ───────────────────────────────────────────────────────────────
 
 function CalendrierView({ alertes, clients }) {
@@ -2865,6 +3310,7 @@ const icons = {
   subventions: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M2 4h12M2 8h8M2 12h5"/><circle cx="12" cy="11" r="3"/><path d="M12 9.5v1.5l1 1"/></svg>,
   alertes: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M8 1L1 14h14L8 1z"/><line x1="8" y1="6" x2="8" y2="9"/><circle cx="8" cy="12" r="0.5" fill="currentColor"/></svg>,
   calendrier: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="3" width="14" height="12" rx="1.5"/><path d="M1 7h14M5 1v4M11 1v4"/></svg>,
+  comm: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><circle cx="8" cy="6" r="3"/><path d="M2 14c0-3.31 2.69-6 6-6s6 2.69 6 6"/><path d="M11 3l2-2M13 5l-2-2"/></svg>,
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -2921,10 +3367,11 @@ function App() {
     { key: 'taches', label: 'Tâches', icon: icons.taches, badge: urgentCount || null },
     { key: 'devis', label: 'Devis & Factures', icon: icons.subventions },
     { key: 'calendrier', label: 'Calendriers', icon: icons.calendrier },
+    { key: 'comm', label: 'Comm', icon: icons.comm },
     { key: 'alertes', label: 'Alertes', icon: icons.alertes, badge: data?.nb_alertes_urgentes || null },
   ];
 
-  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', calendrier: 'Calendriers', alertes: 'Alertes conformité' };
+  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', calendrier: 'Calendriers', comm: 'Communication', alertes: 'Alertes conformité' };
 
   return (
     <div className="app">
@@ -2985,6 +3432,7 @@ function App() {
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'devis' && <DevisFacturesView />}
           {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} />}
+          {view === 'comm' && <CommView clients={data?.clients || []} />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
         </main>

@@ -1846,3 +1846,59 @@ def delete_cal_event(event_id: int):
         cal[key] = [e for e in cal[key] if e.get("id") != event_id]
     _save_cal(cal)
     return {"status": "deleted"}
+
+
+# ── Communication ─────────────────────────────────────────────────────────────
+
+EMAIL_PROMPTS = {
+    "onboarding": "Rédige un email professionnel de bienvenue et d'accueil pour un nouveau client qui vient de signer avec Pause Kreyol. Présente-toi, explique le processus de démarrage, demande les documents nécessaires et propose un premier rendez-vous.",
+    "devis_envoi": "Rédige un email professionnel pour accompagner l'envoi d'un devis. Explique brièvement les prestations proposées, mets en valeur l'expertise de Pause Kreyol, et invite à signer dans les 30 jours.",
+    "devis_relance": "Rédige un email de relance courtois mais ferme pour un devis qui n'a pas été signé depuis plus de 7 jours. Rappelle les bénéfices, propose un appel pour répondre aux questions et rappelle la date de validité.",
+    "facture_envoi": "Rédige un email professionnel pour accompagner l'envoi d'une facture. Remercie pour la confiance accordée, rappelle les prestations réalisées, le montant et le délai de paiement de 30 jours.",
+    "facture_relance": "Rédige un email de relance pour une facture impayée. Rappelle la facture en question, le montant dû, la date d'échéance dépassée, et mentionne discrètement les pénalités de retard (3× le taux légal) sans être agressif.",
+    "subvention_update": "Rédige un email de mise à jour sur l'avancement d'un dossier de subvention. Informe le client de l'état du dossier, des prochaines étapes et des documents encore attendus.",
+    "projet_demarrage": "Rédige un email pour marquer le démarrage officiel d'un projet. Récapitule les grandes étapes, le calendrier prévisionnel, les prochains jalons et exprime l'enthousiasme pour cette collaboration.",
+    "bilan": "Rédige un email de bilan de mission. Récapitule les actions menées, les résultats obtenus (subventions, projets, documents), remercie pour la confiance et propose la suite de la collaboration.",
+}
+
+@app.post("/comm/generer-email")
+def generer_email(body: dict):
+    """Génère un email professionnel adapté au client via Claude."""
+    import anthropic as anthropic_sdk
+
+    client_nom = body.get("client_nom", "le client")
+    email_type = body.get("type", "custom")
+    custom = body.get("custom", "")
+
+    base_prompt = EMAIL_PROMPTS.get(email_type, custom)
+    if not base_prompt:
+        raise HTTPException(status_code=400, detail="Type d'email ou description requis")
+
+    ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+
+    prompt = f"""Tu es Pause Kreyol, une administratrice de production culturelle indépendante experte et bienveillante.
+
+{base_prompt}
+
+Client concerné : {client_nom}
+
+Règles de rédaction :
+- Ton professionnel mais chaleureux, adapté au milieu culturel
+- Tututoiement ou vouvoiement selon le contexte (utilise le vouvoiement par défaut)
+- Signature : "Cordialement, / [Prénom] / Pause Kreyol / Administration de production culturelle"
+- Longueur : concis et efficace (pas plus de 15 lignes)
+- Inclure un objet d'email sur la première ligne (format : "Objet : ...")
+- Texte uniquement, pas de markdown
+
+Génère l'email complet avec l'objet."""
+
+    try:
+        response = ai.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        email_text = response.content[0].text.strip()
+        return {"email": email_text, "client": client_nom, "type": email_type}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur génération email : {e}")
