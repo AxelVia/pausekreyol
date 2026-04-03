@@ -1663,140 +1663,239 @@ function AlertesView({ data }) {
 
 // ── Modal nouveau client ──────────────────────────────────────────────────────
 
+// ── Nouveau client — flux obligatoire par Excel ───────────────────────────────
+
 function NewClientModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({
-    type_structure: '',
-    nom_officiel: '', nom_usuel: '',
-    siret: '', ninea: '', rccm: '',
-    president: '', email_contact: '', telephone: '',
-    adresse_siege: '', licence_type1: ''
-  });
+  const [step, setStep] = useState('intro');    // intro | upload | preview | creating | done
+  const [file, setFile] = useState(null);
+  const [parsed, setParsed] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [devisAudit, setDevisAudit] = useState(false); // option devis audit
 
-  function set(k, v) { setForm(prev => ({ ...prev, [k]: v })); }
+  const LABELS = {
+    nom_officiel: 'Nom officiel', nom_usuel: 'Nom usuel', siret: 'SIRET',
+    ninea: 'NINEA', rccm: 'RCCM', statut_juridique: 'Statut juridique',
+    implantation: 'Implantation', categorie: 'Catégorie', marche_cible: 'Marché cible',
+    domaines_artistiques: 'Domaines artistiques', president: 'Président(e)',
+    email_contact: 'Email', telephone: 'Téléphone', adresse_siege: 'Adresse',
+    date_creation: 'Date création', date_derniere_ag: 'Dernière AG',
+    clotures_comptables: 'Clôtures comptables', licence_statut: 'Licence spectacle',
+    licence_type1: 'N° licence', banque: 'Banque', iban: 'IBAN',
+    societe_droits: 'Société droits', pays: 'Pays',
+  };
 
-  const TYPES = [
-    { value: 'asso_france', label: '🇫🇷 Association loi 1901 — France' },
-    { value: 'sas_senegal', label: '🇸🇳 SAS OHADA — Sénégal' },
-  ];
+  // Calcul des warnings métier
+  function getWarnings(cd) {
+    const warns = [];
+    const cat = (cd.categorie || '').toLowerCase();
+    const dom = (cd.domaines_artistiques || '').toLowerCase();
+    const impl = (cd.implantation || '').toLowerCase();
 
-  const isFrance = form.type_structure === 'asso_france';
-  const isSenegal = form.type_structure === 'sas_senegal';
-  const typeSelected = isFrance || isSenegal;
+    if ((cat.includes('diffuseur')) && !cd.licence_type1)
+      warns.push({ level: 'error', msg: '🚫 Licence entrepreneur du spectacle obligatoire pour tout diffuseur — impossible de créer des projets sans.' });
+    if (cd.type_structure === 'asso_france' && !cd.date_derniere_ag)
+      warns.push({ level: 'warn', msg: '⚠️ Date de dernière AG manquante — obligatoire pour les associations.' });
+    if (cd.type_structure === 'asso_france' && !cd.numero_rna)
+      warns.push({ level: 'info', msg: 'ℹ️ Numéro RNA non renseigné — à collecter.' });
+    if ((dom.includes('écriture') || dom.includes('ecrivain') || dom.includes('littérature')) && !cd.societe_droits)
+      warns.push({ level: 'warn', msg: '⚠️ Auteur/écrivain détecté — affiliation SCAM/SACD recommandée.' });
+    if (impl.includes('antilles') || impl.includes('martinique') || impl.includes('guadeloupe'))
+      warns.push({ level: 'info', msg: 'ℹ️ Implantation Antilles — régime fiscal et caisses sociales spécifiques (CGSS, AT-MP).' });
+    if (impl.includes('sénégal') || impl.includes('senegal'))
+      warns.push({ level: 'info', msg: 'ℹ️ Implantation Sénégal — régime OHADA, caisses IPRES/CSS.' });
+    if (!cd.iban)
+      warns.push({ level: 'warn', msg: '⚠️ RIB/IBAN manquant — requis pour les paiements et subventions.' });
+    return warns;
+  }
 
-  async function submit() {
-    if (!form.type_structure) { setError('Sélectionnez un type de structure.'); return; }
-    if (!form.nom_officiel) { setError('Nom officiel obligatoire.'); return; }
+  async function handleUpload(f) {
+    setFile(f);
+    setError('');
     setLoading(true);
+    const form = new FormData();
+    form.append('file', f);
     try {
-      const res = await fetch(`${API}/clients`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      onCreated();
-      onClose();
+      const res = await fetch(`${API}/import/parse`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Erreur analyse');
+      if (data.erreur) throw new Error(data.erreur);
+      if (data.type_fichier === 'unknown')
+        throw new Error('Format non reconnu. Utilisez TEMPLATE_FICHE_CLIENT_V2.xlsx');
+      setParsed(data);
+      setStep('preview');
     } catch (e) {
-      setError('Erreur : ' + e.message);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleCreate() {
+    setStep('creating');
+    setLoading(true);
+    const form = new FormData();
+    form.append('file', file);
+    form.append('devis_audit', devisAudit ? '1' : '0');
+    try {
+      const res = await fetch(`${API}/import/create-client`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Erreur création');
+      setStep('done');
+      setTimeout(() => { onCreated(); onClose(); }, 1800);
+    } catch (e) {
+      setError(e.message);
+      setStep('preview');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const cd = parsed?.client_data || {};
+  const warnings = parsed ? getWarnings(cd) : [];
+  const hasBlocker = warnings.some(w => w.level === 'error');
+  const manquants = parsed?.champs_manquants || [];
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-title">Nouveau dossier client</div>
-        <div className="modal-sub">Les Excel seront générés et synchronisés sur Google Drive automatiquement.</div>
+      <div className="modal" style={{ width: 600 }}>
 
-        {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>{error}</div>}
+        {/* ── INTRO ────────────────────────────────────────────────────────── */}
+        {step === 'intro' && (
+          <>
+            <div className="modal-title">📁 Nouveau dossier client</div>
+            <div className="modal-sub">La création d'un dossier client nécessite la fiche de renseignements complétée.</div>
 
-        {/* Sélecteur type de structure */}
-        <div className="form-group">
-          <label className="form-label">Type de structure *</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {TYPES.map(t => (
-              <div
-                key={t.value}
-                onClick={() => set('type_structure', t.value)}
-                style={{
-                  flex: 1, padding: '10px 12px', borderRadius: 'var(--radius-sm)',
-                  border: `1.5px solid ${form.type_structure === t.value ? 'var(--accent-mid)' : 'var(--border2)'}`,
-                  background: form.type_structure === t.value ? 'var(--accent-light)' : 'var(--surface)',
-                  cursor: 'pointer', fontSize: 13, fontWeight: form.type_structure === t.value ? 500 : 400,
-                  color: form.type_structure === t.value ? 'var(--accent)' : 'var(--text)',
-                  transition: 'all 0.15s',
-                }}
+            <div style={{ background: 'var(--accent-light)', borderRadius: 'var(--radius-sm)', padding: '14px 16px', marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--accent)', marginBottom: 8 }}>📋 Processus de création</div>
+              {[
+                ['1', 'Téléchargez et envoyez la fiche au client', 'TEMPLATE_FICHE_CLIENT_V2.xlsx'],
+                ['2', 'Le client la remplit et vous la retourne'],
+                ['3', 'Importez le fichier complété ici'],
+                ['4', 'Vérifiez les données et validez la création'],
+              ].map(([n, label, link]) => (
+                <div key={n} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6, fontSize: 13 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{n}</div>
+                  <div>
+                    {label}
+                    {link && <> — <a href={`${API}/templates/fiche-client-v2`} target="_blank" style={{ color: 'var(--accent)', fontWeight: 500 }}>Télécharger le template →</a></>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div
+              style={{ border: '2px dashed var(--border2)', borderRadius: 'var(--radius)', padding: '28px', textAlign: 'center', cursor: 'pointer', background: 'var(--surface2)' }}
+              onClick={() => document.getElementById('nc-file-input').click()}
+            >
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+              <div style={{ fontSize: 14, fontWeight: 500 }}>Importer la fiche client complétée</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>TEMPLATE_FICHE_CLIENT_V2.xlsx (.xlsx uniquement)</div>
+              <input id="nc-file-input" type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+                onChange={e => e.target.files[0] && handleUpload(e.target.files[0])} />
+            </div>
+
+            {loading && <div style={{ textAlign: 'center', padding: 16, color: 'var(--text3)', fontSize: 13 }}>Analyse du fichier…</div>}
+            {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginTop: 12 }}>{error}</div>}
+
+            <div className="modal-footer">
+              <button className="btn" onClick={onClose}>Annuler</button>
+            </div>
+          </>
+        )}
+
+        {/* ── PREVIEW ──────────────────────────────────────────────────────── */}
+        {step === 'preview' && parsed && (
+          <>
+            <div className="modal-title">✅ Vérification du dossier</div>
+            <div className="modal-sub">{parsed.nb_champs} champs extraits depuis {file?.name}</div>
+
+            {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 12 }}>{error}</div>}
+
+            {/* Warnings métier */}
+            {warnings.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                {warnings.map((w, i) => (
+                  <div key={i} style={{
+                    padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 6,
+                    background: w.level === 'error' ? 'var(--danger-light)' : w.level === 'warn' ? 'var(--warn-light)' : 'var(--info-light)',
+                    color: w.level === 'error' ? 'var(--danger)' : w.level === 'warn' ? 'var(--warn)' : 'var(--info)',
+                  }}>{w.msg}</div>
+                ))}
+              </div>
+            )}
+
+            {/* Champs manquants */}
+            {manquants.length > 0 && (
+              <div style={{ background: '#FFF8E1', border: '1px solid #F59E0B', borderRadius: 6, padding: '8px 12px', marginBottom: 14, fontSize: 12 }}>
+                <strong>Champs manquants :</strong> {manquants.join(', ')}
+              </div>
+            )}
+
+            {/* Données extraites */}
+            <div style={{ maxHeight: 240, overflowY: 'auto', marginBottom: 14, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+              {Object.entries(cd).filter(([k, v]) => v && k !== 'type_structure' && k !== 'documents_fournis' && k !== 'emails_surveillance').map(([k, v], i) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderBottom: '1px solid var(--border)', fontSize: 12, background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                  <span style={{ color: 'var(--text3)', flexShrink: 0 }}>{LABELS[k] || k}</span>
+                  <span style={{ fontWeight: 500, maxWidth: '60%', textAlign: 'right' }}>{String(v)}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Badge type structure */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, fontSize: 13 }}>
+              <span style={{ background: 'var(--accent-light)', color: 'var(--accent)', padding: '4px 10px', borderRadius: 20, fontWeight: 500, fontSize: 12 }}>
+                {cd.statut_juridique || cd.type_structure}
+              </span>
+              {cd.implantation && <span style={{ background: 'var(--info-light)', color: 'var(--info)', padding: '4px 10px', borderRadius: 20, fontSize: 12 }}>{cd.implantation}</span>}
+              {cd.categorie && <span style={{ background: 'var(--warn-light)', color: 'var(--warn)', padding: '4px 10px', borderRadius: 20, fontSize: 12 }}>{cd.categorie}</span>}
+            </div>
+
+            {/* Option devis audit */}
+            <div style={{ background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: 4, fontSize: 13 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={devisAudit} onChange={e => setDevisAudit(e.target.checked)} style={{ width: 16, height: 16 }} />
+                <div>
+                  <div style={{ fontWeight: 500 }}>Générer aussi un devis d'audit (optionnel)</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>En plus du devis de rendez-vous démarrage (350€), ajouter un devis d'audit complet</div>
+                </div>
+              </label>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14, paddingLeft: 2 }}>
+              ✅ Un devis de rendez-vous démarrage (350€) sera automatiquement généré.
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn" onClick={() => { setStep('intro'); setParsed(null); setFile(null); }}>← Recommencer</button>
+              <button
+                className="btn btn-primary"
+                onClick={handleCreate}
+                disabled={hasBlocker || loading}
+                title={hasBlocker ? 'Corrigez les erreurs bloquantes avant de continuer' : ''}
               >
-                {t.label}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {typeSelected && <>
-          <div className="form-grid">
-            <div className="form-group">
-              <label className="form-label">Nom officiel *</label>
-              <input className="form-input" value={form.nom_officiel} onChange={e => set('nom_officiel', e.target.value)} placeholder={isFrance ? "Association XYZ" : "SAS XYZ"} />
+                {hasBlocker ? '🚫 Erreur bloquante' : 'Créer le dossier →'}
+              </button>
             </div>
-            <div className="form-group">
-              <label className="form-label">Nom usuel / commercial</label>
-              <input className="form-input" value={form.nom_usuel} onChange={e => set('nom_usuel', e.target.value)} />
-            </div>
-          </div>
+          </>
+        )}
 
-          <div className="form-grid">
-            {isFrance && <>
-              <div className="form-group">
-                <label className="form-label">SIRET</label>
-                <input className="form-input" value={form.siret} onChange={e => set('siret', e.target.value)} placeholder="12345678900000" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Licence spectacle (Type 1)</label>
-                <input className="form-input" value={form.licence_type1} onChange={e => set('licence_type1', e.target.value)} placeholder="PLATESV-D-20XX-XXXXXX" />
-              </div>
-            </>}
-            {isSenegal && <>
-              <div className="form-group">
-                <label className="form-label">NINEA</label>
-                <input className="form-input" value={form.ninea} onChange={e => set('ninea', e.target.value)} placeholder="NINEA Sénégal" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">N° RCCM</label>
-                <input className="form-input" value={form.rccm} onChange={e => set('rccm', e.target.value)} placeholder="SN-DKR-20XX-..." />
-              </div>
-            </>}
+        {/* ── CREATING ─────────────────────────────────────────────────────── */}
+        {step === 'creating' && (
+          <div className="empty" style={{ padding: '48px 0' }}>
+            <div style={{ fontSize: 28, marginBottom: 12 }}>⏳</div>
+            <div style={{ fontSize: 14, fontWeight: 500 }}>Création du dossier en cours…</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Génération des Excel + synchronisation Google Drive</div>
           </div>
+        )}
 
-          <div className="form-group">
-            <label className="form-label">{isFrance ? 'Président(e)' : 'Directeur(rice) Général(e)'}</label>
-            <input className="form-input" value={form.president} onChange={e => set('president', e.target.value)} />
+        {/* ── DONE ─────────────────────────────────────────────────────────── */}
+        {step === 'done' && (
+          <div className="empty" style={{ padding: '48px 0' }}>
+            <div style={{ fontSize: 28, marginBottom: 12 }}>✅</div>
+            <div style={{ fontSize: 14, fontWeight: 500 }}>Dossier créé avec succès !</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Fichiers Excel générés sur Drive · Devis de démarrage créé</div>
           </div>
-          <div className="form-grid">
-            <div className="form-group">
-              <label className="form-label">Email de contact</label>
-              <input className="form-input" value={form.email_contact} onChange={e => set('email_contact', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Téléphone</label>
-              <input className="form-input" value={form.telephone} onChange={e => set('telephone', e.target.value)} />
-            </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Adresse du siège</label>
-            <input className="form-input" value={form.adresse_siege} onChange={e => set('adresse_siege', e.target.value)} />
-          </div>
-        </>}
-
-        <div className="modal-footer">
-          <button className="btn" onClick={onClose}>Annuler</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading || !typeSelected}>
-            {loading ? 'Création…' : 'Créer le dossier →'}
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );

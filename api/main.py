@@ -316,6 +316,20 @@ def post_project(slug: str, data: ProjectCreate):
 
 # ── Dashboard global ──────────────────────────────────────────────────────────
 
+@app.get("/templates/fiche-client-v2")
+def download_fiche_client_v2():
+    """Télécharge le template FICHE_CLIENT_V2 à envoyer aux prospects."""
+    from fastapi.responses import FileResponse
+    path = Path(__file__).parent.parent / "templates" / "TEMPLATE_FICHE_CLIENT_V2.xlsx"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Template non trouvé")
+    return FileResponse(
+        str(path),
+        filename="FICHE_CLIENT_PauseKreyol_V2.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
 @app.get("/templates/doc-synchronisation")
 def download_doc_sync():
     """Télécharge la documentation de synchronisation."""
@@ -809,37 +823,126 @@ async def parse_excel_upload(file: UploadFile = File(...)):
 
 
 @app.post("/import/create-client")
-async def create_client_from_excel(file: UploadFile = File(...)):
-    """Parse l'Excel et crée le dossier client — appelé après validation."""
+async def create_client_from_excel(
+    file: UploadFile = File(...),
+    devis_audit: str = "0"
+):
+    """
+    Parse l'Excel et crée le dossier client.
+    Validations métier + génération automatique du devis de démarrage (350€).
+    """
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
     try:
-        from engine.excel_parser import parse_excel_bytes
-        content = await file.read()
-        parsed = parse_excel_bytes(content, file.filename)
+        from engine.excel_parser import parse_excel_client
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+        parsed = parse_excel_client(tmp_path)
+        tmp_path.unlink()
 
-        if parsed.get("source") == "error":
-            raise HTTPException(status_code=400, detail=parsed.get("error", "Erreur parsing"))
-        if not parsed["client_data"].get("nom_officiel"):
+        if parsed.get("erreur"):
+            raise HTTPException(status_code=400, detail=parsed["erreur"])
+
+        cd = parsed["client_data"]
+        if not cd.get("nom_officiel"):
             raise HTTPException(status_code=400, detail="Nom officiel manquant dans le fichier")
 
-        client_dir = create_client_folder(parsed["client_data"])
-        meta = json.loads((client_dir / "client.json").read_text())
+        # ── Validations métier ────────────────────────────────────────────
+        meta_warnings = []
+        cat = (cd.get("categorie") or "").lower()
+        if "diffuseur" in cat and not cd.get("licence_type1"):
+            meta_warnings.append("Licence spectacle manquante pour un diffuseur — à régulariser avant tout projet")
 
+        # ── Crée le dossier ───────────────────────────────────────────────
+        client_dir = create_client_folder(cd)
+        meta = json.loads((client_dir / "client.json").read_text())
+        nom_client = cd.get("nom_usuel") or cd.get("nom_officiel")
+
+        # ── Génère le devis de démarrage ──────────────────────────────────
+        annee = datetime.now().year
+        devis = {
+            "id": f"devis_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "numero": f"D{annee}-{meta['slug'][:6].upper()}-001",
+            "created_at": datetime.now().isoformat(),
+            "client_slug": meta["slug"],
+            "client_nom": nom_client,
+            "type": "devis_demarrage",
+            "statut": "À envoyer",
+            "prestations": [{
+                "description": "Rendez-vous de démarrage — Présentation, audit initial et cadrage de la mission",
+                "type": "Forfait démarrage",
+                "quantite": 1,
+                "tarif_unitaire": 350,
+                "sous_total": 350,
+            }],
+            "total_ht": 350,
+            "tva": "Non applicable — Art. 293B du CGI",
+            "acompte_pct": 0,
+            "validite_jours": 30,
+            "avec_audit": devis_audit == "1",
+            "notes": "Généré automatiquement à la création du dossier client",
+        }
+        if devis_audit == "1":
+            devis["notes"] += " + audit complet (montant à définir)"
+
+        meta.setdefault("devis", []).append(devis)
+
+        # ── Tâche de suivi devis ──────────────────────────────────────────
+        task = {
+            "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_devis",
+            "created_at": datetime.now().isoformat(),
+            "source": "Création client",
+            "titre": f"Envoyer le devis de démarrage — {nom_client}",
+            "priorite": "Attention",
+            "description": f"Devis de rendez-vous démarrage (350€ HT) généré pour {nom_client}. Vérifier et envoyer.",
+            "client_detecte": nom_client,
+            "client_slug": meta["slug"],
+            "type": "devis",
+            "devis_id": devis["id"],
+            "done": False,
+        }
+        if meta_warnings:
+            task["description"] += f" | ⚠️ {meta_warnings[0]}"
+
+        tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+        tasks.append(task)
+        _save_tasks(tasks)
+
+        # ── Historisation ─────────────────────────────────────────────────
+        try:
+            from engine.historisation import append_event, add_timestamps
+            meta = add_timestamps(meta, "creation_dossier_excel", {
+                "source": file.filename,
+                "devis": devis["numero"],
+            })
+            append_event(client_dir, "creation_dossier_excel", {
+                "source": file.filename,
+                "devis_cree": devis["numero"],
+                "warnings": meta_warnings,
+            })
+        except Exception as e:
+            logger.warning(f"Historisation : {e}")
+
+        (client_dir / "client.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+        # ── Projet si données présentes ───────────────────────────────────
+        projet_cree = False
         if parsed.get("projet_data") and parsed["projet_data"].get("nom_projet"):
             try:
                 create_project(meta["slug"], parsed["projet_data"])
-                meta = json.loads((client_dir / "client.json").read_text())
+                projet_cree = True
             except Exception as e:
-                logger.warning(f"Projet non créé depuis import : {e}")
+                logger.warning(f"Projet non créé : {e}")
 
         return {
             "status": "created",
             "slug": meta["slug"],
-            "nom": parsed["client_data"].get("nom_officiel"),
-            "champs_importes": len(parsed["client_data"]),
-            "projet_cree": bool(parsed.get("projet_data", {}) and parsed["projet_data"].get("nom_projet")),
-            "source": parsed.get("source"),
+            "nb_champs": parsed["nb_champs"],
+            "champs_manquants": parsed["champs_manquants"],
+            "projet_cree": projet_cree,
+            "devis_numero": devis["numero"],
+            "warnings": meta_warnings,
         }
     except HTTPException:
         raise
