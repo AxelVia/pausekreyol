@@ -1765,3 +1765,84 @@ def get_devis_factures_dashboard():
         "liste_devis": sorted(devis, key=lambda x: x["created_at"], reverse=True),
         "liste_factures": sorted(factures, key=lambda x: x["created_at"], reverse=True),
     }
+
+
+# ── Calendriers ───────────────────────────────────────────────────────────────
+
+CAL_FILE = CLIENTS_DIR / "calendrier.json"
+
+
+def _load_cal() -> dict:
+    if CAL_FILE.exists():
+        return json.loads(CAL_FILE.read_text())
+    return {"formalites": [], "culturel": []}
+
+
+def _save_cal(data: dict):
+    CAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CAL_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("calendrier.json", root_id)
+            if fid:
+                drive_update_json(fid, data)
+            else:
+                drive_upload_json(data, "calendrier.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync calendrier.json : {e}")
+
+
+@app.get("/calendrier")
+def get_calendrier():
+    """Retourne tous les événements des deux calendriers."""
+    cal = _load_cal()
+    # Enrichit avec les alertes de conformité
+    alertes_events = []
+    for client in list_clients():
+        matches = list(CLIENTS_DIR.glob(f"{client['slug']}*"))
+        if matches:
+            try:
+                alerts = read_alerts(matches[0])
+                for a in alerts:
+                    if a.get("date_expiration") and a.get("statut") != "OK":
+                        alertes_events.append({
+                            "id": f"auto_{a['organisme']}_{client['slug']}",
+                            "date": a["date_expiration"],
+                            "titre": f"{a['organisme']} — {client['nom']}",
+                            "type": "formalite",
+                            "couleur": "#B71C1C" if a["statut"] == "EXPIRÉ" else "#E65100" if a["statut"] == "URGENT" else "#1565C0",
+                            "auto": True,
+                            "statut": a["statut"],
+                            "client": client["nom"],
+                        })
+            except Exception:
+                pass
+    cal["auto_formalites"] = alertes_events
+    return cal
+
+
+@app.post("/calendrier/event")
+def add_cal_event(body: dict):
+    """Ajoute un événement au calendrier."""
+    cal = _load_cal()
+    cal_type = "culturel" if body.get("type") in ("culturel", "festival", "formation") else "formalites"
+    event = {
+        "id": int(datetime.now().timestamp() * 1000),
+        "created_at": datetime.now().isoformat(),
+        **body,
+    }
+    cal[cal_type].append(event)
+    _save_cal(cal)
+    return event
+
+
+@app.delete("/calendrier/event/{event_id}")
+def delete_cal_event(event_id: int):
+    """Supprime un événement du calendrier."""
+    cal = _load_cal()
+    for key in ("formalites", "culturel"):
+        cal[key] = [e for e in cal[key] if e.get("id") != event_id]
+    _save_cal(cal)
+    return {"status": "deleted"}

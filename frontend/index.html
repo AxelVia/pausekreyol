@@ -1872,6 +1872,306 @@ function TachesView({ taches, setTaches }) {
   );
 }
 
+// ── Calendriers ───────────────────────────────────────────────────────────────
+
+function CalendrierView({ alertes, clients }) {
+  const [tab, setTab] = useState('formalites');
+  const [mois, setMois] = useState(new Date().getMonth());
+  const [annee, setAnnee] = useState(new Date().getFullYear());
+  const [events, setEvents] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pk_cal_events') || '[]'); }
+    catch { return []; }
+  });
+  const [showAdd, setShowAdd] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [newEvent, setNewEvent] = useState({ titre: '', type: 'formalite', client: '', couleur: '#2D5016', note: '' });
+
+  function saveEvents(evts) {
+    setEvents(evts);
+    try { localStorage.setItem('pk_cal_events', JSON.stringify(evts)); } catch {}
+  }
+
+  function addEvent() {
+    if (!newEvent.titre || !selectedDay) return;
+    const evt = {
+      id: Date.now(),
+      date: selectedDay,
+      ...newEvent,
+      created_at: new Date().toISOString(),
+    };
+    // Persiste sur Drive
+    fetch(`${API}/calendrier/event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(evt),
+    }).catch(() => {});
+    saveEvents([...events, evt]);
+    setShowAdd(false);
+    setNewEvent({ titre: '', type: tab === 'formalites' ? 'formalite' : 'culturel', client: '', couleur: '#2D5016', note: '' });
+  }
+
+  function removeEvent(id) {
+    fetch(`${API}/calendrier/event/${id}`, { method: 'DELETE' }).catch(() => {});
+    saveEvents(events.filter(e => e.id !== id));
+  }
+
+  // Génère les événements automatiques depuis les alertes
+  function getAutoEvents() {
+    const auto = [];
+    (alertes || []).forEach(a => {
+      if (!a.date_expiration) return;
+      auto.push({
+        id: `auto_${a.organisme}_${a.client}`,
+        date: a.date_expiration,
+        titre: `${a.organisme} — ${a.client}`,
+        type: 'formalite',
+        couleur: a.statut === 'EXPIRÉ' ? '#B71C1C' : a.statut === 'URGENT' ? '#E65100' : '#1565C0',
+        auto: true,
+        statut: a.statut,
+      });
+    });
+    return auto;
+  }
+
+  const allEvents = [...getAutoEvents(), ...events.filter(e => e.type === tab || tab === 'formalites' ? e.type === 'formalite' : e.type === 'culturel')];
+  const filteredEvents = tab === 'formalites'
+    ? [...getAutoEvents(), ...events.filter(e => e.type === 'formalite')]
+    : events.filter(e => e.type === 'culturel');
+
+  // Calendrier
+  const firstDay = new Date(annee, mois, 1).getDay(); // 0=dim
+  const daysInMonth = new Date(annee, mois + 1, 0).getDate();
+  const firstDayAdj = (firstDay + 6) % 7; // Lundi=0
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+  const MOIS_LABELS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  const JOURS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+
+  function dayStr(d) {
+    return `${annee}-${String(mois+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
+
+  function eventsForDay(d) {
+    const ds = dayStr(d);
+    return filteredEvents.filter(e => e.date === ds || e.date?.startsWith(ds));
+  }
+
+  const TYPE_COLORS = {
+    formalite: '#1565C0', deadline: '#B71C1C', rdv: '#6A1B9A',
+    culturel: '#2D5016', festival: '#E65100', formation: '#00695C',
+  };
+
+  // Liste des événements du mois
+  const monthEvents = filteredEvents
+    .filter(e => e.date?.startsWith(`${annee}-${String(mois+1).padStart(2,'0')}`))
+    .sort((a,b) => a.date.localeCompare(b.date));
+
+  // Événements à venir (tous mois)
+  const upcoming = filteredEvents
+    .filter(e => e.date >= todayStr)
+    .sort((a,b) => a.date.localeCompare(b.date))
+    .slice(0, 8);
+
+  return (
+    <div>
+      <div className="tabs" style={{ marginBottom: 16 }}>
+        <button className={`tab ${tab === 'formalites' ? 'active' : ''}`} onClick={() => setTab('formalites')}>📋 Formalités & Échéances</button>
+        <button className={`tab ${tab === 'culturel' ? 'active' : ''}`} onClick={() => setTab('culturel')}>🎭 Calendrier Culturel</button>
+      </div>
+
+      <div className="grid-2" style={{ alignItems: 'start' }}>
+        {/* Calendrier */}
+        <div className="card">
+          {/* Navigation mois */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <button className="btn" style={{ padding: '4px 10px' }}
+              onClick={() => { if (mois === 0) { setMois(11); setAnnee(a => a-1); } else setMois(m => m-1); }}>←</button>
+            <div style={{ fontWeight: 600, fontSize: 15 }}>{MOIS_LABELS[mois]} {annee}</div>
+            <button className="btn" style={{ padding: '4px 10px' }}
+              onClick={() => { if (mois === 11) { setMois(0); setAnnee(a => a+1); } else setMois(m => m+1); }}>→</button>
+          </div>
+
+          {/* Grille jours de la semaine */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+            {JOURS.map(j => (
+              <div key={j} style={{ textAlign: 'center', fontSize: 10, fontWeight: 600, color: 'var(--text3)', padding: '2px 0' }}>{j}</div>
+            ))}
+          </div>
+
+          {/* Grille jours */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+            {Array(firstDayAdj).fill(null).map((_, i) => <div key={`e${i}`} />)}
+            {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(d => {
+              const ds = dayStr(d);
+              const dayEvts = eventsForDay(d);
+              const isToday = ds === todayStr;
+              const isSel = ds === selectedDay;
+              return (
+                <div key={d}
+                  onClick={() => { setSelectedDay(ds); setShowAdd(true); }}
+                  style={{
+                    minHeight: 44, padding: '3px 4px', borderRadius: 6, cursor: 'pointer',
+                    background: isToday ? 'var(--accent)' : isSel ? 'var(--accent-light)' : dayEvts.length > 0 ? '#F3F8FF' : 'var(--surface2)',
+                    border: isSel ? '1.5px solid var(--accent-mid)' : isToday ? 'none' : '1px solid transparent',
+                    transition: 'all 0.1s',
+                  }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? 'white' : 'var(--text)', marginBottom: 2 }}>{d}</div>
+                  {dayEvts.slice(0, 2).map((e, ei) => (
+                    <div key={ei} style={{
+                      fontSize: 9, background: e.couleur || TYPE_COLORS[e.type] || 'var(--accent)',
+                      color: 'white', borderRadius: 3, padding: '1px 3px', marginBottom: 1,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{e.titre}</div>
+                  ))}
+                  {dayEvts.length > 2 && <div style={{ fontSize: 9, color: 'var(--text3)' }}>+{dayEvts.length-2}</div>}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Légende */}
+          <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, color: 'var(--text3)' }}>
+            {tab === 'formalites' ? <>
+              <span><span style={{ color: '#B71C1C' }}>●</span> Expiré</span>
+              <span><span style={{ color: '#E65100' }}>●</span> Urgent</span>
+              <span><span style={{ color: '#1565C0' }}>●</span> Échéance</span>
+            </> : <>
+              <span><span style={{ color: '#2D5016' }}>●</span> Événement</span>
+              <span><span style={{ color: '#E65100' }}>●</span> Festival</span>
+              <span><span style={{ color: '#6A1B9A' }}>●</span> RDV</span>
+            </>}
+          </div>
+        </div>
+
+        {/* Panneau droite */}
+        <div>
+          {/* Prochains événements */}
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card-header">
+              <div className="card-title">À venir</div>
+              <button className="btn btn-primary" style={{ fontSize: 12 }}
+                onClick={() => { setSelectedDay(todayStr); setShowAdd(true); }}>
+                + Ajouter
+              </button>
+            </div>
+            {upcoming.length === 0 ? (
+              <div className="empty"><div className="empty-text">Aucun événement à venir.</div></div>
+            ) : upcoming.map((e, i) => {
+              const d = new Date(e.date + 'T00:00:00');
+              const diff = Math.round((d - today) / 86400000);
+              return (
+                <div key={e.id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: e.couleur || TYPE_COLORS[e.type] || 'var(--accent)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'white', lineHeight: 1 }}>{d.getDate()}</div>
+                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.8)' }}>{MOIS_LABELS[d.getMonth()].slice(0,3)}</div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>{e.titre}</div>
+                    {e.client && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{e.client}</div>}
+                    {e.note && <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>{e.note}</div>}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: diff <= 7 ? '#B71C1C' : diff <= 30 ? '#E65100' : 'var(--text3)' }}>
+                      {diff === 0 ? "Aujourd'hui" : diff === 1 ? 'Demain' : `J-${diff}`}
+                    </div>
+                    {!e.auto && (
+                      <button onClick={() => removeEvent(e.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 11 }}>✕</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Événements du mois */}
+          {monthEvents.length > 0 && (
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Ce mois — {MOIS_LABELS[mois]}</div>
+              </div>
+              {monthEvents.map((e, i) => (
+                <div key={e.id} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13, alignItems: 'center' }}>
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: e.couleur || TYPE_COLORS[e.type] || 'var(--accent)', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontWeight: 500 }}>{e.date?.slice(8,10)}/{e.date?.slice(5,7)}</span>
+                    <span style={{ marginLeft: 8 }}>{e.titre}</span>
+                    {e.client && <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 6 }}>— {e.client}</span>}
+                  </div>
+                  {!e.auto && <button onClick={() => removeEvent(e.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 11 }}>✕</button>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modal ajout événement */}
+      {showAdd && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
+          <div className="modal">
+            <div className="modal-title">{tab === 'formalites' ? '📋 Ajouter une échéance' : '🎭 Ajouter un événement culturel'}</div>
+            <div className="modal-sub">Date : {selectedDay?.split('-').reverse().join('/')}</div>
+
+            <div className="form-group">
+              <label className="form-label">Titre *</label>
+              <input className="form-input" value={newEvent.titre} onChange={e => setNewEvent(p => ({ ...p, titre: e.target.value }))}
+                placeholder={tab === 'formalites' ? "Renouvellement licence, URSSAF..." : "Festival, concert, répétition..."} autoFocus />
+            </div>
+
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Type</label>
+                <select className="form-input" value={newEvent.type} onChange={e => setNewEvent(p => ({ ...p, type: e.target.value }))}>
+                  {tab === 'formalites' ? <>
+                    <option value="formalite">Formalité administrative</option>
+                    <option value="deadline">Deadline / Date limite</option>
+                    <option value="rdv">Rendez-vous</option>
+                  </> : <>
+                    <option value="culturel">Événement culturel</option>
+                    <option value="festival">Festival / Spectacle</option>
+                    <option value="formation">Formation / Résidence</option>
+                    <option value="rdv">Rendez-vous</option>
+                  </>}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Client associé</label>
+                <select className="form-input" value={newEvent.client} onChange={e => setNewEvent(p => ({ ...p, client: e.target.value }))}>
+                  <option value="">— Aucun —</option>
+                  {clients.map(c => <option key={c.slug} value={c.nom}>{c.nom}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Couleur</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['#2D5016','#1565C0','#B71C1C','#E65100','#6A1B9A','#00695C','#F57F17'].map(c => (
+                  <div key={c} onClick={() => setNewEvent(p => ({ ...p, couleur: c }))}
+                    style={{ width: 28, height: 28, borderRadius: '50%', background: c, cursor: 'pointer',
+                      border: newEvent.couleur === c ? '3px solid var(--text)' : '2px solid transparent' }} />
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Note</label>
+              <input className="form-input" value={newEvent.note} onChange={e => setNewEvent(p => ({ ...p, note: e.target.value }))}
+                placeholder="Détails, contacts, liens..." />
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowAdd(false)}>Annuler</button>
+              <button className="btn btn-primary" onClick={addEvent} disabled={!newEvent.titre}>Ajouter →</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Devis & Factures ──────────────────────────────────────────────────────────
 
 function DevisFacturesView() {
@@ -2564,6 +2864,7 @@ const icons = {
   taches: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="2" y="2" width="12" height="12" rx="1.5"/><polyline points="5,8 7,10 11,6"/></svg>,
   subventions: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M2 4h12M2 8h8M2 12h5"/><circle cx="12" cy="11" r="3"/><path d="M12 9.5v1.5l1 1"/></svg>,
   alertes: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M8 1L1 14h14L8 1z"/><line x1="8" y1="6" x2="8" y2="9"/><circle cx="8" cy="12" r="0.5" fill="currentColor"/></svg>,
+  calendrier: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="3" width="14" height="12" rx="1.5"/><path d="M1 7h14M5 1v4M11 1v4"/></svg>,
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -2619,11 +2920,11 @@ function App() {
     { key: 'clients', label: 'Dossiers clients', icon: icons.clients },
     { key: 'taches', label: 'Tâches', icon: icons.taches, badge: urgentCount || null },
     { key: 'devis', label: 'Devis & Factures', icon: icons.subventions },
-    { key: 'subventions', label: 'Subventions', icon: icons.alertes },
+    { key: 'calendrier', label: 'Calendriers', icon: icons.calendrier },
     { key: 'alertes', label: 'Alertes', icon: icons.alertes, badge: data?.nb_alertes_urgentes || null },
   ];
 
-  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', subventions: 'Pipeline subventions', alertes: 'Alertes conformité' };
+  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', calendrier: 'Calendriers', alertes: 'Alertes conformité' };
 
   return (
     <div className="app">
@@ -2683,6 +2984,7 @@ function App() {
           {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'devis' && <DevisFacturesView />}
+          {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
         </main>
