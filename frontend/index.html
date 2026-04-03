@@ -686,41 +686,72 @@ function CalendarStrip() {
 
 // ── Dashboard view ────────────────────────────────────────────────────────────
 
-function DashboardView({ data, taches, onNewClient, setView }) {
+function DashboardView({ data, taches, finance, onNewClient, setView }) {
   const urgentes = (data?.alertes || []).filter(a => a.statut === 'EXPIRÉ' || a.statut === 'URGENT');
   const tachesEnCours = taches.filter(t => !t.done);
+  const tachesUrgentes = tachesEnCours.filter(t => t.priorite === 'URGENT');
+
+  const caEncaisse = finance?.factures?.ca_encaisse || 0;
+  const enAttente = finance?.factures?.en_attente || 0;
+  const devisEnCours = finance?.devis?.en_cours || 0;
 
   return (
     <div>
-      <div className="metrics-grid">
+      {/* Ligne 1 — Métriques activité */}
+      <div className="metrics-grid" style={{ marginBottom: 12 }}>
         <div className="metric-card accent-info" onClick={() => setView('clients')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Clients actifs</div>
           <div className="metric-value">{data?.nb_clients || 0}</div>
-          <div className="metric-sub">associations suivies</div>
+          <div className="metric-sub">dossiers suivis</div>
         </div>
         <div className="metric-card accent-warn" onClick={() => setView('alertes')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Alertes urgentes</div>
           <div className="metric-value">{urgentes.length}</div>
-          <div className="metric-sub">à traiter maintenant</div>
+          <div className="metric-sub">conformité à traiter</div>
         </div>
         <div className="metric-card accent-green" onClick={() => setView('taches')} style={{ cursor: 'pointer' }}>
           <div className="metric-label">Tâches en cours</div>
           <div className="metric-value">{tachesEnCours.length}</div>
-          <div className="metric-sub">dont {tachesEnCours.filter(t => t.priorite === 'URGENT').length} urgentes</div>
+          <div className="metric-sub">{tachesUrgentes.length > 0 ? `${tachesUrgentes.length} urgentes` : 'aucune urgente'}</div>
         </div>
-        <div className="metric-card accent-info" onClick={() => setView('subventions')} style={{ cursor: 'pointer' }}>
-          <div className="metric-label">Subventions pipeline</div>
-          <div className="metric-value">{data?.nb_subventions || 0}</div>
-          <div className="metric-sub">toutes associations</div>
+        <div className="metric-card" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
+          <div className="metric-label">Devis en cours</div>
+          <div className="metric-value">{devisEnCours}</div>
+          <div className="metric-sub">à signer / envoyer</div>
+        </div>
+      </div>
+
+      {/* Ligne 2 — Métriques financières */}
+      <div className="metrics-grid" style={{ marginBottom: 16 }}>
+        <div className="metric-card accent-green" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
+          <div className="metric-label">CA encaissé</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{caEncaisse.toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{finance?.factures?.payees || 0} factures payées</div>
+        </div>
+        <div className="metric-card accent-warn" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
+          <div className="metric-label">En attente paiement</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{enAttente.toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{finance?.factures?.envoyees || 0} facture(s) envoyée(s)</div>
+        </div>
+        <div className="metric-card accent-info" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
+          <div className="metric-label">CA devis validés</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{(finance?.devis?.ca_devis_valides || 0).toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{finance?.devis?.valides || 0} devis</div>
+        </div>
+        <div className="metric-card" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
+          <div className="metric-label">Factures à faire</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{finance?.factures?.a_faire || 0}</div>
+          <div className="metric-sub">à générer depuis devis</div>
         </div>
       </div>
 
       <div className="grid-2" style={{ marginBottom: 16 }}>
+        {/* Prochaines échéances */}
         <div className="card">
           <div className="card-header">
             <div>
               <div className="card-title">Prochaines échéances</div>
-              <div className="card-subtitle">Issues des alertes de conformité</div>
+              <div className="card-subtitle">Conformité et licences</div>
             </div>
           </div>
           {(() => {
@@ -729,8 +760,8 @@ function DashboardView({ data, taches, onNewClient, setView }) {
               .sort((a, b) => new Date(a.date_expiration) - new Date(b.date_expiration))
               .slice(0, 5);
             if (upcoming.length === 0) return (
-              <div className="empty" style={{ padding: '20px 0' }}>
-                <div className="empty-text">Aucune échéance — renseignez les dates dans les Excel sur Drive.</div>
+              <div className="empty" style={{ padding: '16px 0' }}>
+                <div className="empty-text">Aucune échéance urgente.</div>
               </div>
             );
             return upcoming.map((a, i) => (
@@ -748,6 +779,47 @@ function DashboardView({ data, taches, onNewClient, setView }) {
           })()}
         </div>
 
+        {/* Devis récents */}
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">Devis récents</div>
+              <div className="card-subtitle">À envoyer ou en attente de signature</div>
+            </div>
+            <button className="btn" onClick={() => setView('devis')} style={{ fontSize: 12 }}>Voir tout</button>
+          </div>
+          {(() => {
+            const recents = (finance?.liste_devis || [])
+              .filter(d => !['annulé', 'facturé'].includes(d.statut))
+              .slice(0, 4);
+            if (recents.length === 0) return (
+              <div className="empty" style={{ padding: '16px 0' }}>
+                <div className="empty-text">Aucun devis en cours.</div>
+              </div>
+            );
+            const COLORS = {
+              brouillon: 'var(--text3)', envoyé: 'var(--info)',
+              signé: 'var(--warn)', validé: 'var(--accent)',
+            };
+            return recents.map((d, i) => (
+              <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS[d.statut] || 'var(--text3)', flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500 }}>{d.client_nom}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{d.numero}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{(d.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                  <div style={{ fontSize: 10, color: COLORS[d.statut] || 'var(--text3)' }}>{d.statut}</div>
+                </div>
+              </div>
+            ));
+          })()}
+        </div>
+      </div>
+
+      <div className="grid-2">
+        {/* Alertes conformité */}
         <div className="card">
           <div className="card-header">
             <div>
@@ -756,7 +828,7 @@ function DashboardView({ data, taches, onNewClient, setView }) {
             </div>
             <button className="btn" onClick={() => setView('alertes')} style={{ fontSize: 12 }}>Voir tout</button>
           </div>
-          {(data?.alertes || []).slice(0, 5).map((a, i) => (
+          {(data?.alertes || []).filter(a => ['EXPIRÉ','URGENT','Attention'].includes(a.statut)).slice(0, 4).map((a, i) => (
             <div key={i} className="alert-row">
               <AlertDot statut={a.statut} />
               <div>
@@ -766,28 +838,38 @@ function DashboardView({ data, taches, onNewClient, setView }) {
               <Badge statut={a.statut} />
             </div>
           ))}
+          {(data?.alertes || []).filter(a => ['EXPIRÉ','URGENT','Attention'].includes(a.statut)).length === 0 && (
+            <div className="empty" style={{ padding: '16px 0' }}><div className="empty-text">Aucune alerte active.</div></div>
+          )}
         </div>
-      </div>
 
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <div className="card-title">Tâches en attente</div>
-            <div className="card-subtitle">Créées par l'agent IA ou manuellement</div>
-          </div>
-          <button className="btn" onClick={() => setView('taches')} style={{ fontSize: 12 }}>Voir tout</button>
-        </div>
-        {tachesEnCours.slice(0, 3).map(t => (
-          <div key={t.id} className="task-row">
-            <div className="task-check" />
-            <div className="task-body">
-              <div className="task-title">{t.titre}</div>
-              <div className="task-meta">{t.client} · Source : {t.source} · Deadline : {t.date}</div>
+        {/* Tâches urgentes */}
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">Tâches en attente</div>
+              <div className="card-subtitle">À traiter en priorité</div>
             </div>
-            <Badge statut={t.priorite} />
+            <button className="btn" onClick={() => setView('taches')} style={{ fontSize: 12 }}>Voir tout</button>
           </div>
-        ))}
+          {tachesEnCours.slice(0, 4).map(t => (
+            <div key={t.id} className="task-row">
+              <div className="task-check" />
+              <div className="task-body">
+                <div className="task-title">{t.titre}</div>
+                <div className="task-meta">{t.client_detecte || t.client} · {t.source}</div>
+              </div>
+              <Badge statut={t.priorite} />
+            </div>
+          ))}
+          {tachesEnCours.length === 0 && (
+            <div className="empty" style={{ padding: '16px 0' }}><div className="empty-text">Aucune tâche en cours. 🎉</div></div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
     </div>
   );
 }
@@ -850,7 +932,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 
       {/* Tabs */}
       <div className="tabs">
-        {[['infos', 'Informations'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents'], ['historique', 'Historique']].map(([k, l]) => (
+        {[['infos', 'Informations'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents'], ['facturation', 'Facturation'], ['historique', 'Historique']].map(([k, l]) => (
           <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -1045,6 +1127,11 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
           )}
         </div>
       )}
+      {/* Facturation */}
+      {tab === 'facturation' && (
+        <FacturationClient slug={slug} nomClient={cd.nom_usuel || cd.nom_officiel} />
+      )}
+
       {/* Historique */}
       {tab === 'historique' && (
         <div className="card">
@@ -1080,6 +1167,179 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
             ));
           })()}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Facturation par client ────────────────────────────────────────────────────
+
+function FacturationClient({ slug, nomClient }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showNewDevis, setShowNewDevis] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [devisRes, factRes] = await Promise.all([
+        fetch(`${API}/devis`),
+        fetch(`${API}/factures`),
+      ]);
+      const allDevis = devisRes.ok ? await devisRes.json() : [];
+      const allFact = factRes.ok ? await factRes.json() : [];
+      setData({
+        devis: allDevis.filter(d => d.client_slug === slug),
+        factures: allFact.filter(f => f.client_slug === slug),
+      });
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, [slug]);
+
+  const STATUT_DEVIS = {
+    brouillon: { label: 'Brouillon', bg: 'var(--surface2)', color: 'var(--text3)' },
+    envoyé:    { label: 'Envoyé',    bg: 'var(--info-light)', color: 'var(--info)' },
+    signé:     { label: 'Signé',     bg: 'var(--warn-light)', color: 'var(--warn)' },
+    validé:    { label: 'Validé',    bg: 'var(--accent-light)', color: 'var(--accent)' },
+    facturé:   { label: 'Facturé',   bg: '#E8F5E9', color: '#1B5E20' },
+    annulé:    { label: 'Annulé',    bg: 'var(--danger-light)', color: 'var(--danger)' },
+  };
+  const STATUT_FACT = {
+    à_faire:   { label: 'À faire',   bg: 'var(--warn-light)',   color: 'var(--warn)' },
+    envoyée:   { label: 'Envoyée',   bg: 'var(--info-light)',   color: 'var(--info)' },
+    payée:     { label: 'Payée',     bg: 'var(--accent-light)', color: 'var(--accent)' },
+    annulée:   { label: 'Annulée',   bg: 'var(--danger-light)', color: 'var(--danger)' },
+    en_retard: { label: 'En retard', bg: 'var(--danger-light)', color: 'var(--danger)' },
+  };
+
+  function Badge({ statut, map }) {
+    const s = map[statut] || { label: statut, bg: 'var(--surface2)', color: 'var(--text3)' };
+    return <span style={{ background: s.bg, color: s.color, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 }}>{s.label}</span>;
+  }
+
+  async function changeStatut(type, id, statut) {
+    await fetch(`${API}/${type}/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ statut }),
+    });
+    load();
+  }
+
+  async function creerFacture(devis) {
+    await fetch(`${API}/factures`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ devis_id: devis.id }),
+    });
+    load();
+  }
+
+  if (loading) return <div className="empty"><div className="empty-text">Chargement...</div></div>;
+
+  const devis = data?.devis || [];
+  const factures = data?.factures || [];
+  const totalEncaisse = factures.filter(f => f.statut === 'payée').reduce((s, f) => s + (f.total_ht || 0), 0);
+  const totalAttente = factures.filter(f => ['envoyée', 'à_faire'].includes(f.statut)).reduce((s, f) => s + (f.solde_a_payer || 0), 0);
+
+  return (
+    <div>
+      {/* Métriques client */}
+      <div className="metrics-grid" style={{ marginBottom: 14 }}>
+        <div className="metric-card accent-green">
+          <div className="metric-label">CA encaissé</div>
+          <div className="metric-value" style={{ fontSize: 20 }}>{totalEncaisse.toLocaleString('fr-FR')} €</div>
+        </div>
+        <div className="metric-card accent-warn">
+          <div className="metric-label">En attente</div>
+          <div className="metric-value" style={{ fontSize: 20 }}>{totalAttente.toLocaleString('fr-FR')} €</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Devis</div>
+          <div className="metric-value" style={{ fontSize: 20 }}>{devis.length}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Factures</div>
+          <div className="metric-value" style={{ fontSize: 20 }}>{factures.length}</div>
+        </div>
+      </div>
+
+      {/* Devis */}
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="card-header">
+          <div className="card-title">Devis</div>
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNewDevis(true)}>+ Nouveau devis</button>
+        </div>
+        {devis.length === 0
+          ? <div className="empty"><div className="empty-text">Aucun devis pour ce client.</div></div>
+          : devis.map(d => (
+            <div key={d.id} className="client-row" style={{ padding: '10px 0', alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 3 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{d.numero}</span>
+                  <Badge statut={d.statut} map={STATUT_DEVIS} />
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>{d.periode || '—'}</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  {(d.prestations || []).slice(0, 2).map(p => p.description).filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontWeight: 700, color: 'var(--accent)', fontSize: 14 }}>{(d.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Acompte : {d.acompte_montant || 0} €</div>
+                <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                  {d.statut === 'brouillon' && <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => changeStatut('devis', d.id, 'envoyé')}>📤 Envoyer</button>}
+                  {d.statut === 'envoyé' && <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => changeStatut('devis', d.id, 'signé')}>✍️ Signé</button>}
+                  {d.statut === 'signé' && <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => changeStatut('devis', d.id, 'validé')}>✅ Valider</button>}
+                  {['validé', 'signé'].includes(d.statut) && !d.factures_liees?.length && (
+                    <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => creerFacture(d)}>🧾 Facturer</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))
+        }
+      </div>
+
+      {/* Factures */}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Factures</div>
+        </div>
+        {factures.length === 0
+          ? <div className="empty"><div className="empty-text">Aucune facture. Créez un devis et validez-le pour générer une facture.</div></div>
+          : factures.map(f => (
+            <div key={f.id} className="client-row" style={{ padding: '10px 0', alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 3 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{f.numero}</span>
+                  <Badge statut={f.statut} map={STATUT_FACT} />
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>{f.periode || '—'}</div>
+                {f.devis_numero && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Devis lié : {f.devis_numero}</div>}
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontWeight: 700, color: 'var(--accent)', fontSize: 14 }}>{(f.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Solde : {f.solde_a_payer || 0} €</div>
+                <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                  {f.statut === 'à_faire' && <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => changeStatut('factures', f.id, 'envoyée')}>📤 Envoyer</button>}
+                  {f.statut === 'envoyée' && <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => changeStatut('factures', f.id, 'payée')}>✅ Payée</button>}
+                </div>
+              </div>
+            </div>
+          ))
+        }
+      </div>
+
+      {showNewDevis && (
+        <NewDevisModal
+          onClose={() => setShowNewDevis(false)}
+          onCreated={() => { load(); setShowNewDevis(false); }}
+          defaultClientSlug={slug}
+          defaultClientNom={nomClient}
+        />
       )}
     </div>
   );
@@ -1828,11 +2088,13 @@ function DevisFacturesView() {
 
 // ── Modal nouveau devis ───────────────────────────────────────────────────────
 
-function NewDevisModal({ onClose, onCreated }) {
+function NewDevisModal({ onClose, onCreated, defaultClientSlug = '', defaultClientNom = '' }) {
   const [clients, setClients] = useState([]);
   const [tarifs, setTarifs] = useState([]);
   const [form, setForm] = useState({
-    client_slug: '', client_nom: '', periode: '',
+    client_slug: defaultClientSlug,
+    client_nom: defaultClientNom,
+    periode: '',
     acompte_pct: 30, facilite_paiement: '1x', notes: '',
   });
   const [prestations, setPrestations] = useState([
@@ -2311,6 +2573,14 @@ function App() {
   const [selectedClient, setSelectedClient] = useState(null);
   const [data, setData] = useState({ nb_clients: 0, nb_alertes_urgentes: 0, clients: [], alertes: [] });
   const [taches, setTaches] = useState([]);
+  const [finance, setFinance] = useState(null);
+
+  async function fetchFinance() {
+    try {
+      const res = await fetch(`${API}/devis-factures/dashboard`);
+      if (res.ok) setFinance(await res.json());
+    } catch {}
+  }
   const [showModal, setShowModal] = useState(false);
 
   async function fetchTaches() {
@@ -2333,10 +2603,11 @@ function App() {
   useEffect(() => {
     fetchDashboard();
     fetchTaches();
-    // Rafraîchit toutes les 2 minutes
+    fetchFinance();
     const interval = setInterval(() => {
       fetchDashboard();
       fetchTaches();
+      fetchFinance();
     }, 120000);
     return () => clearInterval(interval);
   }, []);
@@ -2407,7 +2678,7 @@ function App() {
         </div>
 
         <main className="content">
-          {view === 'dashboard' && <DashboardView data={data} taches={taches} onNewClient={() => setShowModal(true)} setView={setView} />}
+          {view === 'dashboard' && <DashboardView data={data} taches={taches} finance={finance} onNewClient={() => setShowModal(true)} setView={setView} />}
           {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
           {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
