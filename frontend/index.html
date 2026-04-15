@@ -2103,8 +2103,17 @@ function CommView({ clients }) {
   const [showCharteEditor, setShowCharteEditor] = useState(false);
 
   // Générateur signature email
-  const [sigForm, setSigForm] = useState({ nom: 'Océane Hurez', titre: 'Ingénieure culturelle · Pause Kréyol', email: 'contact@pausekreyol.fr', telephone: '+33 6 58 91 08 14', site: 'pausekreyol.fr', slogan: 'De l\'idée au lancement, valorisons votre projet !' });
-  const [sigGenerated, setSigGenerated] = useState(false);
+  const [sigForm, setSigForm] = useState({ nom: 'Océane Hurez', titre: 'Ingénieure culturelle · Pause Kréyol', email: 'contact@pausekreyol.fr', telephone: '+33 6 58 91 08 14', site: 'pausekreyol.fr', slogan: 'De l\'idée au lancement, valorisons votre projet !', imgGauche: '', imgGaucheH: 80, imgBas: '', imgBasW: 500 });
+  const [sigGenerated, setSigGenerated] = useState(true);
+
+  // Assets partagés entre la signature et l'onglet Assets
+  const [assets, setAssetsState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pk_assets') || '[]'); } catch { return []; }
+  });
+  function saveAssetsShared(list) {
+    setAssetsState(list);
+    try { localStorage.setItem('pk_assets', JSON.stringify(list)); } catch {}
+  }
 
   // Générateur email client
   const [emailForm, setEmailForm] = useState({ client: '', type: 'onboarding', custom: '' });
@@ -2235,52 +2244,186 @@ function CommView({ clients }) {
 
       {/* ── SIGNATURE EMAIL ────────────────────────────────────────────────── */}
       {tab === 'signature' && (
-        <div className="grid-2">
-          <div className="card">
-            <div className="card-header"><div className="card-title">Paramètres de la signature</div></div>
-            {[
-              ['Nom / Structure', 'nom', 'Pause Kreyol'],
-              ['Titre / Fonction', 'titre', 'Administration de production culturelle'],
-              ['Email', 'email', 'contact@pausekreyol.fr'],
-              ['Téléphone', 'telephone', '+33 6 XX XX XX XX'],
-              ['Site web', 'site', 'pausekreyol.fr'],
-              ['Slogan (optionnel)', 'slogan', 'Libérer les artistes de l\'administratif'],
-            ].map(([label, key, placeholder]) => (
-              <div key={key} className="form-group" style={{ marginBottom: 10 }}>
-                <label className="form-label">{label}</label>
-                <input className="form-input" value={sigForm[key]} onChange={e => setSig(key, e.target.value)} placeholder={placeholder} />
-              </div>
-            ))}
-            <button className="btn btn-primary" onClick={() => setSigGenerated(true)}>Générer la signature →</button>
-          </div>
+        <div>
+          <div className="grid-2" style={{ marginBottom: 16 }}>
+            {/* Paramètres */}
+            <div className="card">
+              <div className="card-header"><div className="card-title">Paramètres de la signature</div></div>
+              {[
+                ['Nom / Structure', 'nom', 'Océane Hurez'],
+                ['Titre / Fonction', 'titre', 'Ingénieure culturelle · Pause Kréyol'],
+                ['Email', 'email', 'contact@pausekreyol.fr'],
+                ['Téléphone', 'telephone', '+33 6 58 91 08 14'],
+                ['Site web', 'site', 'pausekreyol.fr'],
+                ['Slogan (optionnel)', 'slogan', 'De l\'idée au lancement, valorisons votre projet !'],
+              ].map(([label, key, placeholder]) => (
+                <div key={key} className="form-group" style={{ marginBottom: 10 }}>
+                  <label className="form-label">{label}</label>
+                  <input className="form-input" value={sigForm[key]} onChange={e => setSig(key, e.target.value)} placeholder={placeholder} />
+                </div>
+              ))}
 
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title">Aperçu</div>
-              {sigGenerated && (
-                <button className="btn" style={{ fontSize: 12 }} onClick={() => navigator.clipboard.writeText(document.getElementById('sig-html')?.innerText || '')}>
-                  📋 Copier
-                </button>
-              )}
+              {/* Image gauche */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 10 }}>
+                  🖼 Image à gauche (logo, photo...)
+                </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">URL de l'image (Drive, hébergement...)</label>
+                  <input className="form-input" value={sigForm.imgGauche || ''} onChange={e => setSig('imgGauche', e.target.value)}
+                    placeholder="https://drive.google.com/uc?id=..." />
+                </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">Hauteur (px)</label>
+                  <input className="form-input" type="number" value={sigForm.imgGaucheH || 80} onChange={e => setSig('imgGaucheH', parseInt(e.target.value))}
+                    style={{ width: 90 }} />
+                </div>
+                {/* Sélecteur rapide depuis les assets */}
+                {assets.filter(a => ['logo','photo','charte'].includes(a.type)).length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Ou choisir depuis vos assets :</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {assets.filter(a => ['logo','photo','charte'].includes(a.type)).map(a => (
+                        <button key={a.id} className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                          onClick={() => setSig('imgGauche', a.url)}>
+                          {a.nom}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Image bas */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 10 }}>
+                  🖼 Image en dessous (bannière, newsletter...)
+                </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">URL de l'image</label>
+                  <input className="form-input" value={sigForm.imgBas || ''} onChange={e => setSig('imgBas', e.target.value)}
+                    placeholder="https://..." />
+                </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">Largeur max (px, ex: 500)</label>
+                  <input className="form-input" type="number" value={sigForm.imgBasW || 500} onChange={e => setSig('imgBasW', parseInt(e.target.value))}
+                    style={{ width: 90 }} />
+                </div>
+                {assets.filter(a => ['photo','video','template'].includes(a.type)).length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Ou choisir depuis vos assets :</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {assets.filter(a => ['photo','video','template'].includes(a.type)).map(a => (
+                        <button key={a.id} className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                          onClick={() => setSig('imgBas', a.url)}>
+                          {a.nom}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button className="btn btn-primary" style={{ marginTop: 14, width: '100%' }} onClick={() => setSigGenerated(true)}>
+                Générer la signature →
+              </button>
             </div>
-            <div id="sig-html" style={{ fontFamily: 'Josefin Sans, Arial, sans-serif', fontSize: 13, borderLeft: `4px solid #FF795A`, paddingLeft: 16, paddingTop: 10, paddingBottom: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 16, color: '#2834B7', letterSpacing: '1px', textTransform: 'uppercase' }}>{sigForm.nom}</div>
-              <div style={{ color: '#FF795A', fontSize: 11, fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 8 }}>{sigForm.titre}</div>
-              <div style={{ height: 1, background: '#FFD2AD', marginBottom: 8, width: 160 }} />
-              {sigForm.telephone && <div style={{ color: '#333', fontSize: 12, marginBottom: 2 }}>📞 {sigForm.telephone}</div>}
-              <div style={{ color: '#333', fontSize: 12, marginBottom: 2 }}>✉️ {sigForm.email}</div>
-              {sigForm.site && <div style={{ color: '#2834B7', fontSize: 12, marginBottom: 8 }}>🌐 {sigForm.site}</div>}
-              {sigForm.slogan && (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #FFD2AD' }}>
-                  <div style={{ fontStyle: 'italic', color: '#888', fontSize: 11 }}>"{sigForm.slogan}"</div>
+
+            {/* Aperçu */}
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Aperçu live</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {sigGenerated && (
+                    <button className="btn" style={{ fontSize: 11 }}
+                      onClick={() => {
+                        const el = document.getElementById('sig-html');
+                        if (el) navigator.clipboard.writeText(el.outerHTML).catch(() =>
+                          navigator.clipboard.writeText(el.innerText)
+                        );
+                      }}>
+                      📋 Copier HTML
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Signature avec les 2 emplacements image */}
+              <div id="sig-html" style={{ display: 'inline-block', fontFamily: 'Arial, sans-serif', maxWidth: 600 }}>
+                <table cellPadding="0" cellSpacing="0" border="0" style={{ borderCollapse: 'collapse' }}>
+                  <tbody>
+                    <tr>
+                      {/* Image gauche */}
+                      {sigForm.imgGauche && (
+                        <td style={{ paddingRight: 16, verticalAlign: 'middle' }}>
+                          <img src={sigForm.imgGauche} alt="logo"
+                            style={{ height: sigForm.imgGaucheH || 80, width: 'auto', display: 'block' }}
+                            onError={e => { e.target.style.display='none'; }} />
+                        </td>
+                      )}
+                      {/* Contenu texte */}
+                      <td style={{ borderLeft: '4px solid #FF795A', paddingLeft: 16, verticalAlign: 'top' }}>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: '#2834B7', letterSpacing: '1px', textTransform: 'uppercase', fontFamily: 'Arial, sans-serif' }}>
+                          {sigForm.nom}
+                        </div>
+                        <div style={{ color: '#FF795A', fontSize: 10, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 8, fontFamily: 'Arial, sans-serif' }}>
+                          {sigForm.titre}
+                        </div>
+                        <div style={{ height: 1, background: '#FFD2AD', marginBottom: 8, width: 160 }} />
+                        {sigForm.telephone && (
+                          <div style={{ color: '#333', fontSize: 12, marginBottom: 3, fontFamily: 'Arial, sans-serif' }}>
+                            📞 {sigForm.telephone}
+                          </div>
+                        )}
+                        <div style={{ color: '#333', fontSize: 12, marginBottom: 3, fontFamily: 'Arial, sans-serif' }}>
+                          ✉️ {sigForm.email}
+                        </div>
+                        {sigForm.site && (
+                          <div style={{ color: '#2834B7', fontSize: 12, marginBottom: 8, fontFamily: 'Arial, sans-serif' }}>
+                            🌐 {sigForm.site}
+                          </div>
+                        )}
+                        {sigForm.slogan && (
+                          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #FFD2AD' }}>
+                            <div style={{ fontStyle: 'italic', color: '#888', fontSize: 11, fontFamily: 'Arial, sans-serif' }}>
+                              "{sigForm.slogan}"
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ marginTop: 10, background: '#2834B7', display: 'inline-block', padding: '5px 12px', borderRadius: 4 }}>
+                          <span style={{ color: '#FF795A', fontWeight: 700, fontSize: 12, letterSpacing: '1.5px', fontFamily: 'Arial, sans-serif' }}>PAUSE</span>
+                          <span style={{ color: '#FFD2AD', fontWeight: 700, fontSize: 12, letterSpacing: '1.5px', fontFamily: 'Arial, sans-serif' }}>KRÉYOL</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {/* Image bas */}
+                    {sigForm.imgBas && (
+                      <tr>
+                        <td colSpan={sigForm.imgGauche ? 2 : 1} style={{ paddingTop: 14 }}>
+                          <img src={sigForm.imgBas} alt="bannière"
+                            style={{ maxWidth: sigForm.imgBasW || 500, width: '100%', display: 'block', borderRadius: 4 }}
+                            onError={e => { e.target.style.display='none'; }} />
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {!sigGenerated && (
+                <div className="empty" style={{ marginTop: 12 }}>
+                  <div className="empty-text">L'aperçu se met à jour en temps réel.</div>
                 </div>
               )}
-              <div style={{ marginTop: 10, background: '#2834B7', display: 'inline-block', padding: '4px 10px', borderRadius: 4 }}>
-                <span style={{ color: '#FF795A', fontWeight: 700, fontSize: 12, letterSpacing: '1px' }}>PAUSE</span>
-                <span style={{ color: '#FFD2AD', fontWeight: 700, fontSize: 12, letterSpacing: '1px' }}>KRÉYOL</span>
+
+              {/* Guide URL images */}
+              <div style={{ marginTop: 14, background: 'var(--pk-blue-light)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', fontSize: 11, color: 'var(--text2)' }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>💡 Comment héberger une image pour la signature ?</div>
+                <div>1. Uploader l'image sur Google Drive</div>
+                <div>2. Clic droit → Obtenir le lien → Accès public</div>
+                <div>3. Transformer le lien Drive : <code style={{ background: 'white', padding: '1px 4px', borderRadius: 3 }}>drive.google.com/uc?id=VOTRE_ID</code></div>
               </div>
             </div>
-            {!sigGenerated && <div className="empty" style={{ marginTop: 12 }}><div className="empty-text">Remplissez les champs et cliquez "Générer".</div></div>}
           </div>
         </div>
       )}
@@ -2368,7 +2511,7 @@ function CommView({ clients }) {
             <div className="card-title">Assets & Ressources</div>
             <div style={{ fontSize: 12, color: 'var(--text3)' }}>Liens vers vos fichiers Drive</div>
           </div>
-          <AssetsList />
+          <AssetsList assets={assets} setAssets={saveAssetsShared} />
         </div>
       )}
 
@@ -2448,26 +2591,33 @@ function CharteEditor({ initial, onSave, onClose }) {
 
 // ── Assets Drive ──────────────────────────────────────────────────────────────
 
-function AssetsList() {
-  const [assets, setAssets] = useState(() => {
+function AssetsList({ assets: externalAssets, setAssets: setExternalAssets }) {
+  const [internalAssets, setInternalAssets] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pk_assets') || '[]'); } catch { return []; }
   });
+
+  // Utilise les props si disponibles, sinon l'état interne
+  const assets = externalAssets !== undefined ? externalAssets : internalAssets;
+  function save(list) {
+    if (setExternalAssets) {
+      setExternalAssets(list);
+    } else {
+      setInternalAssets(list);
+      try { localStorage.setItem('pk_assets', JSON.stringify(list)); } catch {}
+    }
+  }
+
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ nom: '', type: 'logo', url: '', note: '' });
 
   const TYPES = {
-    logo: { label: 'Logo', icon: '🖼' },
-    charte: { label: 'Charte graphique', icon: '🎨' },
-    template: { label: 'Template', icon: '📄' },
-    photo: { label: 'Photo / Visuel', icon: '📷' },
-    video: { label: 'Vidéo', icon: '🎬' },
-    autre: { label: 'Autre', icon: '📁' },
+    logo:     { label: 'Logo',              icon: '🖼' },
+    charte:   { label: 'Charte graphique',  icon: '🎨' },
+    template: { label: 'Template',          icon: '📄' },
+    photo:    { label: 'Photo / Visuel',    icon: '📷' },
+    video:    { label: 'Vidéo',             icon: '🎬' },
+    autre:    { label: 'Autre',             icon: '📁' },
   };
-
-  function save(list) {
-    setAssets(list);
-    try { localStorage.setItem('pk_assets', JSON.stringify(list)); } catch {}
-  }
 
   function addAsset() {
     if (!form.nom || !form.url) return;
