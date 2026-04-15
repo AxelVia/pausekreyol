@@ -8,51 +8,50 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Josefin+Sans:wght@300;400;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap');
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      /* ── Palette PauseKreyol exacte ── */
-      --orange:       #F07052;   /* orange corail — couleur principale */
-      --orange-dark:  #D4563A;   /* orange foncé — hover */
-      --orange-light: #FEF0EC;   /* orange très pâle — fonds */
-      --orange-mid:   #F5896E;   /* orange moyen */
+      /* ── Palette officielle Pause Kréyol (charte graphique) ── */
+      --pk-blue:        #2834B7;   /* Bleu principal — RVB 40 52 183 */
+      --pk-blue-dark:   #1E2690;   /* hover bleu */
+      --pk-blue-light:  #ECEEF9;   /* fond bleu pâle */
 
-      --blue:         #3D3FAA;   /* bleu indigo — accent secondaire */
-      --blue-dark:    #2D2F8A;
-      --blue-light:   #EEEEF8;   /* bleu très pâle — fonds */
+      --pk-orange:      #FF795A;   /* Orange corail — RVB 255 121 90 */
+      --pk-orange-dark: #E05C3C;   /* hover orange */
+      --pk-orange-light:#FFF0EB;   /* fond orange pâle */
+
+      --pk-peach:       #FFD2AD;   /* Pêche/Saumon secondaire — RVB 255 210 173 */
+      --pk-peach-light: #FFF5EE;   /* fond pêche très pâle */
 
       /* Système général */
-      --bg:           #F8F8FA;   /* blanc légèrement gris — fond page */
+      --bg:           #F9F9FB;
       --surface:      #FFFFFF;
-      --surface2:     #F2F2F6;
-      --border:       #E8E8EE;
-      --border2:      #D0D0DC;
-      --text:         #1A1A2E;   /* quasi-noir avec teinte bleue */
-      --text2:        #5A5A72;
-      --text3:        #9898B0;
+      --surface2:     #F3F3F8;
+      --border:       #E4E4EE;
+      --border2:      #CACAD8;
+      --text:         #0D0F1A;     /* quasi-noir, cohérent avec #000 PK */
+      --text2:        #525268;
+      --text3:        #9494A8;
 
-      /* Sémantiques — mappés sur la palette PK */
-      --accent:       var(--orange);
-      --accent-light: var(--orange-light);
-      --accent-mid:   var(--orange-mid);
-      --info:         var(--blue);
-      --info-light:   var(--blue-light);
-      --warn:         #B45309;
+      /* Alias sémantiques → palette PK */
+      --accent:       #FF795A;
+      --accent-light: #FFF0EB;
+      --accent-mid:   #FF9070;
+      --info:         #2834B7;
+      --info-light:   #ECEEF9;
+      --warn:         #C27518;
       --warn-light:   #FEF3C7;
       --danger:       #C0392B;
       --danger-light: #FDECEB;
-
-      /* Alias pour rétrocompatibilité avec le JS existant */
-      --accent:       #F07052;
-      --accent-light: #FEF0EC;
-      --accent-mid:   #F5896E;
+      --success:      #1A6B3C;
+      --success-light:#DDFAEC;
 
       --radius:    10px;
       --radius-sm: 6px;
-      --shadow:    0 1px 3px rgba(61,63,170,0.06), 0 1px 2px rgba(0,0,0,0.04);
-      --shadow-md: 0 4px 16px rgba(61,63,170,0.10);
+      --shadow:    0 1px 4px rgba(40,52,183,0.07), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 20px rgba(40,52,183,0.11);
     }
 
     body {
@@ -63,142 +62,128 @@
       line-height: 1.5;
     }
 
+    h1, h2, h3, .topbar-title, .card-title, .modal-title, .section-title {
+      font-family: 'Josefin Sans', sans-serif;
+      letter-spacing: 0.3px;
+    }
+
     /* Layout */
     .app { display: flex; min-height: 100vh; }
 
-    /* ── Sidebar — orange PK ── */
+    /* ── Sidebar — bleu PK officiel ── */
     .sidebar {
       width: 224px;
       min-height: 100vh;
-      background: var(--orange);
+      background: var(--pk-blue);
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
     }
     .sidebar-logo {
       padding: 22px 20px 18px;
-      border-bottom: 1px solid rgba(255,255,255,0.2);
+      border-bottom: 1px solid rgba(255,255,255,0.15);
     }
     .sidebar-logo h1 {
-      font-size: 16px;
+      font-family: 'Josefin Sans', sans-serif;
+      font-size: 15px;
       font-weight: 700;
       color: #FFFFFF;
-      letter-spacing: 0.2px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
     }
     .sidebar-logo p {
       font-size: 10px;
-      color: rgba(255,255,255,0.75);
-      margin-top: 3px;
-      letter-spacing: 0.5px;
+      color: rgba(255,255,255,0.65);
+      margin-top: 4px;
+      letter-spacing: 1px;
       text-transform: uppercase;
     }
     .sidebar-nav { padding: 14px 10px; flex: 1; }
     .nav-section { margin-bottom: 16px; }
     .nav-label {
+      font-family: 'Josefin Sans', sans-serif;
       font-size: 10px;
-      font-weight: 600;
-      color: rgba(255,255,255,0.55);
+      font-weight: 700;
+      color: rgba(255,255,255,0.45);
       text-transform: uppercase;
-      letter-spacing: 1px;
+      letter-spacing: 1.2px;
       padding: 0 10px;
       margin-bottom: 4px;
     }
     .nav-item {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      padding: 9px 12px;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-      font-size: 13px;
-      color: rgba(255,255,255,0.80);
-      transition: all 0.15s;
-      font-weight: 400;
-      border: none;
-      background: none;
-      width: 100%;
-      text-align: left;
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 12px; border-radius: var(--radius-sm);
+      cursor: pointer; font-size: 13px;
+      color: rgba(255,255,255,0.75);
+      transition: all 0.15s; font-weight: 400;
+      border: none; background: none; width: 100%; text-align: left;
     }
-    .nav-item:hover { background: rgba(255,255,255,0.15); color: white; }
+    .nav-item:hover { background: rgba(255,255,255,0.12); color: white; }
     .nav-item.active {
-      background: white;
-      color: var(--orange);
+      background: var(--pk-orange);
+      color: white;
       font-weight: 600;
     }
     .nav-icon { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.85; }
     .nav-item.active .nav-icon { opacity: 1; }
     .nav-badge {
       margin-left: auto;
-      background: var(--blue);
+      background: var(--pk-orange);
       color: white;
-      font-size: 10px;
-      font-weight: 700;
-      padding: 1px 6px;
-      border-radius: 10px;
+      font-size: 10px; font-weight: 700;
+      padding: 1px 6px; border-radius: 10px;
     }
     .sidebar-bottom {
       padding: 12px;
-      border-top: 1px solid rgba(255,255,255,0.2);
+      border-top: 1px solid rgba(255,255,255,0.12);
     }
     .user-chip {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 10px;
-      border-radius: var(--radius-sm);
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: var(--radius-sm);
     }
     .avatar {
-      width: 30px; height: 30px;
-      border-radius: 50%;
-      background: white;
-      color: var(--orange);
-      font-size: 11px;
-      font-weight: 700;
-      display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
+      width: 30px; height: 30px; border-radius: 50%;
+      background: var(--pk-orange); color: white;
+      font-family: 'Josefin Sans', sans-serif;
+      font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-    .user-name { font-size: 12px; font-weight: 600; color: white; }
-    .user-role { font-size: 10px; color: rgba(255,255,255,0.65); }
+    .user-name { font-size: 12px; font-weight: 600; color: white; font-family: 'Josefin Sans', sans-serif; }
+    .user-role { font-size: 10px; color: rgba(255,255,255,0.55); }
 
     /* Main */
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     .topbar {
       background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 0 28px;
-      height: 54px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      border-bottom: 2px solid var(--pk-peach);
+      padding: 0 28px; height: 54px;
+      display: flex; align-items: center; justify-content: space-between;
       flex-shrink: 0;
     }
-    .topbar-title { font-size: 15px; font-weight: 600; color: var(--text); }
+    .topbar-title {
+      font-family: 'Josefin Sans', sans-serif;
+      font-size: 14px; font-weight: 700;
+      color: var(--pk-blue);
+      text-transform: uppercase; letter-spacing: 0.8px;
+    }
     .topbar-right { display: flex; align-items: center; gap: 10px; }
 
     /* Buttons */
     .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 7px 14px;
-      border-radius: var(--radius-sm);
-      font-size: 13px;
-      font-family: 'DM Sans', sans-serif;
-      font-weight: 500;
-      cursor: pointer;
-      border: 1px solid var(--border2);
-      background: var(--surface);
-      color: var(--text);
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 16px; border-radius: var(--radius-sm);
+      font-size: 12px; font-family: 'Josefin Sans', sans-serif;
+      font-weight: 600; cursor: pointer; letter-spacing: 0.3px;
+      border: 1.5px solid var(--border2);
+      background: var(--surface); color: var(--text);
       transition: all 0.15s;
     }
     .btn:hover { background: var(--surface2); }
     .btn-primary {
-      background: var(--orange);
-      color: white;
-      border-color: var(--orange);
-      font-weight: 600;
+      background: var(--pk-orange); color: white;
+      border-color: var(--pk-orange);
     }
-    .btn-primary:hover { background: var(--orange-dark); border-color: var(--orange-dark); }
+    .btn-primary:hover { background: var(--pk-orange-dark); border-color: var(--pk-orange-dark); }
 
     .content { padding: 24px 28px; flex: 1; overflow-y: auto; }
 
@@ -211,12 +196,14 @@
       box-shadow: var(--shadow);
     }
     .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
+      display: flex; align-items: center;
+      justify-content: space-between; margin-bottom: 14px;
     }
-    .card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .card-title {
+      font-family: 'Josefin Sans', sans-serif;
+      font-size: 12px; font-weight: 700;
+      color: var(--pk-blue); text-transform: uppercase; letter-spacing: 0.5px;
+    }
     .card-subtitle { font-size: 12px; color: var(--text3); margin-top: 1px; }
 
     /* Metric cards */
@@ -229,29 +216,34 @@
       transition: box-shadow 0.15s, transform 0.15s;
     }
     .metric-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
-    .metric-label { font-size: 10px; color: var(--text3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; }
-    .metric-value { font-size: 26px; font-weight: 300; margin-top: 6px; letter-spacing: -1px; color: var(--text); }
-    .metric-sub { font-size: 12px; color: var(--text3); margin-top: 2px; }
-    .metric-card.accent-green { border-top: 3px solid var(--orange); }
-    .metric-card.accent-warn  { border-top: 3px solid #D97706; }
-    .metric-card.accent-danger{ border-top: 3px solid var(--danger); }
-    .metric-card.accent-info  { border-top: 3px solid var(--blue); }
-    .metric-card[style*="cursor: pointer"]:hover, .metric-card[style*="cursor:pointer"]:hover {
-      background: var(--surface2);
-      transform: translateY(-1px);
-      transition: all 0.15s;
+    .metric-label {
+      font-family: 'Josefin Sans', sans-serif;
+      font-size: 10px; color: var(--text3);
+      font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
     }
-
+    .metric-value {
+      font-size: 26px; font-weight: 300; margin-top: 6px;
+      letter-spacing: -1px; color: var(--text);
+    }
+    .metric-sub { font-size: 12px; color: var(--text3); margin-top: 2px; }
+    .metric-card.accent-green { border-top: 3px solid var(--pk-orange); }
+    .metric-card.accent-warn  { border-top: 3px solid var(--warn); }
+    .metric-card.accent-danger{ border-top: 3px solid var(--danger); }
+    .metric-card.accent-info  { border-top: 3px solid var(--pk-blue); }
+    .metric-card[style*="cursor: pointer"]:hover,
+    .metric-card[style*="cursor:pointer"]:hover {
+      background: var(--surface2); transform: translateY(-1px); transition: all 0.15s;
+    }
     /* Grid */
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 
     /* Badges */
     .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
-    .badge-green  { background: var(--orange-light); color: var(--orange-dark); }
+    .badge-green  { background: var(--pk-orange-light); color: var(--orange-dark); }
     .badge-warn   { background: var(--warn-light); color: var(--warn); }
     .badge-danger { background: var(--danger-light); color: var(--danger); }
-    .badge-info   { background: var(--blue-light); color: var(--blue); }
+    .badge-info   { background: var(--pk-blue-light); color: var(--pk-blue); }
     .badge-gray   { background: var(--surface2); color: var(--text2); }
 
     /* Client list */
@@ -264,7 +256,7 @@
     .client-row:hover { opacity: 0.75; }
     .client-avatar {
       width: 36px; height: 36px; border-radius: 8px;
-      background: var(--orange-light); color: var(--orange);
+      background: var(--pk-orange-light); color: var(--pk-orange);
       font-size: 13px; font-weight: 600;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
@@ -279,7 +271,7 @@
     .alert-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
     .dot-danger { background: var(--danger); }
     .dot-warn   { background: #D97706; }
-    .dot-ok     { background: var(--orange); }
+    .dot-ok     { background: var(--pk-orange); }
     .dot-gray   { background: var(--text3); }
     .alert-label { font-size: 13px; font-weight: 500; }
     .alert-sub   { font-size: 11px; color: var(--text3); margin-top: 1px; }
@@ -297,7 +289,7 @@
       transition: all 0.15s;
     }
     .tab:hover { color: var(--text); }
-    .tab.active { color: var(--orange); border-bottom-color: var(--orange); font-weight: 600; }
+    .tab.active { color: var(--pk-orange); border-bottom-color: var(--pk-orange); font-weight: 600; }
 
     /* Form */
     .form-group { margin-bottom: 14px; }
@@ -307,7 +299,7 @@
       border-radius: var(--radius-sm); font-size: 13px; font-family: 'DM Sans', sans-serif;
       background: var(--surface); color: var(--text); transition: border-color 0.15s;
     }
-    .form-input:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-light); }
+    .form-input:focus { outline: none; border-color: var(--pk-orange); box-shadow: 0 0 0 3px var(--pk-orange-light); }
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
     /* Modal */
@@ -338,10 +330,10 @@
     .cal-day { flex-shrink: 0; width: 40px; text-align: center; padding: 8px 4px; border-radius: var(--radius-sm); cursor: pointer; }
     .cal-day-name { font-size: 10px; color: var(--text3); text-transform: uppercase; }
     .cal-day-num  { font-size: 15px; font-weight: 500; margin-top: 2px; }
-    .cal-day.today { background: var(--orange); color: white; }
+    .cal-day.today { background: var(--pk-orange); color: white; }
     .cal-day.today .cal-day-name { color: rgba(255,255,255,0.75); }
     .cal-day.has-event { position: relative; }
-    .cal-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--orange); margin: 3px auto 0; }
+    .cal-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--pk-orange); margin: 3px auto 0; }
     .cal-day.today .cal-dot { background: white; }
 
     /* Divider */
@@ -360,7 +352,7 @@
       flex-shrink: 0; margin-top: 1px; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
     }
-    .task-check.done { background: var(--orange); border-color: var(--orange); }
+    .task-check.done { background: var(--pk-orange); border-color: var(--pk-orange); }
     .task-body { flex: 1; }
     .task-title { font-size: 13px; font-weight: 500; }
     .task-meta  { font-size: 11px; color: var(--text3); margin-top: 2px; }
@@ -418,7 +410,7 @@
       font-family: 'DM Sans', sans-serif; color: var(--text3); font-size: 10px; font-weight: 500;
       padding: 6px 4px; border-radius: 8px; transition: all 0.15s; position: relative;
     }
-    .mobile-nav-item.active { color: var(--orange); }
+    .mobile-nav-item.active { color: var(--pk-orange); }
     .mobile-nav-item svg { width: 20px; height: 20px; }
     .mobile-nav-badge {
       position: absolute; top: 4px; right: calc(50% - 14px);
@@ -430,7 +422,7 @@
 
     /* Bannière read-only */
     .mobile-readonly-banner {
-      display: none; background: var(--orange-light); color: var(--orange);
+      display: none; background: var(--pk-orange-light); color: var(--pk-orange);
       font-size: 11px; font-weight: 500; text-align: center; padding: 6px 12px;
       border-bottom: 1px solid var(--border);
     }
@@ -1164,7 +1156,7 @@ function FacturationClient({ slug, nomClient }) {
 <title>Devis ${d.numero}</title>
 <style>
   body { font-family: Arial, sans-serif; color: #1a1916; margin: 0; padding: 32px; font-size: 13px; }
-  h1 { color: #F07052; font-size: 22px; margin: 0 0 4px; }
+  h1 { color: #FF795A; font-size: 22px; margin: 0 0 4px; }
   .sub { color: #888; font-size: 11px; margin-bottom: 24px; }
   .header { display: flex; justify-content: space-between; margin-bottom: 32px; }
   .from { }
@@ -1172,11 +1164,11 @@ function FacturationClient({ slug, nomClient }) {
   .label { font-size: 10px; color: #888; text-transform: uppercase; margin-bottom: 2px; }
   .val { font-weight: 600; }
   table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-  th { background: #F07052; color: white; padding: 8px 10px; text-align: left; font-size: 11px; }
+  th { background: #FF795A; color: white; padding: 8px 10px; text-align: left; font-size: 11px; }
   td { padding: 8px 10px; border-bottom: 1px solid #eee; }
   .total-block { margin-top: 16px; text-align: right; }
   .total-row { display: flex; justify-content: flex-end; gap: 40px; padding: 6px 0; font-size: 13px; }
-  .total-final { font-size: 16px; font-weight: 700; color: #F07052; border-top: 2px solid #F07052; padding-top: 8px; margin-top: 4px; }
+  .total-final { font-size: 16px; font-weight: 700; color: #FF795A; border-top: 2px solid #FF795A; padding-top: 8px; margin-top: 4px; }
   .conditions { margin-top: 32px; font-size: 11px; color: #888; border-top: 1px solid #eee; padding-top: 16px; }
   @media print { body { padding: 16px; } }
 </style></head><body>
@@ -2112,7 +2104,7 @@ function CommView({ clients }) {
   const [showCharteEditor, setShowCharteEditor] = useState(false);
 
   // Générateur signature email
-  const [sigForm, setSigForm] = useState({ nom: 'Pause Kreyol', titre: 'Administration de production culturelle', email: 'contact@pausekreyol.fr', telephone: '', site: 'pausekreyol.fr', slogan: '' });
+  const [sigForm, setSigForm] = useState({ nom: 'Océane Hurez', titre: 'Ingénieure culturelle · Pause Kréyol', email: 'contact@pausekreyol.fr', telephone: '+33 6 58 91 08 14', site: 'pausekreyol.fr', slogan: 'De l\'idée au lancement, valorisons votre projet !' });
   const [sigGenerated, setSigGenerated] = useState(false);
 
   // Générateur email client
@@ -2152,7 +2144,7 @@ function CommView({ clients }) {
     setEmailLoading(false);
   }
 
-  const C = charte?.couleurs || { primaire: '#F07052', secondaire: '#3D3FAA', neutre: '#F7F5F0', texte: '#1A1916' };
+  const C = charte?.couleurs || { primaire: '#FF795A', secondaire: '#2834B7', neutre: '#F7F5F0', texte: '#1A1916' };
 
   return (
     <div>
@@ -2272,13 +2264,22 @@ function CommView({ clients }) {
                 </button>
               )}
             </div>
-            <div id="sig-html" style={{ fontFamily: 'Arial, sans-serif', fontSize: 13, borderLeft: `4px solid ${C.primaire}`, paddingLeft: 16, paddingTop: 8, paddingBottom: 8 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: C.primaire }}>{sigForm.nom}</div>
-              <div style={{ color: '#555', fontSize: 12, marginBottom: 6 }}>{sigForm.titre}</div>
-              {sigForm.telephone && <div style={{ color: '#333', fontSize: 12 }}>📞 {sigForm.telephone}</div>}
-              <div style={{ color: '#333', fontSize: 12 }}>✉️ {sigForm.email}</div>
-              {sigForm.site && <div style={{ color: C.primaire, fontSize: 12 }}>🌐 {sigForm.site}</div>}
-              {sigForm.slogan && <div style={{ marginTop: 8, fontStyle: 'italic', color: '#888', fontSize: 11 }}>"{sigForm.slogan}"</div>}
+            <div id="sig-html" style={{ fontFamily: 'Josefin Sans, Arial, sans-serif', fontSize: 13, borderLeft: `4px solid #FF795A`, paddingLeft: 16, paddingTop: 10, paddingBottom: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: '#2834B7', letterSpacing: '1px', textTransform: 'uppercase' }}>{sigForm.nom}</div>
+              <div style={{ color: '#FF795A', fontSize: 11, fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 8 }}>{sigForm.titre}</div>
+              <div style={{ height: 1, background: '#FFD2AD', marginBottom: 8, width: 160 }} />
+              {sigForm.telephone && <div style={{ color: '#333', fontSize: 12, marginBottom: 2 }}>📞 {sigForm.telephone}</div>}
+              <div style={{ color: '#333', fontSize: 12, marginBottom: 2 }}>✉️ {sigForm.email}</div>
+              {sigForm.site && <div style={{ color: '#2834B7', fontSize: 12, marginBottom: 8 }}>🌐 {sigForm.site}</div>}
+              {sigForm.slogan && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #FFD2AD' }}>
+                  <div style={{ fontStyle: 'italic', color: '#888', fontSize: 11 }}>"{sigForm.slogan}"</div>
+                </div>
+              )}
+              <div style={{ marginTop: 10, background: '#2834B7', display: 'inline-block', padding: '4px 10px', borderRadius: 4 }}>
+                <span style={{ color: '#FF795A', fontWeight: 700, fontSize: 12, letterSpacing: '1px' }}>PAUSE</span>
+                <span style={{ color: '#FFD2AD', fontWeight: 700, fontSize: 12, letterSpacing: '1px' }}>KRÉYOL</span>
+              </div>
             </div>
             {!sigGenerated && <div className="empty" style={{ marginTop: 12 }}><div className="empty-text">Remplissez les champs et cliquez "Générer".</div></div>}
           </div>
@@ -2384,9 +2385,9 @@ function CommView({ clients }) {
 
 function CharteEditor({ initial, onSave, onClose }) {
   const [form, setForm] = useState(initial || {
-    couleurs: { primaire: '#F07052', secondaire: '#3D3FAA', neutre: '#F7F5F0', texte: '#1A1916' },
-    typo: { principale: 'DM Sans', secondaire: 'Georgia' },
-    identite: { slogan: '', site: '', email: '', telephone: '' },
+    couleurs: { primaire: '#FF795A', secondaire: '#2834B7', neutre: '#FFD2AD', texte: '#000000' },
+    typo: { principale: 'Josefin Sans', secondaire: 'DM Sans' },
+    identite: { slogan: 'De l\'idée au lancement, valorisons votre projet !', site: 'pausekreyol.fr', email: 'contact@pausekreyol.fr', telephone: '+33 6 58 91 08 14' },
   });
 
   function set(section, key, val) {
@@ -2559,7 +2560,7 @@ function CalendrierView({ alertes, clients }) {
   });
   const [showAdd, setShowAdd] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null);
-  const [newEvent, setNewEvent] = useState({ titre: '', type: 'formalite', client: '', couleur: '#F07052', note: '' });
+  const [newEvent, setNewEvent] = useState({ titre: '', type: 'formalite', client: '', couleur: '#FF795A', note: '' });
 
   function saveEvents(evts) {
     setEvents(evts);
@@ -2582,7 +2583,7 @@ function CalendrierView({ alertes, clients }) {
     }).catch(() => {});
     saveEvents([...events, evt]);
     setShowAdd(false);
-    setNewEvent({ titre: '', type: tab === 'formalites' ? 'formalite' : 'culturel', client: '', couleur: '#F07052', note: '' });
+    setNewEvent({ titre: '', type: tab === 'formalites' ? 'formalite' : 'culturel', client: '', couleur: '#FF795A', note: '' });
   }
 
   function removeEvent(id) {
@@ -2634,7 +2635,7 @@ function CalendrierView({ alertes, clients }) {
 
   const TYPE_COLORS = {
     formalite: '#1565C0', deadline: '#B71C1C', rdv: '#6A1B9A',
-    culturel: '#F07052', festival: '#E65100', formation: '#00695C',
+    culturel: '#FF795A', festival: '#E65100', formation: '#00695C',
   };
 
   // Liste des événements du mois
@@ -2712,7 +2713,7 @@ function CalendrierView({ alertes, clients }) {
               <span><span style={{ color: '#E65100' }}>●</span> Urgent</span>
               <span><span style={{ color: '#1565C0' }}>●</span> Échéance</span>
             </> : <>
-              <span><span style={{ color: '#F07052' }}>●</span> Événement</span>
+              <span><span style={{ color: '#FF795A' }}>●</span> Événement</span>
               <span><span style={{ color: '#E65100' }}>●</span> Festival</span>
               <span><span style={{ color: '#6A1B9A' }}>●</span> RDV</span>
             </>}
@@ -2822,7 +2823,7 @@ function CalendrierView({ alertes, clients }) {
             <div className="form-group">
               <label className="form-label">Couleur</label>
               <div style={{ display: 'flex', gap: 8 }}>
-                {['#F07052','#1565C0','#B71C1C','#E65100','#6A1B9A','#00695C','#F57F17'].map(c => (
+                {['#FF795A','#2834B7','#B71C1C','#E65100','#6A1B9A','#FFD2AD','#F57F17'].map(c => (
                   <div key={c} onClick={() => setNewEvent(p => ({ ...p, couleur: c }))}
                     style={{ width: 28, height: 28, borderRadius: '50%', background: c, cursor: 'pointer',
                       border: newEvent.couleur === c ? '3px solid var(--text)' : '2px solid transparent' }} />
@@ -2869,7 +2870,7 @@ function DevisFacturesView() {
 
   const STATUT_DEVIS = {
     brouillon:  { label: 'Brouillon',    bg: 'var(--surface2)',    color: 'var(--text3)' },
-    envoyé:     { label: 'Envoyé',       bg: 'var(--blue-light)',  color: 'var(--blue)' },
+    envoyé:     { label: 'Envoyé',       bg: 'var(--pk-blue-light)',  color: 'var(--pk-blue)' },
     signé:      { label: 'Signé',        bg: '#FFF3E0',            color: '#E65100' },
     validé:     { label: 'Validé',       bg: 'var(--accent-light)', color: 'var(--accent)' },
     facturé:    { label: 'Facturé',      bg: '#E8F5E9',            color: '#1B5E20' },
@@ -2878,7 +2879,7 @@ function DevisFacturesView() {
   };
   const STATUT_FACTURE = {
     à_faire:    { label: 'À faire',      bg: '#FFF3E0',            color: '#E65100' },
-    envoyée:    { label: 'Envoyée',      bg: 'var(--blue-light)',  color: 'var(--blue)' },
+    envoyée:    { label: 'Envoyée',      bg: 'var(--pk-blue-light)',  color: 'var(--pk-blue)' },
     payée:      { label: '✅ Payée',    bg: '#E8F5E9',            color: '#1B5E20' },
     annulée:    { label: 'Annulée',      bg: 'var(--danger-light)', color: 'var(--danger)' },
     en_retard:  { label: '🚨 En retard', bg: 'var(--danger-light)', color: 'var(--danger)' },
@@ -2984,7 +2985,7 @@ function DevisFacturesView() {
                   {devis.echeances?.length > 0 && (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
                       {devis.echeances.map((e, i) => (
-                        <span key={i} style={{ fontSize: 10, background: 'var(--blue-light)', color: 'var(--blue)', padding: '2px 7px', borderRadius: 8 }}>
+                        <span key={i} style={{ fontSize: 10, background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', padding: '2px 7px', borderRadius: 8 }}>
                           {e.label} : {(e.montant||0).toLocaleString('fr-FR')}€ — {e.date}
                         </span>
                       ))}
@@ -3012,7 +3013,7 @@ function DevisFacturesView() {
                     <div style={{ fontSize: 11, color: 'var(--text3)' }}>Acompte : {devis.acompte_montant} €</div>
                   )}
                   {devis.facilite_paiement && devis.facilite_paiement !== '1x' && (
-                    <div style={{ fontSize: 10, background: 'var(--blue-light)', color: 'var(--blue)', padding: '1px 6px', borderRadius: 8, marginTop: 2 }}>
+                    <div style={{ fontSize: 10, background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', padding: '1px 6px', borderRadius: 8, marginTop: 2 }}>
                       Paiement {devis.facilite_paiement}
                     </div>
                   )}
@@ -3130,8 +3131,8 @@ function CalendrierDevisFactures({ devis, factures }) {
         label: `✍️ Limite signature — ${d.client_nom} (${d.numero})`,
         date: d.date_limite_signature,
         diff,
-        color: diff <= 3 ? 'var(--danger)' : diff <= 7 ? 'var(--warn)' : 'var(--blue)',
-        bg: diff <= 3 ? 'var(--danger-light)' : diff <= 7 ? 'var(--warn-light)' : 'var(--blue-light)',
+        color: diff <= 3 ? 'var(--danger)' : diff <= 7 ? 'var(--warn)' : 'var(--pk-blue)',
+        bg: diff <= 3 ? 'var(--danger-light)' : diff <= 7 ? 'var(--warn-light)' : 'var(--pk-blue-light)',
       });
     }
     if (d.date_envoi && d.statut === 'envoyé') {
@@ -3169,8 +3170,8 @@ function CalendrierDevisFactures({ devis, factures }) {
         label: `💳 ${e.label} — ${f.client_nom} — ${(e.montant||0).toLocaleString('fr-FR')}€`,
         date: e.date,
         diff: 0,
-        color: 'var(--blue)',
-        bg: 'var(--blue-light)',
+        color: 'var(--pk-blue)',
+        bg: 'var(--pk-blue-light)',
       });
     });
   });
@@ -4425,26 +4426,30 @@ function LoginScreen({ onAuth }) {
 
   return (
     <div style={{
-      minHeight: '100vh', background: 'var(--bg)',
+      minHeight: '100vh', background: '#2834B7',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontFamily: "'DM Sans', sans-serif",
     }}>
       <div style={{
-        width: 380, padding: '48px 40px',
-        background: 'var(--surface)', borderRadius: 16,
-        boxShadow: '0 8px 40px rgba(61,63,170,0.12)',
+        width: 400, padding: '48px 44px',
+        background: '#FFFFFF', borderRadius: 16,
+        boxShadow: '0 20px 60px rgba(40,52,183,0.3)',
         animation: shake ? 'shake 0.4s ease' : 'none',
       }}>
         {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+        <div style={{ textAlign: 'center', marginBottom: 36 }}>
           <div style={{
-            width: 56, height: 56, borderRadius: 14,
-            background: 'var(--orange)', display: 'inline-flex',
+            width: 64, height: 64, borderRadius: '50%',
+            background: '#2834B7', display: 'inline-flex',
             alignItems: 'center', justifyContent: 'center',
-            fontSize: 26, marginBottom: 14,
-          }}>🌿</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--orange)', letterSpacing: '-0.5px' }}>PauseKreyol</div>
-          <div style={{ fontSize: 13, color: 'var(--text3)', marginTop: 4 }}>Administration de production culturelle</div>
+            marginBottom: 16, boxShadow: '0 4px 16px rgba(40,52,183,0.3)',
+          }}>
+            <span style={{ fontSize: 28 }}>🕊️</span>
+          </div>
+          <div>
+            <span style={{ fontFamily: "'Josefin Sans', sans-serif", fontSize: 22, fontWeight: 700, color: '#FF795A', letterSpacing: '2px', textTransform: 'uppercase' }}>PAUSE</span>
+            <span style={{ fontFamily: "'Josefin Sans', sans-serif", fontSize: 22, fontWeight: 700, color: '#2834B7', letterSpacing: '2px', textTransform: 'uppercase' }}> KRÉYOL</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#888', marginTop: 4, letterSpacing: '1.5px', textTransform: 'uppercase' }}>Ingénierie culturelle</div>
         </div>
 
         <form onSubmit={handleLogin}>
@@ -4480,7 +4485,7 @@ function LoginScreen({ onAuth }) {
             disabled={loading || !password}
             style={{
               width: '100%', padding: '12px',
-              background: loading || !password ? 'var(--border2)' : 'var(--orange)',
+              background: loading || !password ? '#E0E0E0' : '#FF795A',
               color: 'white', border: 'none', borderRadius: 8,
               fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
               cursor: loading || !password ? 'not-allowed' : 'pointer',
