@@ -10,7 +10,7 @@ import shutil
 import logging
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -523,6 +523,30 @@ def _get_projet(slug: str, slug_projet: str):
     if not projet:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
     return client_dir, meta_path, meta, projet
+
+
+@app.delete("/clients/{slug}/projets/{slug_projet}")
+def delete_projet(slug: str, slug_projet: str):
+    """Supprime un projet du dossier client. Ne supprime PAS le client."""
+    client_dir, meta_path, meta, projet = _get_projet(slug, slug_projet)
+    nom_projet = projet.get("nom", slug_projet)
+
+    # Retire le projet de la liste
+    meta["projets"] = [p for p in meta["projets"] if p["slug"] != slug_projet]
+
+    # Historisation avant suppression
+    try:
+        from engine.historisation import append_event
+        append_event(client_dir, "suppression_projet", {
+            "projet_slug": slug_projet,
+            "projet_nom": nom_projet,
+        })
+    except Exception:
+        pass
+
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+    logger.info(f"Projet {slug_projet} supprimé du client {slug}")
+    return {"status": "deleted", "projet": slug_projet, "client": slug}
 
 
 @app.patch("/clients/{slug}/projets/{slug_projet}/statut")
@@ -1587,22 +1611,32 @@ def _create_relance_tasks(devis: dict):
 
 
 def _create_facture_relance_tasks(facture: dict):
-    """Crée tâches de relance paiement : J-7, J-1, J, J+7."""
+    """Crée tâches de relance paiement : J-7, J-1, J, J+7 avec majoration 10%."""
     tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
     nom = facture.get("client_nom", "?")
     numero = facture.get("numero", "?")
     montant = facture.get("total_ht", 0)
+    montant_maj = round(montant * 1.10, 2)
+    phrase_penalite = (
+        f"Rappel : conformément aux conditions générales, "
+        f"tout retard de paiement entraîne une majoration de 10% du montant dû "
+        f"(soit {montant_maj:.2f}€) ainsi que des pénalités de retard de 3× le taux légal en vigueur."
+    )
 
-    for label, priorite, desc in [
+    relances = [
         ("Relance paiement J-7", "Attention",
-         f"La facture {numero} ({montant}€) arrive à échéance dans 7 jours. Vérifier le paiement."),
+         f"La facture {numero} ({montant}€) arrive à échéance dans 7 jours. Vérifier si le virement est en cours."),
         ("Relance paiement J-1", "URGENT",
-         f"La facture {numero} ({montant}€) expire demain. Contacter {nom} immédiatement."),
+         f"La facture {numero} ({montant}€) expire demain. Contacter {nom} immédiatement. {phrase_penalite}"),
         ("⚠️ Facture impayée — pénalités de retard", "URGENT",
-         f"La facture {numero} n'est pas payée à date. Rappeler les pénalités de retard (3× taux légal). Envoyer mise en demeure."),
-        ("🚨 URGENT — Relance manuelle impayé J+7", "URGENT",
-         f"La facture {numero} est impayée depuis 7 jours. Majoration de 10% applicable. Créer une facture de majoration et engager une procédure de recouvrement."),
-    ]:
+         f"La facture {numero} ({montant}€) n'est pas payée à date. {phrase_penalite} Envoyer une mise en demeure."),
+        ("🚨 URGENT — Impayé J+7 — Créer facture de majoration", "URGENT",
+         f"La facture {numero} est impayée depuis 7 jours. {phrase_penalite} "
+         f"ACTION REQUISE : Créer une nouvelle facture de majoration 10% ({montant_maj:.2f}€) "
+         f"et engager une procédure de recouvrement."),
+    ]
+
+    for label, priorite, desc in relances:
         tasks.append({
             "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_fact",
             "created_at": datetime.now().isoformat(),
@@ -1612,12 +1646,53 @@ def _create_facture_relance_tasks(facture: dict):
             "description": desc,
             "client_nom": nom,
             "client_slug": facture.get("client_slug"),
+            "categorie": "finance",
             "type": "relance_facture",
             "facture_id": facture.get("id"),
+            "montant_facture": montant,
+            "montant_majoration": montant_maj,
             "done": False,
             "auto": True,
         })
     _save_tasks(tasks)
+
+
+def _create_facture_majoration(facture: dict) -> dict:
+    """Crée automatiquement une facture de majoration 10% sur impayé."""
+    montant = facture.get("total_ht", 0)
+    montant_maj = round(montant * 0.10, 2)
+    factures = _load_factures()
+
+    facture_maj = {
+        "id": f"facture_maj_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "numero": f"{_next_numero_facture()} [MAJORATION]",
+        "annee": datetime.now().year,
+        "created_at": datetime.now().isoformat(),
+        "client_slug": facture.get("client_slug", ""),
+        "client_nom": facture.get("client_nom", ""),
+        "facture_origine_id": facture.get("id"),
+        "facture_origine_numero": facture.get("numero"),
+        "statut": "à_faire",
+        "type": "majoration",
+        "prestations": [{
+            "description": f"Majoration 10% pour retard de paiement — facture {facture.get('numero')}",
+            "type": "Majoration retard",
+            "quantite": 1,
+            "tarif_unitaire": montant_maj,
+            "sous_total": montant_maj,
+        }],
+        "total_ht": montant_maj,
+        "tva": "Non applicable — Art. 293B du CGI",
+        "acompte_encaisse": 0,
+        "solde_a_payer": montant_maj,
+        "date_emission": datetime.now().strftime("%d/%m/%Y"),
+        "delai_paiement_jours": 15,
+        "notes": f"Majoration de 10% pour retard de paiement de la facture {facture.get('numero')} ({montant}€ HT)",
+        "historique": [{"statut": "créée_majoration", "date": datetime.now().isoformat()}],
+    }
+    factures.append(facture_maj)
+    _save_factures(factures)
+    return facture_maj
 
 
 # ── Routes devis ──────────────────────────────────────────────────────────────
@@ -1676,7 +1751,7 @@ def create_devis(body: dict):
 
 @app.patch("/devis/{devis_id}")
 def update_devis(devis_id: str, body: dict):
-    """Met à jour un devis (statut, modifications)."""
+    """Met à jour un devis — gère toutes les transitions avec archivage complet."""
     devis = _load_devis()
     d = next((x for x in devis if x["id"] == devis_id), None)
     if not d:
@@ -1694,33 +1769,143 @@ def update_devis(devis_id: str, body: dict):
         d["acompte_montant"] = acompte
         d["solde"] = round(total - acompte, 2)
 
+    # Calcule les échéances détaillées si facilité de paiement
+    if body.get("facilite_paiement") or body.get("date_signature"):
+        facilite = d.get("facilite_paiement", "1x")
+        total = d.get("total_ht", 0)
+        acompte = d.get("acompte_montant", 0)
+        solde = d.get("solde", total - acompte)
+        base = datetime.now()
+        echeances = []
+        if facilite == "1x":
+            echeances = [{"label": "Solde unique", "montant": solde,
+                          "date": (base + timedelta(days=30)).strftime("%d/%m/%Y")}]
+        elif facilite == "2x":
+            echeances = [
+                {"label": "1ère échéance (50%)", "montant": round(solde * 0.5, 2),
+                 "date": (base + timedelta(days=30)).strftime("%d/%m/%Y")},
+                {"label": "2ème échéance (50%)", "montant": round(solde * 0.5, 2),
+                 "date": (base + timedelta(days=60)).strftime("%d/%m/%Y")},
+            ]
+        elif facilite == "3x":
+            part = round(solde / 3, 2)
+            echeances = [
+                {"label": "1ère échéance (33%)", "montant": part,
+                 "date": (base + timedelta(days=30)).strftime("%d/%m/%Y")},
+                {"label": "2ème échéance (33%)", "montant": part,
+                 "date": (base + timedelta(days=60)).strftime("%d/%m/%Y")},
+                {"label": "3ème échéance (33%)", "montant": round(solde - 2 * part, 2),
+                 "date": (base + timedelta(days=90)).strftime("%d/%m/%Y")},
+            ]
+        if echeances and facilite != "manuel":
+            d["echeances"] = echeances
+
     new_statut = d.get("statut")
 
-    # Transitions automatiques
+    # ── Transition : ENVOYÉ ──────────────────────────────────────────────
     if new_statut == "envoyé" and old_statut != "envoyé":
         d["date_envoi"] = datetime.now().strftime("%d/%m/%Y")
+        d["date_limite_signature"] = (datetime.now() + timedelta(days=d.get("validite_jours", 30))).strftime("%d/%m/%Y")
+        d["archive_entry"] = {
+            "action": "envoyé",
+            "date": datetime.now().isoformat(),
+        }
+        d.setdefault("historique", []).append({"statut": "envoyé", "date": datetime.now().isoformat()})
         _create_relance_tasks(d)
 
+    # ── Transition : SIGNÉ / VALIDÉ ──────────────────────────────────────
     if new_statut in ("validé", "signé") and old_statut not in ("validé", "signé"):
         d["date_signature"] = datetime.now().strftime("%d/%m/%Y")
-        # Tâche : valider réception acompte
+        d.setdefault("historique", []).append({"statut": "signé", "date": datetime.now().isoformat()})
         tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+        # Tâche acompte
         tasks.append({
             "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_acompte",
             "created_at": datetime.now().isoformat(),
             "source": "Devis",
             "titre": f"Valider réception acompte — {d['client_nom']} ({d['numero']})",
             "priorite": "Attention",
-            "description": f"Le devis {d['numero']} a été signé. Acompte attendu : {d.get('acompte_montant', 0)}€ ({d.get('acompte_pct', 30)}%). Confirmer la réception.",
+            "categorie": "finance",
+            "description": (
+                f"Le devis {d['numero']} a été signé. "
+                f"Acompte attendu : {d.get('acompte_montant', 0)}€ ({d.get('acompte_pct', 30)}%). "
+                f"Confirmer la réception avant de lancer les travaux."
+            ),
             "client_slug": d.get("client_slug"),
             "type": "acompte",
             "devis_id": devis_id,
             "done": False,
         })
+        # Tâche créer facture
+        tasks.append({
+            "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}2_facture",
+            "created_at": datetime.now().isoformat(),
+            "source": "Devis",
+            "titre": f"Créer et envoyer la facture — {d['client_nom']} ({d['numero']})",
+            "priorite": "Attention",
+            "categorie": "facture",
+            "description": f"Le devis {d['numero']} est signé. Générer la facture correspondante, la vérifier et l'envoyer au client.",
+            "client_slug": d.get("client_slug"),
+            "type": "facture",
+            "devis_id": devis_id,
+            "done": False,
+        })
         _save_tasks(tasks)
 
-    if new_statut == "annulé":
+        # Auto-création de la facture
+        factures = _load_factures()
+        if not d.get("factures_liees"):
+            total = d.get("total_ht", 0)
+            facture = {
+                "id": f"facture_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "numero": _next_numero_facture(),
+                "annee": datetime.now().year,
+                "created_at": datetime.now().isoformat(),
+                "client_slug": d.get("client_slug", ""),
+                "client_nom": d.get("client_nom", ""),
+                "devis_id": devis_id,
+                "devis_numero": d.get("numero", ""),
+                "statut": "à_faire",
+                "prestations": d.get("prestations", []),
+                "total_ht": round(total, 2),
+                "tva": "Non applicable — Art. 293B du CGI",
+                "acompte_encaisse": 0,
+                "solde_a_payer": round(total, 2),
+                "date_emission": datetime.now().strftime("%d/%m/%Y"),
+                "delai_paiement_jours": 30,
+                "date_echeance": (datetime.now() + timedelta(days=30)).strftime("%d/%m/%Y"),
+                "periode": d.get("periode", ""),
+                "facilite_paiement": d.get("facilite_paiement", "1x"),
+                "echeances": d.get("echeances", []),
+                "notes": "",
+                "historique": [{"statut": "créée", "date": datetime.now().isoformat()}],
+            }
+            factures.append(facture)
+            _save_factures(factures)
+            d.setdefault("factures_liees", []).append(facture["id"])
+            d["statut"] = "facturé"
+            new_statut = "facturé"
+
+    # ── Transition : ANNULÉ ───────────────────────────────────────────────
+    if new_statut == "annulé" and old_statut != "annulé":
         d["date_annulation"] = datetime.now().strftime("%d/%m/%Y")
+        d["annulation_marker"] = "⛔ DEVIS ANNULÉ"
+        d["archive_entry"] = {
+            "action": "annulé",
+            "date": datetime.now().isoformat(),
+            "ancien_statut": old_statut,
+        }
+        d.setdefault("historique", []).append({
+            "statut": "annulé", "date": datetime.now().isoformat(), "ancien_statut": old_statut
+        })
+        d["archived"] = True
+
+    # ── Transition : CADUC ────────────────────────────────────────────────
+    if new_statut == "caduc" and old_statut != "caduc":
+        d["date_caducite"] = datetime.now().strftime("%d/%m/%Y")
+        d["annulation_marker"] = "⏰ DEVIS CADUC"
+        d.setdefault("historique", []).append({"statut": "caduc", "date": datetime.now().isoformat()})
+        d["archived"] = True
 
     _save_devis(devis)
     return d
@@ -1803,7 +1988,7 @@ def create_facture(body: dict):
 
 @app.patch("/factures/{facture_id}")
 def update_facture(facture_id: str, body: dict):
-    """Met à jour une facture (statut, paiement...)."""
+    """Met à jour une facture — gère paiement, retard, majoration 10%."""
     factures = _load_factures()
     f = next((x for x in factures if x["id"] == facture_id), None)
     if not f:
@@ -1812,18 +1997,47 @@ def update_facture(facture_id: str, body: dict):
     old_statut = f.get("statut")
     f.update(body)
     new_statut = f.get("statut")
+    f.setdefault("historique", []).append({"statut": new_statut, "date": datetime.now().isoformat()})
 
     if new_statut == "envoyée" and old_statut != "envoyée":
         f["date_envoi"] = datetime.now().strftime("%d/%m/%Y")
+        f["date_echeance"] = (datetime.now() + timedelta(days=f.get("delai_paiement_jours", 30))).strftime("%d/%m/%Y")
         _create_facture_relance_tasks(f)
 
     if new_statut == "payée" and old_statut != "payée":
         f["date_paiement"] = datetime.now().strftime("%d/%m/%Y")
-        # Annule les tâches de relance liées
+        # Clôture toutes les relances auto
         tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
         for t in tasks:
             if t.get("facture_id") == facture_id and t.get("auto"):
                 t["done"] = True
+        _save_tasks(tasks)
+
+    if new_statut == "en_retard" and old_statut != "en_retard":
+        f["date_retard"] = datetime.now().strftime("%d/%m/%Y")
+        # Auto-crée la facture de majoration 10%
+        facture_maj = _create_facture_majoration(f)
+        f["facture_majoration_id"] = facture_maj["id"]
+        # Tâche urgente
+        tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+        tasks.append({
+            "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_retard",
+            "created_at": datetime.now().isoformat(),
+            "source": "Facture",
+            "titre": f"🚨 URGENT — Impayé J+7 — {f['client_nom']} ({f['numero']})",
+            "priorite": "URGENT",
+            "categorie": "finance",
+            "description": (
+                f"La facture {f['numero']} ({f['total_ht']}€) est impayée depuis 7 jours. "
+                f"Une facture de majoration 10% ({round(f['total_ht']*0.1,2)}€) a été créée automatiquement ({facture_maj['numero']}). "
+                f"Relance manuelle obligatoire et procédure de recouvrement à engager."
+            ),
+            "client_slug": f.get("client_slug"),
+            "type": "relance_facture",
+            "facture_id": facture_id,
+            "facture_maj_id": facture_maj["id"],
+            "done": False,
+        })
         _save_tasks(tasks)
 
     _save_factures(factures)
