@@ -42,6 +42,8 @@
       --info:         #2834B7;
       --info-light:   #ECEEF9;
       --warn:         #C27518;
+      --success:      #166534;
+      --success-light:#DCFCE7;
       --warn-light:   #FEF3C7;
       --danger:       #C0392B;
       --danger-light: #FDECEB;
@@ -1891,17 +1893,24 @@ function TachesView({ taches, setTaches }) {
     countsByCat[c] = (countsByCat[c] || 0) + 1;
   });
 
-  function toggle(id) {
-    setTaches(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
+  function markDone(id) {
+    setTaches(prev => prev.map(t => t.id === id ? { ...t, done: true } : t));
     const task = taches.find(t => t.id === id);
-    if (task) {
-      fetch(`${API}/taches/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ done: !task.done }),
-      }).catch(() => {});
-    }
+    if (task) fetch(`${API}/taches/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ done: true }) }).catch(() => {});
   }
+
+  function markUndone(id) {
+    setTaches(prev => prev.map(t => t.id === id ? { ...t, done: false } : t));
+    const task = taches.find(t => t.id === id);
+    if (task) fetch(`${API}/taches/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ done: false }) }).catch(() => {});
+  }
+
+  function decalerDeadline(id, newDate) {
+    setTaches(prev => prev.map(t => t.id === id ? { ...t, deadline: newDate } : t));
+    fetch(`${API}/taches/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ deadline: newDate }) }).catch(() => {});
+  }
+
+  const [editingDeadline, setEditingDeadline] = useState(null); // task id en cours d'édition deadline
 
   async function createTask() {
     if (!newTask.titre) return;
@@ -1915,7 +1924,7 @@ function TachesView({ taches, setTaches }) {
         const t = await res.json();
         setTaches(prev => [t, ...prev]);
         setShowNew(false);
-        setNewTask({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '' });
+        setNewTask({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '' });
       }
     } catch {}
   }
@@ -1981,29 +1990,44 @@ function TachesView({ taches, setTaches }) {
         {filtered.map(t => {
           const cat = CATEGORIES[catFor(t)] || CATEGORIES.admin;
           return (
-            <div key={t.id} className="task-row" style={{ alignItems: 'flex-start', padding: '12px 0' }}>
-              <div className={`task-check ${t.done ? 'done' : ''}`} onClick={() => toggle(t.id)} style={{ marginTop: 2 }}>
-                {t.done && <svg width="10" height="10" viewBox="0 0 10 10"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" /></svg>}
-              </div>
-              <div className="task-body" style={{ opacity: t.done ? 0.4 : 1, flex: 1 }}>
+            <div key={t.id} className="task-row" style={{ alignItems: 'flex-start', padding: '12px 0', opacity: t.done ? 0.5 : 1 }}>
+              <div className="task-body" style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
-                  {/* Badge catégorie */}
                   <span style={{ background: cat.bg, color: cat.color, fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10 }}>
                     {cat.icon} {cat.label}
                   </span>
-                  {/* Badge priorité */}
                   {!t.done && t.priorite === 'URGENT' && (
                     <span style={{ background: 'var(--danger-light)', color: 'var(--danger)', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10 }}>URGENT</span>
                   )}
                   {!t.done && t.priorite === 'Attention' && (
                     <span style={{ background: 'var(--warn-light)', color: 'var(--warn)', fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10 }}>Attention</span>
                   )}
+                  {t.done && <span style={{ background: 'var(--success-light)', color: 'var(--success)', fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10 }}>✅ Terminée</span>}
                 </div>
-                <div className="task-title" style={{ textDecoration: t.done ? 'line-through' : 'none' }}>{t.titre}</div>
-                <div className="task-meta" style={{ marginTop: 3 }}>
+                <div className="task-title" style={{ textDecoration: t.done ? 'line-through' : 'none', marginBottom: 3 }}>{t.titre}</div>
+                <div className="task-meta">
                   {t.client_detecte && <span>{t.client_detecte} · </span>}
-                  <span>Source : {t.source}</span>
-                  {t.deadline && <span> · ⏰ {t.deadline}</span>}
+                  <span>{t.source}</span>
+                  {t.deadline && (
+                    editingDeadline === t.id ? (
+                      <span style={{ marginLeft: 6 }}>
+                        <input type="date" defaultValue={t.deadline} autoFocus
+                          style={{ fontSize: 11, padding: '1px 4px', border: '1px solid var(--border2)', borderRadius: 4 }}
+                          onBlur={e => { decalerDeadline(t.id, e.target.value); setEditingDeadline(null); }}
+                          onKeyDown={e => { if (e.key === 'Enter') { decalerDeadline(t.id, e.target.value); setEditingDeadline(null); } if (e.key === 'Escape') setEditingDeadline(null); }}
+                        />
+                      </span>
+                    ) : (
+                      <span
+                        onClick={() => !t.done && setEditingDeadline(t.id)}
+                        style={{ marginLeft: 6, cursor: t.done ? 'default' : 'pointer', color: 'var(--text2)' }}
+                        title={t.done ? '' : 'Cliquer pour décaler'}
+                      >
+                        ⏰ {t.deadline}
+                        {!t.done && <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 3 }}>✎</span>}
+                      </span>
+                    )
+                  )}
                   {t.calendrier && (
                     <span style={{ marginLeft: 6, background: t.calendrier === 'culturel' ? '#E8F5E9' : 'var(--pk-blue-light)', color: t.calendrier === 'culturel' ? '#1B5E20' : 'var(--pk-blue)', fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8 }}>
                       {t.calendrier === 'culturel' ? '🎭 Culturel' : '📋 Formalités'}
@@ -2014,6 +2038,34 @@ function TachesView({ taches, setTaches }) {
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, fontStyle: 'italic' }}>
                     {t.description.slice(0, 120)}{t.description.length > 120 ? '…' : ''}
                   </div>
+                )}
+              </div>
+              {/* Actions */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0, marginTop: 2 }}>
+                {!t.done ? (
+                  <>
+                    <button
+                      onClick={() => markDone(t.id)}
+                      style={{ fontSize: 11, padding: '3px 10px', background: 'var(--success-light)', color: 'var(--success)', border: '1px solid #86efac', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                    >✅ Fait</button>
+                    {!t.deadline && (
+                      <button
+                        onClick={() => setEditingDeadline(t.id)}
+                        style={{ fontSize: 11, padding: '3px 10px', background: 'var(--surface2)', color: 'var(--text2)', border: '1px solid var(--border2)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >⏰ Deadline</button>
+                    )}
+                    {t.deadline && (
+                      <button
+                        onClick={() => setEditingDeadline(t.id)}
+                        style={{ fontSize: 11, padding: '3px 10px', background: 'var(--surface2)', color: 'var(--text2)', border: '1px solid var(--border2)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >📅 Décaler</button>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    onClick={() => markUndone(t.id)}
+                    style={{ fontSize: 11, padding: '3px 10px', background: 'var(--surface2)', color: 'var(--text3)', border: '1px solid var(--border2)', borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}
+                  >↩ Rouvrir</button>
                 )}
               </div>
             </div>
@@ -2325,8 +2377,14 @@ function CommView({ clients }) {
                 )}
               </div>
 
-              <button className="btn btn-primary" style={{ marginTop: 14, width: '100%' }} onClick={() => setSigGenerated(true)}>
-                Générer la signature →
+              <button className="btn btn-primary" style={{ marginTop: 14, width: '100%' }} onClick={() => {
+                setSigGenerated(true);
+                setTimeout(() => {
+                  const el = document.getElementById('sig-html');
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }, 100);
+              }}>
+                ✅ Générer la signature →
               </button>
             </div>
 
@@ -2334,19 +2392,28 @@ function CommView({ clients }) {
             <div className="card">
               <div className="card-header">
                 <div className="card-title">Aperçu live</div>
-                <div style={{ display: 'flex', gap: 6 }}>
                   {sigGenerated && (
-                    <button className="btn" style={{ fontSize: 11 }}
-                      onClick={() => {
-                        const el = document.getElementById('sig-html');
-                        if (el) navigator.clipboard.writeText(el.outerHTML).catch(() =>
-                          navigator.clipboard.writeText(el.innerText)
-                        );
-                      }}>
-                      📋 Copier HTML
-                    </button>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn" style={{ fontSize: 11 }}
+                        onClick={() => {
+                          const el = document.getElementById('sig-html');
+                          if (!el) return;
+                          // Copie le HTML pour coller dans Gmail/Outlook
+                          const type = 'text/html';
+                          const blob = new Blob([el.outerHTML], { type });
+                          const data = [new ClipboardItem({ [type]: blob })];
+                          navigator.clipboard.write(data)
+                            .then(() => alert('✅ Signature HTML copiée ! Collez-la dans les paramètres de signature de Gmail ou Outlook.'))
+                            .catch(() => {
+                              // Fallback texte brut
+                              navigator.clipboard.writeText(el.innerText || '')
+                                .then(() => alert('Texte copié (format simplifié). Pour le HTML complet, utilisez Chrome.'));
+                            });
+                        }}>
+                        📋 Copier pour Gmail/Outlook
+                      </button>
+                    </div>
                   )}
-                </div>
               </div>
 
               {/* Signature avec les 2 emplacements image */}
