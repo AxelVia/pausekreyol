@@ -2220,3 +2220,168 @@ def login(body: dict):
         raise HTTPException(status_code=401, detail="Mot de passe incorrect")
 
     return {"status": "ok", "message": "Authentifié"}
+
+
+# ── Import historique depuis Compta_Pro.xlsx ──────────────────────────────────
+
+@app.post("/import/compta-historique")
+async def import_compta_historique(file: UploadFile = File(...)):
+    """
+    Importe l'historique complet depuis Pause_Kreyol_Comptabilite_Pro.xlsx.
+    Crée devis + factures + subventions dans le système sans écraser les données existantes.
+    """
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
+
+    try:
+        from openpyxl import load_workbook
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+
+        wb = load_workbook(str(tmp_path), data_only=True)
+        tmp_path.unlink()
+
+        devis_existants = _load_devis()
+        factures_existantes = _load_factures()
+        numeros_devis = {d.get("numero") for d in devis_existants}
+        numeros_factures = {f.get("numero") for f in factures_existantes}
+
+        nouveaux_devis = []
+        nouvelles_factures = []
+        stats = {"devis_importes": 0, "factures_importees": 0, "devis_ignores": 0, "factures_ignorees": 0}
+
+        STATUT_DEVIS_MAP = {
+            "VALIDÉ": "validé", "EN COURS": "envoyé", "ANNULÉ": "annulé",
+            "NON SIGNÉ": "envoyé", "SIGNÉ": "signé",
+        }
+        STATUT_FACT_MAP = {
+            "PAYÉ": "payée", "PAYÉE": "payée", "ENVOYÉE": "envoyée",
+            "À FAIRE": "à_faire", "ANNULÉ": "annulée", "ANNULÉE": "annulée",
+        }
+
+        # ── Import Devis ──────────────────────────────────────────────────────
+        if "📝 Devis" in wb.sheetnames:
+            ws = wb["📝 Devis"]
+            for row in ws.iter_rows(min_row=5, values_only=True):
+                if not row[2] or str(row[2]).startswith("TOTAL"):
+                    continue
+                numero = str(row[2]).strip()
+                if numero in numeros_devis:
+                    stats["devis_ignores"] += 1
+                    continue
+
+                annee = str(row[1]) if row[1] else "2023"
+                client_nom = str(row[3]).strip() if row[3] else ""
+                etat_raw = str(row[4]).strip().upper() if row[4] else ""
+                statut = STATUT_DEVIS_MAP.get(etat_raw, "brouillon")
+                description = str(row[5]).strip() if row[5] else ""
+                periode = str(row[6]).strip() if row[6] else ""
+                date_envoi = str(row[7]).split(" ")[0] if row[7] else ""
+                montant = float(row[8]) if row[8] and str(row[8]).replace('.','').isdigit() else 0
+                acompte_montant = float(row[9]) if row[9] and str(row[9]).replace('.','').replace('-','').isdigit() else 0
+                retour_signe = str(row[10]).strip() if row[10] else ""
+                facture_liee = str(row[11]).strip() if row[11] else ""
+                notes = str(row[14]).strip() if row[14] else ""
+
+                devis = {
+                    "id": f"hist_devis_{numero.replace(' ','_').replace('/','_')}",
+                    "numero": numero,
+                    "annee": annee,
+                    "created_at": datetime.now().isoformat(),
+                    "client_slug": "",
+                    "client_nom": client_nom,
+                    "statut": "annulé" if etat_raw == "ANNULÉ" else statut,
+                    "archived": etat_raw in ("ANNULÉ",),
+                    "annulation_marker": "⛔ DEVIS ANNULÉ" if etat_raw == "ANNULÉ" else None,
+                    "prestations": [{"description": description, "type": "", "quantite": 1, "tarif_unitaire": montant, "sous_total": montant}],
+                    "total_ht": montant,
+                    "tva": "Non applicable — Art. 293B du CGI",
+                    "acompte_pct": round(acompte_montant / montant * 100) if montant > 0 and acompte_montant > 0 else 30,
+                    "acompte_montant": acompte_montant,
+                    "solde": round(montant - acompte_montant, 2),
+                    "validite_jours": 30,
+                    "periode": periode,
+                    "date_emission": date_envoi,
+                    "date_envoi": date_envoi,
+                    "date_signature": retour_signe if retour_signe not in ("", "SIGNÉ") else None,
+                    "notes": notes,
+                    "facilite_paiement": "1x",
+                    "factures_liees": [facture_liee] if facture_liee else [],
+                    "historique": [{"statut": statut, "date": datetime.now().isoformat(), "source": "import_compta"}],
+                    "source_import": "Pause_Kreyol_Comptabilite_Pro.xlsx",
+                }
+                nouveaux_devis.append(devis)
+                numeros_devis.add(numero)
+                stats["devis_importes"] += 1
+
+        # ── Import Factures ───────────────────────────────────────────────────
+        if "🧾 Factures" in wb.sheetnames:
+            ws = wb["🧾 Factures"]
+            for row in ws.iter_rows(min_row=5, values_only=True):
+                if not row[2] or str(row[2]).startswith("TOTAL"):
+                    continue
+                numero = str(row[2]).strip()
+                if numero in numeros_factures:
+                    stats["factures_ignorees"] += 1
+                    continue
+
+                annee = str(row[1]) if row[1] else "2023"
+                client_nom = str(row[3]).strip() if row[3] else ""
+                etat_raw = str(row[4]).strip().upper() if row[4] else ""
+                statut = STATUT_FACT_MAP.get(etat_raw, "à_faire")
+                description = str(row[5]).strip() if row[5] else ""
+                periode = str(row[6]).strip() if row[6] else ""
+                devis_lie = str(row[7]).strip() if row[7] else ""
+                montant = float(row[8]) if row[8] and isinstance(row[8], (int, float)) else 0
+                date_envoi_raw = row[9]
+                date_paiement_raw = row[10]
+                solde_du = float(row[11]) if row[11] and isinstance(row[11], (int, float)) else 0
+                notes = str(row[13]).strip() if row[13] else ""
+
+                def fmt_date(v):
+                    if not v: return ""
+                    if hasattr(v, 'strftime'): return v.strftime("%d/%m/%Y")
+                    return str(v).split(" ")[0]
+
+                facture = {
+                    "id": f"hist_fact_{numero.replace(' ','_').replace('/','_').replace('°','').replace('–','_')}",
+                    "numero": numero,
+                    "annee": annee,
+                    "created_at": datetime.now().isoformat(),
+                    "client_slug": "",
+                    "client_nom": client_nom,
+                    "devis_numero": devis_lie,
+                    "statut": statut,
+                    "prestations": [{"description": description, "type": "", "quantite": 1, "tarif_unitaire": montant, "sous_total": montant}],
+                    "total_ht": montant,
+                    "tva": "Non applicable — Art. 293B du CGI",
+                    "acompte_encaisse": 0,
+                    "solde_a_payer": solde_du,
+                    "date_emission": fmt_date(date_envoi_raw),
+                    "date_envoi": fmt_date(date_envoi_raw),
+                    "date_paiement": fmt_date(date_paiement_raw) if statut == "payée" else None,
+                    "periode": periode,
+                    "notes": notes,
+                    "historique": [{"statut": statut, "date": datetime.now().isoformat(), "source": "import_compta"}],
+                    "source_import": "Pause_Kreyol_Comptabilite_Pro.xlsx",
+                }
+                nouvelles_factures.append(facture)
+                numeros_factures.add(numero)
+                stats["factures_importees"] += 1
+
+        # Sauvegarde
+        _save_devis(devis_existants + nouveaux_devis)
+        _save_factures(factures_existantes + nouvelles_factures)
+
+        return {
+            "status": "ok",
+            **stats,
+            "total_devis": len(devis_existants) + len(nouveaux_devis),
+            "total_factures": len(factures_existantes) + len(nouvelles_factures),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -3043,6 +3043,26 @@ function DevisFacturesView() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showNewDevis, setShowNewDevis] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
+
+  async function importHistorique(file) {
+    const form = new FormData();
+    form.append('file', file);
+    setImportMsg('Import en cours…');
+    try {
+      const res = await fetch(`${API}/import/compta-historique`, { method: 'POST', body: form });
+      const d = await res.json();
+      if (res.ok) {
+        setImportMsg(`✅ ${d.devis_importes} devis + ${d.factures_importees} factures importés (${d.devis_ignores + d.factures_ignorees} ignorés car déjà présents)`);
+        load();
+      } else {
+        setImportMsg('❌ Erreur : ' + (d.detail || 'inconnue'));
+      }
+    } catch (e) {
+      setImportMsg('❌ ' + e.message);
+    }
+    setTimeout(() => setImportMsg(''), 6000);
+  }
 
   async function load() {
     setLoading(true);
@@ -3101,7 +3121,7 @@ function DevisFacturesView() {
   return (
     <div>
       {/* Métriques */}
-      <div className="metrics-grid" style={{ marginBottom: 16 }}>
+      <div className="metrics-grid" style={{ marginBottom: 12 }}>
         <div className="metric-card accent-green" onClick={() => setView && setView('devis')} style={{ cursor:'pointer' }}>
           <div className="metric-label">CA devis validés</div>
           <div className="metric-value">{(d.ca_devis_valides || 0).toLocaleString('fr-FR')} €</div>
@@ -3124,7 +3144,15 @@ function DevisFacturesView() {
         </div>
       </div>
 
-      {/* Tabs + toggle archives */}
+      {/* Import historique */}
+      {importMsg && (
+        <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: 12, fontSize: 13,
+          background: importMsg.startsWith('✅') ? 'var(--success-light)' : importMsg.startsWith('❌') ? 'var(--danger-light)' : 'var(--pk-blue-light)',
+          color: importMsg.startsWith('✅') ? 'var(--success)' : importMsg.startsWith('❌') ? 'var(--danger)' : 'var(--pk-blue)',
+        }}>
+          {importMsg}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div className="tabs" style={{ marginBottom: 0 }}>
           {[['devis', `Devis (${(data?.liste_devis||[]).filter(x=>!x.archived).length})`],
@@ -3142,6 +3170,12 @@ function DevisFacturesView() {
           {tab === 'devis' && !filterArchive && (
             <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNewDevis(true)}>+ Nouveau devis</button>
           )}
+          {/* Import historique */}
+          <label className="btn" style={{ fontSize: 11, cursor: 'pointer' }} title="Importer depuis Pause_Kreyol_Comptabilite_Pro.xlsx">
+            📥 Historique Excel
+            <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+              onChange={e => e.target.files[0] && importHistorique(e.target.files[0])} />
+          </label>
         </div>
       </div>
 
