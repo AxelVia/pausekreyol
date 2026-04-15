@@ -539,186 +539,170 @@ function CalendarStrip() {
 // ── Dashboard view ────────────────────────────────────────────────────────────
 
 function DashboardView({ data, taches, finance, onNewClient, setView }) {
-  const urgentes = (data?.alertes || []).filter(a => a.statut === 'EXPIRÉ' || a.statut === 'URGENT');
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0,10);
   const tachesEnCours = taches.filter(t => !t.done);
-  const tachesUrgentes = tachesEnCours.filter(t => t.priorite === 'URGENT');
+  const urgentes = (data?.alertes || []).filter(a => a.statut === 'EXPIRÉ' || a.statut === 'URGENT');
 
-  const caEncaisse = finance?.factures?.ca_encaisse || 0;
-  const enAttente = finance?.factures?.en_attente || 0;
-  const devisEnCours = finance?.devis?.en_cours || 0;
+  // Tâches avec deadline triées par proximité
+  const tachesAvecDL = tachesEnCours
+    .filter(t => t.deadline)
+    .sort((a,b) => a.deadline.localeCompare(b.deadline));
+
+  // Tâches sans deadline, triées par priorité
+  const tachesSansDL = tachesEnCours
+    .filter(t => !t.done && !t.deadline)
+    .sort((a,b) => {
+      const prio = { 'URGENT': 0, 'Attention': 1, 'Normal': 2 };
+      return (prio[a.priorite]||2) - (prio[b.priorite]||2);
+    });
+
+  // Tâches à venir : d'abord avec deadline proche, puis sans deadline urgentes
+  const tachesOpe = [...tachesAvecDL, ...tachesSansDL].slice(0, 8);
+
+  function diffLabel(deadline) {
+    const diff = Math.round((new Date(deadline+'T00:00:00') - today) / 86400000);
+    if (diff < 0) return { label: `J+${Math.abs(diff)} retard`, color: 'var(--danger)' };
+    if (diff === 0) return { label: "Aujourd'hui", color: 'var(--danger)' };
+    if (diff === 1) return { label: 'Demain', color: 'var(--warn)' };
+    if (diff <= 7) return { label: `Dans ${diff}j`, color: 'var(--warn)' };
+    return { label: deadline.split('-').reverse().join('/'), color: 'var(--text3)' };
+  }
+
+  const CATEGORIES = {
+    finance: { icon: '💰', color: '#1B5E20' }, gestion_client: { icon: '👥', color: '#1565C0' },
+    subvention: { icon: '🏛', color: '#6A1B9A' }, admin: { icon: '📋', color: '#E65100' },
+    comm: { icon: '📣', color: '#00695C' }, devis: { icon: '📝', color: '#5D4037' },
+    facture: { icon: '🧾', color: '#37474F' }, validation: { icon: '✅', color: '#2E7D32' },
+    relance_devis: { icon: '🔔', color: '#F57F17' }, relance_facture: { icon: '⚠️', color: '#B71C1C' },
+    acompte: { icon: '💳', color: '#1565C0' }, archivage: { icon: '📦', color: '#455A64' },
+    manuel: { icon: '✏️', color: '#546E7A' },
+  };
 
   return (
     <div>
-      {/* Ligne 1 — Métriques activité */}
+      {/* Ligne 1 — Métriques opérationnelles */}
       <div className="metrics-grid" style={{ marginBottom: 12 }}>
-        <div className="metric-card accent-info" onClick={() => setView('clients')} style={{ cursor: 'pointer' }}>
+        <div className="metric-card accent-info" onClick={() => setView('clients')} style={{ cursor:'pointer' }}>
           <div className="metric-label">Clients actifs</div>
           <div className="metric-value">{data?.nb_clients || 0}</div>
           <div className="metric-sub">dossiers suivis</div>
         </div>
-        <div className="metric-card accent-warn" onClick={() => setView('alertes')} style={{ cursor: 'pointer' }}>
-          <div className="metric-label">Alertes urgentes</div>
-          <div className="metric-value">{urgentes.length}</div>
-          <div className="metric-sub">conformité à traiter</div>
-        </div>
-        <div className="metric-card accent-green" onClick={() => setView('taches')} style={{ cursor: 'pointer' }}>
+        <div className="metric-card accent-warn" onClick={() => setView('taches')} style={{ cursor:'pointer' }}>
           <div className="metric-label">Tâches en cours</div>
           <div className="metric-value">{tachesEnCours.length}</div>
-          <div className="metric-sub">{tachesUrgentes.length > 0 ? `${tachesUrgentes.length} urgentes` : 'aucune urgente'}</div>
+          <div className="metric-sub">{tachesEnCours.filter(t=>t.priorite==='URGENT').length > 0 ? `${tachesEnCours.filter(t=>t.priorite==='URGENT').length} urgentes` : 'aucune urgente'}</div>
         </div>
-        <div className="metric-card" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
-          <div className="metric-label">Devis en cours</div>
-          <div className="metric-value">{devisEnCours}</div>
-          <div className="metric-sub">à signer / envoyer</div>
+        <div className="metric-card accent-danger" onClick={() => setView('alertes')} style={{ cursor:'pointer' }}>
+          <div className="metric-label">Alertes conformité</div>
+          <div className="metric-value">{urgentes.length}</div>
+          <div className="metric-sub">à traiter maintenant</div>
         </div>
-      </div>
-
-      {/* Ligne 2 — Métriques financières */}
-      <div className="metrics-grid" style={{ marginBottom: 16 }}>
-        <div className="metric-card accent-green" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
+        <div className="metric-card accent-green" onClick={() => setView('devis')} style={{ cursor:'pointer' }}>
           <div className="metric-label">CA encaissé</div>
-          <div className="metric-value" style={{ fontSize: 22 }}>{caEncaisse.toLocaleString('fr-FR')} €</div>
-          <div className="metric-sub">{finance?.factures?.payees || 0} factures payées</div>
-        </div>
-        <div className="metric-card accent-warn" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
-          <div className="metric-label">En attente paiement</div>
-          <div className="metric-value" style={{ fontSize: 22 }}>{enAttente.toLocaleString('fr-FR')} €</div>
-          <div className="metric-sub">{finance?.factures?.envoyees || 0} facture(s) envoyée(s)</div>
-        </div>
-        <div className="metric-card accent-info" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
-          <div className="metric-label">CA devis validés</div>
-          <div className="metric-value" style={{ fontSize: 22 }}>{(finance?.devis?.ca_devis_valides || 0).toLocaleString('fr-FR')} €</div>
-          <div className="metric-sub">{finance?.devis?.valides || 0} devis</div>
-        </div>
-        <div className="metric-card" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
-          <div className="metric-label">Factures à faire</div>
-          <div className="metric-value" style={{ fontSize: 22 }}>{finance?.factures?.a_faire || 0}</div>
-          <div className="metric-sub">à générer depuis devis</div>
+          <div className="metric-value" style={{ fontSize:20 }}>{((finance?.factures?.ca_encaisse)||0).toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{finance?.factures?.en_attente ? `${finance.factures.en_attente.toLocaleString('fr-FR')}€ en attente` : ''}</div>
         </div>
       </div>
 
       <div className="grid-2" style={{ marginBottom: 16 }}>
-        {/* Prochaines échéances */}
+        {/* Tâches à venir — centré opérationnel */}
         <div className="card">
           <div className="card-header">
             <div>
-              <div className="card-title">Prochaines échéances</div>
-              <div className="card-subtitle">Conformité et licences</div>
+              <div className="card-title">Tâches à traiter</div>
+              <div className="card-subtitle">Triées par échéance puis priorité</div>
             </div>
+            <button className="btn" style={{ fontSize:12 }} onClick={() => setView('taches')}>Voir tout</button>
           </div>
-          {(() => {
-            const upcoming = (data?.alertes || [])
-              .filter(a => a.date_expiration && a.statut !== 'OK' && a.statut !== '—')
-              .sort((a, b) => new Date(a.date_expiration) - new Date(b.date_expiration))
-              .slice(0, 5);
-            if (upcoming.length === 0) return (
-              <div className="empty" style={{ padding: '16px 0' }}>
-                <div className="empty-text">Aucune échéance urgente.</div>
+          {tachesOpe.length === 0 ? (
+            <div className="empty" style={{ padding:'16px 0' }}>
+              <div className="empty-icon">🎉</div>
+              <div className="empty-text">Aucune tâche en cours !</div>
+            </div>
+          ) : tachesOpe.map(t => {
+            const cat = CATEGORIES[t.type] || CATEGORIES[t.categorie] || CATEGORIES.admin;
+            const dl = t.deadline ? diffLabel(t.deadline) : null;
+            return (
+              <div key={t.id} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'9px 0', borderBottom:'1px solid var(--border)' }}>
+                <span style={{ fontSize:14, flexShrink:0, marginTop:1 }}>{cat.icon}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:500, marginBottom:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.titre}</div>
+                  <div style={{ fontSize:11, color:'var(--text3)' }}>
+                    {t.client_detecte && <span>{t.client_detecte} · </span>}
+                    {t.source}
+                    {t.calendrier && <span style={{ marginLeft:6, background: t.calendrier==='culturel' ? '#E8F5E9' : 'var(--pk-blue-light)', color: t.calendrier==='culturel' ? '#1B5E20' : 'var(--pk-blue)', fontSize:9, fontWeight:600, padding:'1px 5px', borderRadius:8 }}>
+                      {t.calendrier==='culturel' ? '🎭' : '📋'}
+                    </span>}
+                  </div>
+                </div>
+                <div style={{ flexShrink:0, textAlign:'right' }}>
+                  {dl && <div style={{ fontSize:11, fontWeight:600, color:dl.color }}>{dl.label}</div>}
+                  {t.priorite === 'URGENT' && <div style={{ fontSize:10, background:'var(--danger-light)', color:'var(--danger)', padding:'1px 5px', borderRadius:8, fontWeight:700, marginTop:2 }}>URGENT</div>}
+                  {t.priorite === 'Attention' && !dl && <div style={{ fontSize:10, background:'var(--warn-light)', color:'var(--warn)', padding:'1px 5px', borderRadius:8 }}>Attention</div>}
+                </div>
               </div>
             );
-            return upcoming.map((a, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                <AlertDot statut={a.statut} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500 }}>{a.organisme}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{a.client}</div>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
-                  {new Date(a.date_expiration).toLocaleDateString('fr-FR')}
-                </div>
-              </div>
-            ));
-          })()}
+          })}
         </div>
 
-        {/* Devis récents */}
+        {/* Prochaines échéances calendriers */}
         <div className="card">
           <div className="card-header">
             <div>
-              <div className="card-title">Devis récents</div>
-              <div className="card-subtitle">À envoyer ou en attente de signature</div>
+              <div className="card-title">Échéances calendriers</div>
+              <div className="card-subtitle">Formalités + Culturel</div>
             </div>
-            <button className="btn" onClick={() => setView('devis')} style={{ fontSize: 12 }}>Voir tout</button>
+            <button className="btn" style={{ fontSize:12 }} onClick={() => setView('calendrier')}>Voir calendriers</button>
           </div>
           {(() => {
-            const recents = (finance?.liste_devis || [])
-              .filter(d => !['annulé', 'facturé'].includes(d.statut))
-              .slice(0, 4);
-            if (recents.length === 0) return (
-              <div className="empty" style={{ padding: '16px 0' }}>
-                <div className="empty-text">Aucun devis en cours.</div>
-              </div>
-            );
-            const COLORS = {
-              brouillon: 'var(--text3)', envoyé: 'var(--info)',
-              signé: 'var(--warn)', validé: 'var(--accent)',
-            };
-            return recents.map((d, i) => (
-              <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS[d.statut] || 'var(--text3)', flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500 }}>{d.client_nom}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{d.numero}</div>
+            const alertesEvents = (data?.alertes || [])
+              .filter(a => a.date_expiration && ['EXPIRÉ','URGENT','Attention'].includes(a.statut))
+              .map(a => ({
+                titre: `${a.organisme} — ${a.client || ''}`,
+                date: a.date_expiration, statut: a.statut, type: 'formalite',
+              }));
+            const tachesEvts = tachesEnCours
+              .filter(t => t.deadline)
+              .map(t => ({ titre: t.titre, date: t.deadline, type: t.calendrier || 'formalite', client: t.client_detecte }));
+            const all = [...alertesEvents, ...tachesEvts]
+              .filter(e => e.date >= todayStr)
+              .sort((a,b) => a.date.localeCompare(b.date))
+              .slice(0, 7);
+            if (!all.length) return <div className="empty" style={{ padding:'16px 0' }}><div className="empty-text">Aucune échéance à venir.</div></div>;
+            return all.map((e, i) => {
+              const dl = diffLabel(e.date);
+              return (
+                <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 0', borderBottom:'1px solid var(--border)', fontSize:13 }}>
+                  <div style={{ width:8, height:8, borderRadius:'50%', background: e.type==='culturel' ? '#FF795A' : '#2834B7', flexShrink:0 }} />
+                  <div style={{ flex:1, overflow:'hidden' }}>
+                    <div style={{ fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{e.titre}</div>
+                    {e.client && <div style={{ fontSize:11, color:'var(--text3)' }}>{e.client}</div>}
+                  </div>
+                  <div style={{ fontSize:11, fontWeight:600, color:dl.color, flexShrink:0 }}>{dl.label}</div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{(d.total_ht || 0).toLocaleString('fr-FR')} €</div>
-                  <div style={{ fontSize: 10, color: COLORS[d.statut] || 'var(--text3)' }}>{d.statut}</div>
-                </div>
-              </div>
-            ));
+              );
+            });
           })()}
         </div>
       </div>
 
-      <div className="grid-2">
-        {/* Alertes conformité */}
+      {/* Alertes conformité */}
+      {urgentes.length > 0 && (
         <div className="card">
           <div className="card-header">
-            <div>
-              <div className="card-title">Alertes conformité</div>
-              <div className="card-subtitle">Toutes associations</div>
-            </div>
-            <button className="btn" onClick={() => setView('alertes')} style={{ fontSize: 12 }}>Voir tout</button>
+            <div className="card-title">🚨 Alertes conformité urgentes</div>
+            <button className="btn" style={{ fontSize:12 }} onClick={() => setView('alertes')}>Voir tout</button>
           </div>
-          {(data?.alertes || []).filter(a => ['EXPIRÉ','URGENT','Attention'].includes(a.statut)).slice(0, 4).map((a, i) => (
+          {urgentes.slice(0,4).map((a,i) => (
             <div key={i} className="alert-row">
-              <AlertDot statut={a.statut} />
-              <div>
-                <div className="alert-label">{a.organisme}</div>
-                <div className="alert-sub">{a.client} {a.date_expiration ? `— ${a.date_expiration}` : ''}</div>
-              </div>
+              <div className={`alert-dot ${a.statut==='EXPIRÉ'?'dot-danger':'dot-warn'}`} />
+              <div><div className="alert-label">{a.organisme}</div><div className="alert-sub">{a.client} {a.date_expiration ? `— ${a.date_expiration}` : ''}</div></div>
               <Badge statut={a.statut} />
             </div>
           ))}
-          {(data?.alertes || []).filter(a => ['EXPIRÉ','URGENT','Attention'].includes(a.statut)).length === 0 && (
-            <div className="empty" style={{ padding: '16px 0' }}><div className="empty-text">Aucune alerte active.</div></div>
-          )}
         </div>
-
-        {/* Tâches urgentes */}
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-title">Tâches en attente</div>
-              <div className="card-subtitle">À traiter en priorité</div>
-            </div>
-            <button className="btn" onClick={() => setView('taches')} style={{ fontSize: 12 }}>Voir tout</button>
-          </div>
-          {tachesEnCours.slice(0, 4).map(t => (
-            <div key={t.id} className="task-row">
-              <div className="task-check" />
-              <div className="task-body">
-                <div className="task-title">{t.titre}</div>
-                <div className="task-meta">{t.client_detecte || t.client} · {t.source}</div>
-              </div>
-              <Badge statut={t.priorite} />
-            </div>
-          ))}
-          {tachesEnCours.length === 0 && (
-            <div className="empty" style={{ padding: '16px 0' }}><div className="empty-text">Aucune tâche en cours. 🎉</div></div>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1860,7 +1844,7 @@ function TachesView({ taches, setTaches }) {
   const [filterStatut, setFilterStatut] = useState('pending');
   const [filterCategorie, setFilterCategorie] = useState('all');
   const [showNew, setShowNew] = useState(false);
-  const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '' });
+  const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '' });
 
   // Catégories avec couleurs et icônes
   const CATEGORIES = {
@@ -2020,6 +2004,11 @@ function TachesView({ taches, setTaches }) {
                   {t.client_detecte && <span>{t.client_detecte} · </span>}
                   <span>Source : {t.source}</span>
                   {t.deadline && <span> · ⏰ {t.deadline}</span>}
+                  {t.calendrier && (
+                    <span style={{ marginLeft: 6, background: t.calendrier === 'culturel' ? '#E8F5E9' : 'var(--pk-blue-light)', color: t.calendrier === 'culturel' ? '#1B5E20' : 'var(--pk-blue)', fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8 }}>
+                      {t.calendrier === 'culturel' ? '🎭 Culturel' : '📋 Formalités'}
+                    </span>
+                  )}
                 </div>
                 {t.description && !t.done && (
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, fontStyle: 'italic' }}>
@@ -2073,6 +2062,18 @@ function TachesView({ taches, setTaches }) {
                 <label className="form-label">Deadline</label>
                 <input className="form-input" type="date" value={newTask.deadline} onChange={e => setNewTask(p => ({ ...p, deadline: e.target.value }))} />
               </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Ajouter au calendrier</label>
+              <select className="form-input" value={newTask.calendrier || ''} onChange={e => setNewTask(p => ({ ...p, calendrier: e.target.value }))}>
+                <option value="">— Aucun —</option>
+                <option value="formalite">📋 Formalités & Échéances</option>
+                <option value="culturel">🎭 Calendrier Culturel</option>
+              </select>
+              {newTask.calendrier && !newTask.deadline && (
+                <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 4 }}>⚠️ Ajoutez une deadline pour que la tâche apparaisse sur le calendrier.</div>
+              )}
             </div>
 
             <div className="form-group">
@@ -2699,15 +2700,14 @@ function AssetsList({ assets: externalAssets, setAssets: setExternalAssets }) {
 
 // ── Calendriers ───────────────────────────────────────────────────────────────
 
-function CalendrierView({ alertes, clients }) {
-  const [tab, setTab] = useState('formalites');
+function CalendrierView({ alertes, clients, taches = [] }) {
   const [mois, setMois] = useState(new Date().getMonth());
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [events, setEvents] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('pk_cal_events') || '[]'); }
-    catch { return []; }
+    try { return JSON.parse(localStorage.getItem('pk_cal_events') || '[]'); } catch { return []; }
   });
   const [showAdd, setShowAdd] = useState(false);
+  const [showAddCal, setShowAddCal] = useState(null); // 'formalite' | 'culturel'
   const [selectedDay, setSelectedDay] = useState(null);
   const [newEvent, setNewEvent] = useState({ titre: '', type: 'formalite', client: '', couleur: '#FF795A', note: '' });
 
@@ -2715,240 +2715,212 @@ function CalendrierView({ alertes, clients }) {
     setEvents(evts);
     try { localStorage.setItem('pk_cal_events', JSON.stringify(evts)); } catch {}
   }
-
-  function addEvent() {
+  function addEvent(calType) {
     if (!newEvent.titre || !selectedDay) return;
-    const evt = {
-      id: Date.now(),
-      date: selectedDay,
-      ...newEvent,
-      created_at: new Date().toISOString(),
-    };
-    // Persiste sur Drive
-    fetch(`${API}/calendrier/event`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(evt),
-    }).catch(() => {});
+    const evt = { id: Date.now(), date: selectedDay, ...newEvent, type: calType, created_at: new Date().toISOString() };
+    fetch(`${API}/calendrier/event`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(evt) }).catch(() => {});
     saveEvents([...events, evt]);
     setShowAdd(false);
-    setNewEvent({ titre: '', type: tab === 'formalites' ? 'formalite' : 'culturel', client: '', couleur: '#FF795A', note: '' });
+    setNewEvent({ titre: '', type: calType, client: '', couleur: '#FF795A', note: '' });
   }
-
   function removeEvent(id) {
     fetch(`${API}/calendrier/event/${id}`, { method: 'DELETE' }).catch(() => {});
     saveEvents(events.filter(e => e.id !== id));
   }
 
-  // Génère les événements automatiques depuis les alertes
+  // Événements auto depuis alertes conformité → formalités
   function getAutoEvents() {
-    const auto = [];
-    (alertes || []).forEach(a => {
-      if (!a.date_expiration) return;
-      auto.push({
-        id: `auto_${a.organisme}_${a.client}`,
-        date: a.date_expiration,
-        titre: `${a.organisme} — ${a.client}`,
-        type: 'formalite',
-        couleur: a.statut === 'EXPIRÉ' ? '#B71C1C' : a.statut === 'URGENT' ? '#E65100' : '#1565C0',
-        auto: true,
-        statut: a.statut,
-      });
-    });
-    return auto;
+    return (alertes || []).filter(a => a.date_expiration).map(a => ({
+      id: `auto_${a.organisme}_${a.client}`,
+      date: a.date_expiration,
+      titre: `${a.organisme} — ${a.client}`,
+      type: 'formalite',
+      couleur: a.statut === 'EXPIRÉ' ? '#B71C1C' : a.statut === 'URGENT' ? '#E65100' : '#2834B7',
+      auto: true, statut: a.statut,
+    }));
   }
 
-  const allEvents = [...getAutoEvents(), ...events.filter(e => e.type === tab || tab === 'formalites' ? e.type === 'formalite' : e.type === 'culturel')];
-  const filteredEvents = tab === 'formalites'
-    ? [...getAutoEvents(), ...events.filter(e => e.type === 'formalite')]
-    : events.filter(e => e.type === 'culturel');
+  // Tâches avec deadline et calendrier assigné
+  const tachesFormalite = taches.filter(t => !t.done && t.deadline && t.calendrier === 'formalite');
+  const tachesCulturel  = taches.filter(t => !t.done && t.deadline && t.calendrier === 'culturel');
+  // Tâches sans calendrier mais avec deadline → formalités par défaut si pas culturel
+  const tachesSansCalAvecDL = taches.filter(t => !t.done && t.deadline && !t.calendrier);
 
-  // Calendrier
-  const firstDay = new Date(annee, mois, 1).getDay(); // 0=dim
-  const daysInMonth = new Date(annee, mois + 1, 0).getDate();
-  const firstDayAdj = (firstDay + 6) % 7; // Lundi=0
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const allAutoEvents = getAutoEvents();
+  const eventsFormalite = [...allAutoEvents, ...events.filter(e => e.type === 'formalite'), ...tachesFormalite.map(t => ({
+    id: `tache_${t.id}`, date: t.deadline, titre: `📌 ${t.titre}`, type: 'formalite',
+    couleur: t.priorite === 'URGENT' ? '#B71C1C' : t.priorite === 'Attention' ? '#E65100' : '#2834B7',
+    isTache: true, client: t.client_detecte,
+  })), ...tachesSansCalAvecDL.map(t => ({
+    id: `tache_nc_${t.id}`, date: t.deadline, titre: `📌 ${t.titre}`, type: 'formalite',
+    couleur: '#9898B0', isTache: true, client: t.client_detecte,
+  }))];
+
+  const eventsCulturel = [...events.filter(e => e.type !== 'formalite'), ...tachesCulturel.map(t => ({
+    id: `tache_c_${t.id}`, date: t.deadline, titre: `📌 ${t.titre}`, type: 'culturel',
+    couleur: '#FF795A', isTache: true, client: t.client_detecte,
+  }))];
 
   const MOIS_LABELS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
   const JOURS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
 
-  function dayStr(d) {
-    return `${annee}-${String(mois+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-  }
+  function prevMois() { if (mois===0){setMois(11);setAnnee(a=>a-1);}else setMois(m=>m-1); }
+  function nextMois() { if (mois===11){setMois(0);setAnnee(a=>a+1);}else setMois(m=>m+1); }
 
-  function eventsForDay(d) {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const firstDayAdj = (new Date(annee, mois, 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(annee, mois+1, 0).getDate();
+
+  function dayStr(d) { return `${annee}-${String(mois+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+  function eventsForDay(allEvts, d) {
     const ds = dayStr(d);
-    return filteredEvents.filter(e => e.date === ds || e.date?.startsWith(ds));
+    return allEvts.filter(e => e.date === ds || e.date?.startsWith(ds));
   }
 
-  const TYPE_COLORS = {
-    formalite: '#1565C0', deadline: '#B71C1C', rdv: '#6A1B9A',
-    culturel: '#FF795A', festival: '#E65100', formation: '#00695C',
-  };
-
-  // Liste des événements du mois
-  const monthEvents = filteredEvents
-    .filter(e => e.date?.startsWith(`${annee}-${String(mois+1).padStart(2,'0')}`))
-    .sort((a,b) => a.date.localeCompare(b.date));
-
-  // Événements à venir (tous mois)
-  const upcoming = filteredEvents
-    .filter(e => e.date >= todayStr)
-    .sort((a,b) => a.date.localeCompare(b.date))
-    .slice(0, 8);
-
-  return (
-    <div>
-      <div className="tabs" style={{ marginBottom: 16 }}>
-        <button className={`tab ${tab === 'formalites' ? 'active' : ''}`} onClick={() => setTab('formalites')}>📋 Formalités & Échéances</button>
-        <button className={`tab ${tab === 'culturel' ? 'active' : ''}`} onClick={() => setTab('culturel')}>🎭 Calendrier Culturel</button>
-      </div>
-
-      <div className="grid-2" style={{ alignItems: 'start' }}>
-        {/* Calendrier */}
-        <div className="card">
-          {/* Navigation mois */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-            <button className="btn" style={{ padding: '4px 10px' }}
-              onClick={() => { if (mois === 0) { setMois(11); setAnnee(a => a-1); } else setMois(m => m-1); }}>←</button>
-            <div style={{ fontWeight: 600, fontSize: 15 }}>{MOIS_LABELS[mois]} {annee}</div>
-            <button className="btn" style={{ padding: '4px 10px' }}
-              onClick={() => { if (mois === 11) { setMois(0); setAnnee(a => a+1); } else setMois(m => m+1); }}>→</button>
-          </div>
-
-          {/* Grille jours de la semaine */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
-            {JOURS.map(j => (
-              <div key={j} style={{ textAlign: 'center', fontSize: 10, fontWeight: 600, color: 'var(--text3)', padding: '2px 0' }}>{j}</div>
-            ))}
-          </div>
-
-          {/* Grille jours */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
-            {Array(firstDayAdj).fill(null).map((_, i) => <div key={`e${i}`} />)}
-            {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(d => {
-              const ds = dayStr(d);
-              const dayEvts = eventsForDay(d);
-              const isToday = ds === todayStr;
-              const isSel = ds === selectedDay;
-              return (
-                <div key={d}
-                  onClick={() => { setSelectedDay(ds); setShowAdd(true); }}
-                  style={{
-                    minHeight: 44, padding: '3px 4px', borderRadius: 6, cursor: 'pointer',
-                    background: isToday ? 'var(--accent)' : isSel ? 'var(--accent-light)' : dayEvts.length > 0 ? '#F3F8FF' : 'var(--surface2)',
-                    border: isSel ? '1.5px solid var(--accent-mid)' : isToday ? 'none' : '1px solid transparent',
-                    transition: 'all 0.1s',
-                  }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? 'white' : 'var(--text)', marginBottom: 2 }}>{d}</div>
-                  {dayEvts.slice(0, 2).map((e, ei) => (
-                    <div key={ei} style={{
-                      fontSize: 9, background: e.couleur || TYPE_COLORS[e.type] || 'var(--accent)',
-                      color: 'white', borderRadius: 3, padding: '1px 3px', marginBottom: 1,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>{e.titre}</div>
-                  ))}
-                  {dayEvts.length > 2 && <div style={{ fontSize: 9, color: 'var(--text3)' }}>+{dayEvts.length-2}</div>}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Légende */}
-          <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, color: 'var(--text3)' }}>
-            {tab === 'formalites' ? <>
-              <span><span style={{ color: '#B71C1C' }}>●</span> Expiré</span>
-              <span><span style={{ color: '#E65100' }}>●</span> Urgent</span>
-              <span><span style={{ color: '#1565C0' }}>●</span> Échéance</span>
-            </> : <>
-              <span><span style={{ color: '#FF795A' }}>●</span> Événement</span>
-              <span><span style={{ color: '#E65100' }}>●</span> Festival</span>
-              <span><span style={{ color: '#6A1B9A' }}>●</span> RDV</span>
-            </>}
-          </div>
+  function MiniCalendrier({ title, allEvents, color, calType, addLabel }) {
+    return (
+      <div className="card" style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 700, fontSize: 11, color, textTransform: 'uppercase', letterSpacing: '0.8px' }}>{title}</div>
+          <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px', background: color, borderColor: color }}
+            onClick={() => { setShowAddCal(calType); setShowAdd(true); setSelectedDay(todayStr); }}>
+            + Ajouter
+          </button>
         </div>
 
-        {/* Panneau droite */}
-        <div>
-          {/* Prochains événements */}
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div className="card-header">
-              <div className="card-title">À venir</div>
-              <button className="btn btn-primary" style={{ fontSize: 12 }}
-                onClick={() => { setSelectedDay(todayStr); setShowAdd(true); }}>
-                + Ajouter
-              </button>
-            </div>
-            {upcoming.length === 0 ? (
-              <div className="empty"><div className="empty-text">Aucun événement à venir.</div></div>
-            ) : upcoming.map((e, i) => {
-              const d = new Date(e.date + 'T00:00:00');
-              const diff = Math.round((d - today) / 86400000);
-              return (
-                <div key={e.id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 8, background: e.couleur || TYPE_COLORS[e.type] || 'var(--accent)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'white', lineHeight: 1 }}>{d.getDate()}</div>
-                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.8)' }}>{MOIS_LABELS[d.getMonth()].slice(0,3)}</div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500, fontSize: 13 }}>{e.titre}</div>
-                    {e.client && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{e.client}</div>}
-                    {e.note && <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>{e.note}</div>}
-                  </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: diff <= 7 ? '#B71C1C' : diff <= 30 ? '#E65100' : 'var(--text3)' }}>
-                      {diff === 0 ? "Aujourd'hui" : diff === 1 ? 'Demain' : `J-${diff}`}
-                    </div>
-                    {!e.auto && (
-                      <button onClick={() => removeEvent(e.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 11 }}>✕</button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        {/* Navigation mois commune */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <button className="btn" style={{ padding: '2px 8px', fontSize: 12 }} onClick={prevMois}>←</button>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{MOIS_LABELS[mois]} {annee}</span>
+          <button className="btn" style={{ padding: '2px 8px', fontSize: 12 }} onClick={nextMois}>→</button>
+        </div>
 
-          {/* Événements du mois */}
-          {monthEvents.length > 0 && (
-            <div className="card">
-              <div className="card-header">
-                <div className="card-title">Ce mois — {MOIS_LABELS[mois]}</div>
-              </div>
-              {monthEvents.map((e, i) => (
-                <div key={e.id} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13, alignItems: 'center' }}>
-                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: e.couleur || TYPE_COLORS[e.type] || 'var(--accent)', flexShrink: 0 }} />
-                  <div style={{ flex: 1 }}>
-                    <span style={{ fontWeight: 500 }}>{e.date?.slice(8,10)}/{e.date?.slice(5,7)}</span>
-                    <span style={{ marginLeft: 8 }}>{e.titre}</span>
-                    {e.client && <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 6 }}>— {e.client}</span>}
+        {/* Jours semaine */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 1, marginBottom: 3 }}>
+          {JOURS.map(j => <div key={j} style={{ textAlign:'center', fontSize:9, fontWeight:600, color:'var(--text3)', padding:'2px 0' }}>{j}</div>)}
+        </div>
+
+        {/* Grille */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 1 }}>
+          {Array(firstDayAdj).fill(null).map((_,i) => <div key={`e${i}`} />)}
+          {Array.from({ length: daysInMonth }, (_,i) => i+1).map(d => {
+            const ds = dayStr(d);
+            const dayEvts = eventsForDay(allEvents, d);
+            const isToday = ds === todayStr;
+            return (
+              <div key={d} onClick={() => { setSelectedDay(ds); setShowAddCal(calType); setShowAdd(true); }}
+                style={{ minHeight: 38, padding: '2px 3px', borderRadius: 4, cursor: 'pointer',
+                  background: isToday ? color : dayEvts.length > 0 ? color+'18' : 'var(--surface2)',
+                  border: isToday ? 'none' : dayEvts.length > 0 ? `1px solid ${color}30` : '1px solid transparent',
+                }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: isToday ? 'white' : 'var(--text)', marginBottom: 1 }}>{d}</div>
+                {dayEvts.slice(0,2).map((e,ei) => (
+                  <div key={ei} style={{ fontSize: 8, background: e.couleur || color, color:'white', borderRadius: 2, padding: '1px 2px', marginBottom: 1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    {e.isTache ? '📌' : ''}{e.titre?.slice(0,12)}
                   </div>
-                  {!e.auto && <button onClick={() => removeEvent(e.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 11 }}>✕</button>}
+                ))}
+                {dayEvts.length > 2 && <div style={{ fontSize: 8, color:'var(--text3)' }}>+{dayEvts.length-2}</div>}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Événements du mois */}
+        <div style={{ marginTop: 12, maxHeight: 200, overflowY: 'auto' }}>
+          {allEvents
+            .filter(e => e.date?.startsWith(`${annee}-${String(mois+1).padStart(2,'0')}`))
+            .sort((a,b) => a.date.localeCompare(b.date))
+            .map((e,i) => (
+              <div key={e.id || i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:'1px solid var(--border)', fontSize:12 }}>
+                <div style={{ width:8, height:8, borderRadius:'50%', background: e.couleur || color, flexShrink:0 }} />
+                <div style={{ flex:1 }}>
+                  <span style={{ fontWeight: e.isTache ? 500 : 400 }}>{e.date?.slice(8,10)}/{e.date?.slice(5,7)} — {e.titre}</span>
+                  {e.client && <span style={{ color:'var(--text3)', fontSize:10, marginLeft:4 }}>({e.client})</span>}
                 </div>
-              ))}
-            </div>
+                {!e.auto && !e.isTache && (
+                  <button onClick={() => removeEvent(e.id)} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text3)', fontSize:11 }}>✕</button>
+                )}
+              </div>
+            ))}
+          {allEvents.filter(e => e.date?.startsWith(`${annee}-${String(mois+1).padStart(2,'0')}`)).length === 0 && (
+            <div style={{ fontSize:12, color:'var(--text3)', textAlign:'center', padding:'10px 0' }}>Aucun événement ce mois</div>
           )}
         </div>
       </div>
+    );
+  }
 
-      {/* Modal ajout événement */}
+  return (
+    <div>
+      {/* 2 calendriers côte à côte */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <MiniCalendrier
+          title="📋 Formalités & Échéances"
+          allEvents={eventsFormalite}
+          color="#2834B7"
+          calType="formalite"
+          addLabel="+ Formalité"
+        />
+        <MiniCalendrier
+          title="🎭 Calendrier Culturel"
+          allEvents={eventsCulturel}
+          color="#FF795A"
+          calType="culturel"
+          addLabel="+ Événement"
+        />
+      </div>
+
+      {/* À venir toutes catégories */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-header">
+          <div className="card-title">Prochaines échéances & tâches</div>
+        </div>
+        {(() => {
+          const all = [...eventsFormalite, ...eventsCulturel]
+            .filter(e => e.date >= todayStr)
+            .sort((a,b) => a.date.localeCompare(b.date))
+            .slice(0, 10);
+          if (!all.length) return <div className="empty"><div className="empty-text">Aucune échéance à venir.</div></div>;
+          return all.map((e, i) => {
+            const d = new Date(e.date + 'T00:00:00');
+            const diff = Math.round((d - today) / 86400000);
+            const isFormalite = e.type === 'formalite';
+            return (
+              <div key={e.id || i} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px solid var(--border)', fontSize:13 }}>
+                <div style={{ width:10, height:10, borderRadius:'50%', background: e.couleur || (isFormalite ? '#2834B7' : '#FF795A'), flexShrink:0 }} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:500 }}>{e.titre}</div>
+                  <div style={{ fontSize:11, color:'var(--text3)' }}>
+                    {isFormalite ? '📋 Formalités' : '🎭 Culturel'}
+                    {e.client && ` · ${e.client}`}
+                  </div>
+                </div>
+                <div style={{ fontSize:12, fontWeight:600, color: diff<=3 ? 'var(--danger)' : diff<=7 ? 'var(--warn)' : 'var(--text3)', flexShrink:0 }}>
+                  {diff===0 ? "Aujourd'hui" : diff===1 ? 'Demain' : `J-${diff}`}
+                </div>
+              </div>
+            );
+          });
+        })()}
+      </div>
+
+      {/* Modal ajout */}
       {showAdd && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowAdd(false)}>
           <div className="modal">
-            <div className="modal-title">{tab === 'formalites' ? '📋 Ajouter une échéance' : '🎭 Ajouter un événement culturel'}</div>
+            <div className="modal-title">{showAddCal === 'culturel' ? '🎭 Ajouter un événement culturel' : '📋 Ajouter une formalité'}</div>
             <div className="modal-sub">Date : {selectedDay?.split('-').reverse().join('/')}</div>
-
             <div className="form-group">
               <label className="form-label">Titre *</label>
-              <input className="form-input" value={newEvent.titre} onChange={e => setNewEvent(p => ({ ...p, titre: e.target.value }))}
-                placeholder={tab === 'formalites' ? "Renouvellement licence, URSSAF..." : "Festival, concert, répétition..."} autoFocus />
+              <input className="form-input" value={newEvent.titre} onChange={e => setNewEvent(p=>({...p, titre:e.target.value}))} autoFocus
+                placeholder={showAddCal==='culturel' ? "Festival, concert, répétition..." : "Renouvellement licence, URSSAF..."} />
             </div>
-
             <div className="form-grid">
               <div className="form-group">
                 <label className="form-label">Type</label>
-                <select className="form-input" value={newEvent.type} onChange={e => setNewEvent(p => ({ ...p, type: e.target.value }))}>
-                  {tab === 'formalites' ? <>
+                <select className="form-input" value={newEvent.type} onChange={e => setNewEvent(p=>({...p, type:e.target.value}))}>
+                  {showAddCal === 'formalite' ? <>
                     <option value="formalite">Formalité administrative</option>
                     <option value="deadline">Deadline / Date limite</option>
                     <option value="rdv">Rendez-vous</option>
@@ -2962,33 +2934,32 @@ function CalendrierView({ alertes, clients }) {
               </div>
               <div className="form-group">
                 <label className="form-label">Client associé</label>
-                <select className="form-input" value={newEvent.client} onChange={e => setNewEvent(p => ({ ...p, client: e.target.value }))}>
+                <select className="form-input" value={newEvent.client} onChange={e => setNewEvent(p=>({...p, client:e.target.value}))}>
                   <option value="">— Aucun —</option>
-                  {clients.map(c => <option key={c.slug} value={c.nom}>{c.nom}</option>)}
+                  {(clients||[]).map(c => <option key={c.slug} value={c.nom}>{c.nom}</option>)}
                 </select>
               </div>
             </div>
-
             <div className="form-group">
               <label className="form-label">Couleur</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {['#FF795A','#2834B7','#B71C1C','#E65100','#6A1B9A','#FFD2AD','#F57F17'].map(c => (
-                  <div key={c} onClick={() => setNewEvent(p => ({ ...p, couleur: c }))}
-                    style={{ width: 28, height: 28, borderRadius: '50%', background: c, cursor: 'pointer',
-                      border: newEvent.couleur === c ? '3px solid var(--text)' : '2px solid transparent' }} />
+              <div style={{ display:'flex', gap:8 }}>
+                {(showAddCal==='culturel'
+                  ? ['#FF795A','#2834B7','#B71C1C','#1B5E20','#6A1B9A','#FFD2AD']
+                  : ['#2834B7','#FF795A','#B71C1C','#E65100','#1B5E20','#6A1B9A']
+                ).map(c => (
+                  <div key={c} onClick={() => setNewEvent(p=>({...p, couleur:c}))}
+                    style={{ width:24, height:24, borderRadius:'50%', background:c, cursor:'pointer',
+                      border: newEvent.couleur===c ? '3px solid var(--text)' : '2px solid transparent' }} />
                 ))}
               </div>
             </div>
-
             <div className="form-group">
               <label className="form-label">Note</label>
-              <input className="form-input" value={newEvent.note} onChange={e => setNewEvent(p => ({ ...p, note: e.target.value }))}
-                placeholder="Détails, contacts, liens..." />
+              <input className="form-input" value={newEvent.note} onChange={e => setNewEvent(p=>({...p, note:e.target.value}))} placeholder="Détails..." />
             </div>
-
             <div className="modal-footer">
               <button className="btn" onClick={() => setShowAdd(false)}>Annuler</button>
-              <button className="btn btn-primary" onClick={addEvent} disabled={!newEvent.titre}>Ajouter →</button>
+              <button className="btn btn-primary" onClick={() => addEvent(showAddCal)} disabled={!newEvent.titre}>Ajouter →</button>
             </div>
           </div>
         </div>
@@ -3984,7 +3955,7 @@ function AppContent() {
           {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'devis' && <DevisFacturesView />}
-          {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} />}
+          {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} />}
           {view === 'comm' && <CommView clients={data?.clients || []} />}
           {view === 'subventions' && <SubventionsView />}
           {view === 'alertes' && <AlertesView data={data} />}
