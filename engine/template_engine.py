@@ -368,11 +368,14 @@ def list_clients() -> list:
                 "slug": meta["slug"],
                 "nom": meta["client_data"].get("nom_usuel") or meta["client_data"].get("nom_officiel"),
                 "siret": meta["client_data"].get("siret"),
+                "implantation": meta["client_data"].get("implantation", ""),
+                "type": meta["client_data"].get("type_structure", ""),
                 "nb_projets": len(meta.get("projets", [])),
                 "created_at": meta["created_at"],
+                "archived": meta.get("archived", False),
                 "dossier": str(client_dir),
             })
-    return clients
+    return sorted(clients, key=lambda c: (c.get("archived", False), (c.get("nom") or "").lower()))
 
 
 # ─────────────────────────────────────────────

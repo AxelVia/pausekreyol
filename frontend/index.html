@@ -2955,16 +2955,59 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
     function ClientsView({ clients, onNewClient, onOpenClient }) {
       const [search, setSearch] = useState('');
+      const [showArchived, setShowArchived] = useState(false);
+      const [syncMsg, setSyncMsg] = useState({});
 
-      const filtered = clients.filter(c =>
-        !search || c.nom?.toLowerCase().includes(search.toLowerCase()) ||
-        c.siret?.includes(search)
-      );
+      const actifs = clients
+        .filter(c => !c.archived)
+        .filter(c => !search || c.nom?.toLowerCase().includes(search.toLowerCase()) || c.siret?.includes(search))
+        .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr'));
+
+      const archives = clients
+        .filter(c => c.archived)
+        .filter(c => !search || c.nom?.toLowerCase().includes(search.toLowerCase()))
+        .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr'));
+
+      const displayed = showArchived ? archives : actifs;
+
+      async function toggleArchive(e, slug, currentArchived) {
+        e.stopPropagation();
+        await fetch(`${API}/clients/${slug}/archive`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ archived: !currentArchived }),
+        });
+        window.location.reload(); // Recharge pour mise à jour liste
+      }
+
+      async function syncDrive(e, slug) {
+        e.stopPropagation();
+        setSyncMsg(p => ({ ...p, [slug]: '⏳ Sync...' }));
+        try {
+          const res = await fetch(`${API}/clients/${slug}/sync-drive`, { method: 'POST' });
+          const d = await res.json();
+          setSyncMsg(p => ({ ...p, [slug]: d.status === 'ok' ? `✅ ${d.synced.length} fichier(s) synced` : `⚠️ Partiel (${d.errors[0]})` }));
+          setTimeout(() => setSyncMsg(p => ({ ...p, [slug]: '' })), 4000);
+        } catch (err) {
+          setSyncMsg(p => ({ ...p, [slug]: '❌ Erreur' }));
+        }
+      }
 
       return (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <div style={{ fontSize: 13, color: 'var(--text3)' }}>{clients.length} dossier(s) client</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ fontSize: 13, color: 'var(--text3)' }}>
+                {showArchived ? archives.length : actifs.length} client(s) {showArchived ? 'archivés' : 'actifs'}
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 11, background: showArchived ? 'var(--pk-blue-light)' : 'var(--surface2)', color: showArchived ? 'var(--pk-blue)' : 'var(--text3)' }}
+                onClick={() => setShowArchived(p => !p)}
+              >
+                {showArchived ? '👁 Actifs' : `📦 Archives (${archives.length})`}
+              </button>
+            </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <input className="form-input" value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="🔍 Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 180 }} />
@@ -2973,11 +3016,13 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           </div>
 
           <div className="card">
-            {filtered.length === 0 && (
+            {displayed.length === 0 && (
               <div className="empty" style={{ padding: '40px 20px' }}>
-                <div className="empty-icon">📁</div>
-                <div className="empty-text" style={{ marginBottom: 8 }}>{search ? 'Aucun résultat.' : 'Aucun dossier client'}</div>
-                {!search && (
+                <div className="empty-icon">{showArchived ? '📦' : '📁'}</div>
+                <div className="empty-text" style={{ marginBottom: 8 }}>
+                  {search ? 'Aucun résultat.' : showArchived ? 'Aucun client archivé.' : 'Aucun dossier client'}
+                </div>
+                {!search && !showArchived && (
                   <>
                     <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, maxWidth: 320, textAlign: 'center' }}>
                       Créez un dossier ou importez l'historique via Devis & Factures → 📥 Historique Excel.
@@ -2987,36 +3032,45 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 )}
               </div>
             )}
-            {filtered.map((c, i) => {
-              // Récupère le logo s'il existe
+            {displayed.map((c, i) => {
               const logo = localStorage.getItem(`pk_logo_${c.slug}`);
               const typeIcon = c.type === 'sas_senegal' ? '🇸🇳' : '🇫🇷';
               return (
                 <div key={i} className="client-row" onClick={() => onOpenClient(c.slug)}
-                  style={{ cursor: 'pointer', padding: '12px 4px' }}>
-                  {/* Avatar ou logo */}
+                  style={{ cursor: 'pointer', padding: '10px 4px', opacity: c.archived ? 0.6 : 1 }}>
                   {logo
-                    ? <img src={logo} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain', border: '1px solid var(--border)', background: 'white', padding: 2, flexShrink: 0 }} />
+                    ? <img src={logo} alt="" style={{ width: 38, height: 38, borderRadius: 8, objectFit: 'contain', border: '1px solid var(--border)', background: 'white', padding: 2, flexShrink: 0 }} />
                     : <div className="client-avatar" style={{ flexShrink: 0 }}>{initials(c.nom)}</div>
                   }
                   <div className="client-info" style={{ flex: 1 }}>
                     <div className="client-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span>{c.nom}</span>
-                      <span style={{ fontSize: 12 }}>{typeIcon}</span>
+                      <span style={{ fontSize: 11 }}>{typeIcon}</span>
+                      {c.archived && <span style={{ fontSize: 10, background: 'var(--surface2)', color: 'var(--text3)', padding: '1px 6px', borderRadius: 8 }}>Archivé</span>}
                     </div>
                     <div className="client-meta">
                       {c.nb_projets > 0 && <span>{c.nb_projets} projet(s)</span>}
                       {c.siret && <span> · {c.siret.slice(0, 9)}…</span>}
                       {c.implantation && <span> · {c.implantation}</span>}
                     </div>
+                    {syncMsg[c.slug] && <div style={{ fontSize: 11, color: 'var(--pk-blue)', marginTop: 2 }}>{syncMsg[c.slug]}</div>}
                   </div>
-                  <div className="client-right" style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      {c.created_at?.slice(0, 7)}
-                    </div>
-                    <div style={{ marginTop: 4 }}>
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3l4 4-4 4" stroke="var(--text3)" strokeWidth="1.5" strokeLinecap="round" /></svg>
-                    </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                    <button
+                      className="btn"
+                      style={{ fontSize: 10, padding: '2px 7px', color: 'var(--text3)' }}
+                      title="Synchroniser avec Drive"
+                      onClick={e => syncDrive(e, c.slug)}
+                    >☁️</button>
+                    <button
+                      className="btn"
+                      style={{ fontSize: 10, padding: '2px 7px', color: c.archived ? 'var(--success)' : 'var(--text3)' }}
+                      title={c.archived ? 'Désarchiver' : 'Archiver'}
+                      onClick={e => toggleArchive(e, c.slug, c.archived)}
+                    >{c.archived ? '↩ Restaurer' : '📦 Archiver'}</button>
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ cursor: 'pointer' }} onClick={() => onOpenClient(c.slug)}>
+                      <path d="M5 3l4 4-4 4" stroke="var(--text3)" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
                   </div>
                 </div>
               );
@@ -3432,7 +3486,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [assets, setAssetsState] = useState([]);
 
       useEffect(() => {
-        fetch('/comm/config').then(r => r.json()).then(data => {
+        fetch(`${API}/comm/config`).then(r => r.json()).then(data => {
           setCharte(data.charte || null);
           setAssetsState(data.assets || []);
         });
@@ -3440,7 +3494,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       function saveAssetsShared(list) {
         setAssetsState(list);
-        fetch('/comm/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charte, assets: list }) });
+        fetch(`${API}/comm/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charte, assets: list }) });
       }
 
       // Générateur email client
@@ -3453,7 +3507,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       function saveCharte(data) {
         setCharte(data);
-        fetch('/comm/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charte: data, assets }) });
+        fetch(`${API}/comm/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charte: data, assets }) });
         setShowCharteEditor(false);
       }
 
@@ -4419,6 +4473,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [tab, setTab] = useState('devis');
       const [filterArchive, setFilterArchive] = useState(false);
       const [filterAnnee, setFilterAnnee] = useState('tous');
+      const [filterMois, setFilterMois] = useState('tous');
+
+      const MOIS_LABELS = ['Tous les mois','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
       const anneesDispos = ['tous', ...Array.from(new Set((data?.liste_devis || []).map(d => d.annee).filter(Boolean))).sort((a, b) => b - a)];
       const [data, setData] = useState(null);
       const [loading, setLoading] = useState(true);
@@ -4552,42 +4610,58 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         load();
       }
 
-      const d = data?.devis || {};
-      const f = data?.factures || {};
+      // Helper : extrait le mois depuis date_envoi ou created_at (format DD/MM/YYYY ou ISO)
+      function extractMois(item) {
+        const d = item.date_envoi || item.date_emission || item.created_at || '';
+        if (d.includes('/')) return parseInt(d.split('/')[1], 10); // DD/MM/YYYY
+        if (d.includes('-')) return parseInt(d.split('-')[1], 10); // ISO
+        return 0;
+      }
 
       const listeDevis = (data?.liste_devis || []).filter(d =>
         (filterAnnee === 'tous' || String(d.annee) === String(filterAnnee)) &&
+        (filterMois === 'tous' || extractMois(d) === parseInt(filterMois, 10)) &&
         (filterArchive ? d.archived : !d.archived)
       ).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
       const listeFactures = (data?.liste_factures || []).filter(f =>
         (filterAnnee === 'tous' || String(f.annee) === String(filterAnnee)) &&
+        (filterMois === 'tous' || extractMois(fac) === parseInt(filterMois, 10)) &&
         (filterArchive ? ['annulée', 'en_retard'].includes(f.statut) && f.archived : !f.archived)
       ).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+      const devisStats = data?.devis || {};
+      const facturesStats = data?.factures || {};
+
+      // Métriques filtrées selon l'année/mois sélectionné
+      const caDevisFiltres = listeDevis.filter(x => ['validé','facturé','signé'].includes(x.statut)).reduce((s,x) => s+(x.total_ht||0), 0);
+      const caFacturesFiltres = listeFactures.filter(x => x.statut === 'payée').reduce((s,x) => s+(x.total_ht||0), 0);
+      const enAttenteFiltres = listeFactures.filter(x => ['envoyée','à_faire'].includes(x.statut)).reduce((s,x) => s+(x.solde_a_payer||0), 0);
+      const isFiltered = filterAnnee !== 'tous' || filterMois !== 'tous';
 
       return (
         <div>
           {/* Métriques */}
           <div className="metrics-grid" style={{ marginBottom: 12 }}>
-            <div className="metric-card accent-green" onClick={() => setView && setView('devis')} style={{ cursor: 'pointer' }}>
-              <div className="metric-label">CA devis validés</div>
-              <div className="metric-value">{(d.ca_devis_valides || 0).toLocaleString('fr-FR')} €</div>
-              <div className="metric-sub">{d.valides || 0} devis</div>
+            <div className="metric-card accent-green">
+              <div className="metric-label">CA devis validés{isFiltered ? ' (filtre)' : ''}</div>
+              <div className="metric-value">{(isFiltered ? caDevisFiltres : (devisStats.ca_devis_valides||0)).toLocaleString('fr-FR')} €</div>
+              <div className="metric-sub">{isFiltered ? listeDevis.filter(x=>['validé','facturé'].includes(x.statut)).length : (devisStats.valides||0)} devis</div>
             </div>
             <div className="metric-card accent-info">
-              <div className="metric-label">CA encaissé</div>
-              <div className="metric-value">{(f.ca_encaisse || 0).toLocaleString('fr-FR')} €</div>
-              <div className="metric-sub">{f.payees || 0} factures payées</div>
+              <div className="metric-label">CA encaissé{isFiltered ? ' (filtre)' : ''}</div>
+              <div className="metric-value">{(isFiltered ? caFacturesFiltres : (facturesStats.ca_encaisse||0)).toLocaleString('fr-FR')} €</div>
+              <div className="metric-sub">{isFiltered ? listeFactures.filter(x=>x.statut==='payée').length : (facturesStats.payees||0)} factures payées</div>
             </div>
             <div className="metric-card accent-warn">
-              <div className="metric-label">En attente paiement</div>
-              <div className="metric-value">{(f.en_attente || 0).toLocaleString('fr-FR')} €</div>
-              <div className="metric-sub">{f.envoyees || 0} facture(s) envoyée(s)</div>
+              <div className="metric-label">En attente{isFiltered ? ' (filtre)' : ''}</div>
+              <div className="metric-value">{(isFiltered ? enAttenteFiltres : (facturesStats.en_attente||0)).toLocaleString('fr-FR')} €</div>
+              <div className="metric-sub">{isFiltered ? listeFactures.filter(x=>['envoyée','à_faire'].includes(x.statut)).length : (facturesStats.envoyees||0)} facture(s)</div>
             </div>
             <div className="metric-card">
               <div className="metric-label">Devis en cours</div>
-              <div className="metric-value">{d.en_cours || 0}</div>
-              <div className="metric-sub">{d.annules || 0} annulés</div>
+              <div className="metric-value">{isFiltered ? listeDevis.filter(x=>!x.archived).length : (devisStats.en_cours||0)}</div>
+              <div className="metric-sub">{isFiltered ? listeDevis.filter(x=>x.archived).length : (devisStats.annules||0)} annulés</div>
             </div>
           </div>
 
@@ -4613,9 +4687,26 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               {/* Filtre année */}
               <select className="form-input" style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
-                value={filterAnnee} onChange={e => setFilterAnnee(e.target.value)}>
+                value={filterAnnee} onChange={e => { setFilterAnnee(e.target.value); setFilterMois('tous'); }}>
                 {anneesDispos.map(a => <option key={a} value={a}>{a === 'tous' ? 'Toutes années' : a}</option>)}
               </select>
+              {/* Filtre mois — actif seulement si une année est sélectionnée */}
+              {filterAnnee !== 'tous' && (
+                <select className="form-input" style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
+                  value={filterMois} onChange={e => setFilterMois(e.target.value)}>
+                  {MOIS_LABELS.map((m, i) => (
+                    <option key={i} value={i === 0 ? 'tous' : String(i)}>{m}</option>
+                  ))}
+                </select>
+              )}
+              {/* Indicateur résultats filtrés */}
+              {(filterAnnee !== 'tous' || filterMois !== 'tous') && (
+                <span style={{ fontSize: 11, color: 'var(--pk-blue)', background: 'var(--pk-blue-light)', padding: '2px 8px', borderRadius: 8 }}>
+                  {tab === 'devis' ? listeDevis.length : listeFactures.length} résultat(s)
+                  <button onClick={() => { setFilterAnnee('tous'); setFilterMois('tous'); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: 4, color: 'var(--pk-blue)', fontWeight: 700 }}>✕</button>
+                </span>
+              )}
               <label style={{ fontSize: 12, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                 <input type="checkbox" checked={filterArchive} onChange={e => setFilterArchive(e.target.checked)} />
                 Voir archives
@@ -5772,15 +5863,27 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       function addContact() {
         if (!newContact.email) return;
-        saveContacts([{ id: Date.now(), ...newContact, created_at: new Date().toISOString(), source: 'manuel' }, ...contacts]);
+        const c = { ...newContact, created_at: new Date().toISOString(), source: 'manuel' };
+        fetch(`${API}/annuaire`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(c) })
+          .then(r => r.ok ? r.json() : null)
+          .then(saved => { if (saved) setAllContacts(prev => [saved, ...prev]); })
+          .catch(console.error);
         setShowNew(false);
         setNewContact({ nom: '', prenom: '', email: '', telephone: '', organisation: '', role: '', note: '' });
       }
       function addDiffusion() {
         if (!newDiff.email) return;
-        saveDiffusion([{ id: Date.now(), ...newDiff, created_at: new Date().toISOString() }, ...diffusion]);
+        const c = { ...newDiff, created_at: new Date().toISOString() };
+        fetch(`${API}/annuaire`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(c) })
+          .then(r => r.ok ? r.json() : null)
+          .then(saved => { if (saved) setAllContacts(prev => [saved, ...prev]); })
+          .catch(console.error);
         setShowNewDiff(false);
         setNewDiff({ nom: '', email: '', liste: 'generale', organisation: '' });
+      }
+      function deleteContact(id) {
+        fetch(`${API}/annuaire/${id}`, { method: 'DELETE' }).catch(console.error);
+        setAllContacts(prev => prev.filter(x => x.id !== id));
       }
 
       const filteredContacts = contacts.filter(c =>
@@ -5832,7 +5935,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                         <div style={{ fontSize: 11, color: 'var(--pk-blue)' }}>{c.email}</div>
                       </div>
                       {c.telephone && <div style={{ fontSize: 12, color: 'var(--text3)' }}>{c.telephone}</div>}
-                      <button onClick={() => saveContacts(contacts.filter(x => x.id !== c.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
+                  <button onClick={() => deleteContact(c.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
                     </div>
                   ))}
                 </div>
@@ -5886,7 +5989,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                           {c.organisation && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{c.organisation}</div>}
                         </div>
                         <span style={{ background: listInfo.color + '15', color: listInfo.color, padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600 }}>{listInfo.label}</span>
-                        <button onClick={() => saveDiffusion(diffusion.filter(x => x.id !== c.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
+                        <button onClick={() => deleteContact(c.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
                       </div>
                     );
                   })}
@@ -5961,18 +6064,18 @@ function EmailingView() {
   });
 
   useEffect(() => { loadCampaigns(); }, []);
-  function loadCampaigns() { fetch('/campaigns').then(r=>r.json()).then(setCampaigns); }
+  function loadCampaigns() { fetch(`${API}/campaigns`).then(r=>r.json()).then(setCampaigns); }
   
   function saveCampaign() {
-    fetch('/campaigns', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(draft) })
+    fetch(`${API}/campaigns`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(draft) })
     .then(()=> { loadCampaigns(); setShowForm(false); setDraft({ sujet: '', cible: '', contenu: '', date_envoi: '', statut: 'brouillon', stats: {ouvertures:0, clics:0, reponses:0} }); });
   }
 
   function updateStatus(cmp, stat) {
-    fetch(`/campaigns/${cmp.id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({statut: stat}) }).then(loadCampaigns);
+    fetch(`${API}/campaigns/${cmp.id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({statut: stat}) }).then(loadCampaigns);
   }
   function updateStats(cmp, st) {
-    fetch(`/campaigns/${cmp.id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({stats: st}) }).then(loadCampaigns);
+    fetch(`${API}/campaigns/${cmp.id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({stats: st}) }).then(loadCampaigns);
   }
 
   return (

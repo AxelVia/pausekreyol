@@ -518,6 +518,160 @@ def patch_client(slug: str, body: dict):
     return meta
 
 
+@app.get("/clients/{slug}/sync-check")
+def check_client_drive_sync(slug: str):
+    """
+    Vérifie la cohérence entre le dossier local et Drive pour un client.
+    Retourne l'état de chaque fichier et déclenche une re-sync si nécessaire.
+    """
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    client_dir = matches[0]
+    meta_path = client_dir / "client.json"
+    meta = json.loads(meta_path.read_text())
+
+    result = {
+        "slug": slug,
+        "nom": meta.get("client_data", {}).get("nom_usuel") or meta.get("client_data", {}).get("nom_officiel"),
+        "drive_folder_id": meta.get("drive_folder_id"),
+        "fichiers": {},
+        "actions": [],
+    }
+
+    if os.getenv("ENV") != "production":
+        result["message"] = "Sync Drive disponible uniquement en production"
+        return result
+
+    try:
+        from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, drive_get_or_create_folder, get_root_folder_id
+        root_id = get_root_folder_id()
+
+        # Vérifie / crée le dossier Drive
+        folder_id = meta.get("drive_folder_id")
+        if not folder_id:
+            folder_id = drive_get_or_create_folder(slug, root_id)
+            meta["drive_folder_id"] = folder_id
+            result["actions"].append("Dossier Drive créé")
+
+        # Fichiers à vérifier
+        fichiers_locaux = {
+            "client.json": meta_path,
+            **{f.name: f for f in client_dir.glob("*.xlsx")},
+        }
+
+        for nom_fichier, chemin in fichiers_locaux.items():
+            file_id = drive_find_file(nom_fichier, folder_id)
+            if file_id:
+                result["fichiers"][nom_fichier] = {"drive": "✅ présent", "drive_id": file_id}
+            else:
+                # Upload manquant
+                if nom_fichier == "client.json":
+                    drive_upload_json(meta, nom_fichier, folder_id)
+                else:
+                    from engine.drive_storage import drive_upload_bytes
+                    drive_upload_bytes(chemin.read_bytes(), nom_fichier, folder_id)
+                result["fichiers"][nom_fichier] = {"drive": "⬆️ uploadé (manquait)"}
+                result["actions"].append(f"{nom_fichier} uploadé sur Drive")
+
+        # Sauvegarde meta si folder_id ajouté
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        result["status"] = "ok" if not result["actions"] else "repaired"
+
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+
+    return result
+
+
+@app.post("/clients/{slug}/sync-drive")
+def force_sync_client_drive(slug: str):
+    """Force une re-synchronisation complète local → Drive pour un client."""
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    client_dir = matches[0]
+    meta_path = client_dir / "client.json"
+    meta = json.loads(meta_path.read_text())
+
+    synced = []
+    errors = []
+
+    try:
+        from engine.drive_storage import (
+            drive_find_file, drive_update_json, drive_upload_json,
+            drive_upload_bytes, drive_get_or_create_folder, get_root_folder_id
+        )
+        root_id = get_root_folder_id()
+        folder_id = meta.get("drive_folder_id") or drive_get_or_create_folder(slug, root_id)
+        meta["drive_folder_id"] = folder_id
+
+        # client.json
+        fid = drive_find_file("client.json", folder_id)
+        if fid:
+            drive_update_json(fid, meta)
+        else:
+            drive_upload_json(meta, "client.json", folder_id)
+        synced.append("client.json")
+
+        # Tous les xlsx du dossier
+        for xlsx in client_dir.glob("*.xlsx"):
+            fid = drive_find_file(xlsx.name, folder_id)
+            if not fid:
+                drive_upload_bytes(xlsx.read_bytes(), xlsx.name, folder_id)
+                synced.append(xlsx.name)
+
+        # Dossier projets
+        projets_dir = client_dir / "projets"
+        if projets_dir.exists():
+            projets_folder_id = meta.get("drive_projets_folder_id") or drive_get_or_create_folder("projets", folder_id)
+            meta["drive_projets_folder_id"] = projets_folder_id
+            for xlsx in projets_dir.glob("**/*.xlsx"):
+                fid = drive_find_file(xlsx.name, projets_folder_id)
+                if not fid:
+                    drive_upload_bytes(xlsx.read_bytes(), xlsx.name, projets_folder_id)
+                    synced.append(f"projets/{xlsx.name}")
+
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    except Exception as e:
+        errors.append(str(e))
+        logger.error(f"Force sync {slug} : {e}")
+
+    return {"status": "ok" if not errors else "partial", "synced": synced, "errors": errors}
+
+
+@app.patch("/clients/{slug}/archive")
+def toggle_archive_client(slug: str, body: dict):
+    """Archive ou désarchive un client. body: {archived: true/false}"""
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    client_dir = matches[0]
+    meta_path = client_dir / "client.json"
+    meta = json.loads(meta_path.read_text())
+
+    meta["archived"] = bool(body.get("archived", True))
+    meta["archived_at"] = datetime.now().isoformat() if meta["archived"] else None
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    # Sync Drive
+    try:
+        from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json
+        folder_id = meta.get("drive_folder_id")
+        if folder_id:
+            fid = drive_find_file("client.json", folder_id)
+            if fid:
+                drive_update_json(fid, meta)
+    except Exception as e:
+        logger.warning(f"Drive sync archive : {e}")
+
+    action = "archivé" if meta["archived"] else "désarchivé"
+    logger.info(f"Client {slug} {action}")
+    return {"status": action, "archived": meta["archived"]}
+
+
 @app.delete("/clients/{slug}")
 def delete_client(slug: str, confirm: str = ""):
     """
