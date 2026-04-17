@@ -210,6 +210,11 @@ def _restore_devis_factures_drive():
             if camp_data:
                 CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
                 CAMPAIGNS_FILE.write_text(json.dumps(camp_data, ensure_ascii=False, indent=2))
+        if not COMM_FILE.exists():
+            comm_data = drive_download_json("comm.json", root_id)
+            if comm_data:
+                COMM_FILE.parent.mkdir(parents=True, exist_ok=True)
+                COMM_FILE.write_text(json.dumps(comm_data, ensure_ascii=False, indent=2))
 
         # Backup local → Drive
         if DEVIS_FILE.exists():
@@ -254,6 +259,13 @@ def _restore_devis_factures_drive():
                 drive_update_json(fid, campaigns)
             else:
                 drive_upload_json(campaigns, "campaigns.json", root_id)
+        if COMM_FILE.exists():
+            comm_data = json.loads(COMM_FILE.read_text())
+            fid = drive_find_file("comm.json", root_id)
+            if fid:
+                drive_update_json(fid, comm_data)
+            else:
+                drive_upload_json(comm_data, "comm.json", root_id)
         logger.info("Sync nightly globale ↔ Drive OK")
     except Exception as e:
         logger.warning(f"Sync Drive nightly : {e}")
@@ -727,6 +739,7 @@ TASKS_FILE = CLIENTS_DIR / "tasks.json"
 SUBVENTIONS_FILE = CLIENTS_DIR / "subventions.json"
 ANNUAIRE_FILE = CLIENTS_DIR / "annuaire.json"
 CAMPAIGNS_FILE = CLIENTS_DIR / "campaigns.json"
+COMM_FILE = CLIENTS_DIR / "comm.json"
 
 def _load_subventions() -> list:
     if SUBVENTIONS_FILE.exists():
@@ -772,6 +785,41 @@ def _load_campaigns() -> list:
     if CAMPAIGNS_FILE.exists():
         return json.loads(CAMPAIGNS_FILE.read_text())
     return []
+
+def _save_campaigns(campaigns: list):
+    CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CAMPAIGNS_FILE.write_text(json.dumps(campaigns, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("campaigns.json", root_id)
+            if file_id:
+                drive_update_json(file_id, campaigns)
+            else:
+                drive_upload_json(campaigns, "campaigns.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync campaigns.json : {e}")
+
+def _load_comm() -> dict:
+    if COMM_FILE.exists():
+        return json.loads(COMM_FILE.read_text())
+    return {"charte": None, "assets": []}
+
+def _save_comm(data: dict):
+    COMM_FILE.parent.mkdir(parents=True, exist_ok=True)
+    COMM_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("comm.json", root_id)
+            if file_id:
+                drive_update_json(file_id, data)
+            else:
+                drive_upload_json(data, "comm.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync comm.json : {e}")
 
 def _save_campaigns(campaigns: list):
     CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -3028,6 +3076,19 @@ def delete_campaign(comp_id: str):
     campaigns = _load_campaigns()
     campaigns = [s for s in campaigns if s["id"] != comp_id]
     _save_campaigns(campaigns)
+    return {"status": "ok"}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE COMMUNICATION (CHARTE & ASSETS)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/comm/config")
+def get_comm_config():
+    return _load_comm()
+
+@app.post("/comm/config")
+def post_comm_config(data: dict):
+    _save_comm(data)
     return {"status": "ok"}
 
 

@@ -3421,9 +3421,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
     function CommView({ clients }) {
       const [tab, setTab] = useState('charte');
-      const [charte, setCharte] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('pk_charte') || 'null'); } catch { return null; }
-      });
+      const [charte, setCharte] = useState(null);
       const [showCharteEditor, setShowCharteEditor] = useState(false);
 
       // Générateur signature email
@@ -3431,12 +3429,18 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [sigGenerated, setSigGenerated] = useState(true);
 
       // Assets partagés entre la signature et l'onglet Assets
-      const [assets, setAssetsState] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('pk_assets') || '[]'); } catch { return []; }
-      });
+      const [assets, setAssetsState] = useState([]);
+
+      useEffect(() => {
+        fetch('/comm/config').then(r => r.json()).then(data => {
+          setCharte(data.charte || null);
+          setAssetsState(data.assets || []);
+        });
+      }, []);
+
       function saveAssetsShared(list) {
         setAssetsState(list);
-        try { localStorage.setItem('pk_assets', JSON.stringify(list)); } catch { }
+        fetch('/comm/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charte, assets: list }) });
       }
 
       // Générateur email client
@@ -3449,7 +3453,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       function saveCharte(data) {
         setCharte(data);
-        try { localStorage.setItem('pk_charte', JSON.stringify(data)); } catch { }
+        fetch('/comm/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charte: data, assets }) });
         setShowCharteEditor(false);
       }
 
