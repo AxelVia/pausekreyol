@@ -5859,8 +5859,13 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 <div className="card"><div className="empty"><div className="empty-icon">📨</div><div className="empty-text">{search ? 'Aucun résultat.' : 'Aucun abonné.'}</div></div></div>
               ) : (
                 <div className="card">
-                  {/* Export CSV */}
-                  <div style={{ marginBottom: 12, textAlign: 'right' }}>
+                  {/* Export CSV & Copy */}
+                  <div style={{ marginBottom: 12, textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button className="btn" style={{ fontSize: 11 }} onClick={() => {
+                      const emails = filteredDiff.map(c => c.email).filter(Boolean).join(', ');
+                      navigator.clipboard.writeText(emails);
+                      alert('Les ' + filteredDiff.length + ' emails ont été copiés dans le presse-papier ! Vous pouvez les coller dans le champ Cci / Bcc de Gmail.');
+                    }}>📋 Copier les emails</button>
                     <button className="btn" style={{ fontSize: 11 }} onClick={() => {
                       const csv = ['Nom,Email,Organisation,Liste', ...filteredDiff.map(c => `${c.nom},${c.email},${c.organisation || ''},${c.liste}`)].join('\n');
                       const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
