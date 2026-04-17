@@ -438,7 +438,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const API = 'https://web-production-ac84a.up.railway.app';
 
@@ -542,174 +542,411 @@ function CalendarStrip() {
 
 function DashboardView({ data, taches, finance, onNewClient, setView }) {
   const today = new Date();
-  const todayStr = today.toISOString().slice(0,10);
+  const todayStr = today.toISOString().slice(0, 10);
   const tachesEnCours = taches.filter(t => !t.done);
-  const urgentes = (data?.alertes || []).filter(a => a.statut === 'EXPIRÉ' || a.statut === 'URGENT');
 
-  // Tâches avec deadline triées par proximité
-  const tachesAvecDL = tachesEnCours
-    .filter(t => t.deadline)
-    .sort((a,b) => a.deadline.localeCompare(b.deadline));
-
-  // Tâches sans deadline, triées par priorité
-  const tachesSansDL = tachesEnCours
-    .filter(t => !t.done && !t.deadline)
-    .sort((a,b) => {
-      const prio = { 'URGENT': 0, 'Attention': 1, 'Normal': 2 };
-      return (prio[a.priorite]||2) - (prio[b.priorite]||2);
+  // Tâches groupées par client
+  const tachesParClient = {};
+  tachesEnCours.forEach(t => {
+    const key = t.client_detecte || t.client_nom || '— Sans client —';
+    if (!tachesParClient[key]) tachesParClient[key] = [];
+    tachesParClient[key].push(t);
+  });
+  // Trier : avec deadline proche d'abord
+  Object.keys(tachesParClient).forEach(k => {
+    tachesParClient[k].sort((a, b) => {
+      const da = a.deadline || '9999', db = b.deadline || '9999';
+      return da.localeCompare(db);
     });
+  });
+  const clientsKeys = Object.keys(tachesParClient).sort((a,b) => {
+    const nextA = tachesParClient[a][0]?.deadline || '9999';
+    const nextB = tachesParClient[b][0]?.deadline || '9999';
+    return nextA.localeCompare(nextB);
+  });
 
-  // Tâches à venir : d'abord avec deadline proche, puis sans deadline urgentes
-  const tachesOpe = [...tachesAvecDL, ...tachesSansDL].slice(0, 8);
+  const devisEnCours = (finance?.liste_devis || []).filter(d => !d.archived && ['brouillon','envoyé','signé'].includes(d.statut));
 
   function diffLabel(deadline) {
+    if (!deadline) return null;
     const diff = Math.round((new Date(deadline+'T00:00:00') - today) / 86400000);
-    if (diff < 0) return { label: `J+${Math.abs(diff)} retard`, color: 'var(--danger)' };
-    if (diff === 0) return { label: "Aujourd'hui", color: 'var(--danger)' };
-    if (diff === 1) return { label: 'Demain', color: 'var(--warn)' };
-    if (diff <= 7) return { label: `Dans ${diff}j`, color: 'var(--warn)' };
-    return { label: deadline.split('-').reverse().join('/'), color: 'var(--text3)' };
+    if (diff < 0) return { txt: `J+${Math.abs(diff)} retard`, color: 'var(--danger)' };
+    if (diff === 0) return { txt: "Aujourd'hui", color: 'var(--danger)' };
+    if (diff === 1) return { txt: 'Demain', color: 'var(--warn)' };
+    if (diff <= 7) return { txt: `J-${diff}`, color: 'var(--warn)' };
+    return { txt: deadline.split('-').reverse().join('/'), color: 'var(--text3)' };
   }
-
-  const CATEGORIES = {
-    finance: { icon: '💰', color: '#1B5E20' }, gestion_client: { icon: '👥', color: '#1565C0' },
-    subvention: { icon: '🏛', color: '#6A1B9A' }, admin: { icon: '📋', color: '#E65100' },
-    comm: { icon: '📣', color: '#00695C' }, devis: { icon: '📝', color: '#5D4037' },
-    facture: { icon: '🧾', color: '#37474F' }, validation: { icon: '✅', color: '#2E7D32' },
-    relance_devis: { icon: '🔔', color: '#F57F17' }, relance_facture: { icon: '⚠️', color: '#B71C1C' },
-    acompte: { icon: '💳', color: '#1565C0' }, archivage: { icon: '📦', color: '#455A64' },
-    manuel: { icon: '✏️', color: '#546E7A' },
-  };
 
   return (
     <div>
-      {/* Ligne 1 — Métriques opérationnelles */}
-      <div className="metrics-grid" style={{ marginBottom: 12 }}>
+      {/* Ligne métriques */}
+      <div className="metrics-grid" style={{ marginBottom: 16 }}>
         <div className="metric-card accent-info" onClick={() => setView('clients')} style={{ cursor:'pointer' }}>
           <div className="metric-label">Clients actifs</div>
           <div className="metric-value">{data?.nb_clients || 0}</div>
-          <div className="metric-sub">dossiers suivis</div>
+          <div className="metric-sub">{(data?.clients||[]).filter(c=>c.nb_projets>0).length} avec projet(s)</div>
         </div>
         <div className="metric-card accent-warn" onClick={() => setView('taches')} style={{ cursor:'pointer' }}>
           <div className="metric-label">Tâches en cours</div>
           <div className="metric-value">{tachesEnCours.length}</div>
-          <div className="metric-sub">{tachesEnCours.filter(t=>t.priorite==='URGENT').length > 0 ? `${tachesEnCours.filter(t=>t.priorite==='URGENT').length} urgentes` : 'aucune urgente'}</div>
+          <div className="metric-sub">{tachesEnCours.filter(t=>t.priorite==='URGENT').length} urgentes · {clientsKeys.length} clients</div>
         </div>
-        <div className="metric-card accent-danger" onClick={() => setView('alertes')} style={{ cursor:'pointer' }}>
-          <div className="metric-label">Alertes conformité</div>
-          <div className="metric-value">{urgentes.length}</div>
-          <div className="metric-sub">à traiter maintenant</div>
+        <div className="metric-card" onClick={() => setView('devis')} style={{ cursor:'pointer' }}>
+          <div className="metric-label">Devis en cours</div>
+          <div className="metric-value">{devisEnCours.length}</div>
+          <div className="metric-sub">{devisEnCours.reduce((s,d)=>s+(d.total_ht||0),0).toLocaleString('fr-FR')} € en jeu</div>
         </div>
         <div className="metric-card accent-green" onClick={() => setView('devis')} style={{ cursor:'pointer' }}>
           <div className="metric-label">CA encaissé</div>
-          <div className="metric-value" style={{ fontSize:20 }}>{((finance?.factures?.ca_encaisse)||0).toLocaleString('fr-FR')} €</div>
-          <div className="metric-sub">{finance?.factures?.en_attente ? `${finance.factures.en_attente.toLocaleString('fr-FR')}€ en attente` : ''}</div>
+          <div className="metric-value" style={{ fontSize: 20 }}>{((finance?.factures?.ca_encaisse)||0).toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{finance?.factures?.en_attente ? `${Number(finance.factures.en_attente).toLocaleString('fr-FR')}€ attendus` : ''}</div>
         </div>
       </div>
 
       <div className="grid-2" style={{ marginBottom: 16 }}>
-        {/* Tâches à venir — centré opérationnel */}
-        <div className="card">
-          <div className="card-header">
+        {/* Tâches par client */}
+        <div className="card" style={{ gridColumn: '1 / -1' }}>
+          <div className="card-header" style={{ marginBottom: 12 }}>
             <div>
-              <div className="card-title">Tâches à traiter</div>
-              <div className="card-subtitle">Triées par échéance puis priorité</div>
+              <div className="card-title">Tâches par client</div>
+              <div className="card-subtitle">Triées par deadline</div>
             </div>
-            <button className="btn" style={{ fontSize:12 }} onClick={() => setView('taches')}>Voir tout</button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setView('taches')}>Voir tout</button>
           </div>
-          {tachesOpe.length === 0 ? (
-            <div className="empty" style={{ padding:'16px 0' }}>
+
+          {clientsKeys.length === 0 ? (
+            <div className="empty" style={{ padding: '16px 0' }}>
               <div className="empty-icon">🎉</div>
               <div className="empty-text">Aucune tâche en cours !</div>
             </div>
-          ) : tachesOpe.map(t => {
-            const cat = CATEGORIES[t.type] || CATEGORIES[t.categorie] || CATEGORIES.admin;
-            const dl = t.deadline ? diffLabel(t.deadline) : null;
-            return (
-              <div key={t.id} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'9px 0', borderBottom:'1px solid var(--border)' }}>
-                <span style={{ fontSize:14, flexShrink:0, marginTop:1 }}>{cat.icon}</span>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:13, fontWeight:500, marginBottom:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.titre}</div>
-                  <div style={{ fontSize:11, color:'var(--text3)' }}>
-                    {t.client_detecte && <span>{t.client_detecte} · </span>}
-                    {t.source}
-                    {t.calendrier && <span style={{ marginLeft:6, background: t.calendrier==='culturel' ? '#E8F5E9' : 'var(--pk-blue-light)', color: t.calendrier==='culturel' ? '#1B5E20' : 'var(--pk-blue)', fontSize:9, fontWeight:600, padding:'1px 5px', borderRadius:8 }}>
-                      {t.calendrier==='culturel' ? '🎭' : '📋'}
-                    </span>}
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+              {clientsKeys.slice(0, 6).map(clientNom => {
+                const tachesClient = tachesParClient[clientNom];
+                const urgentes = tachesClient.filter(t => t.priorite === 'URGENT').length;
+                const nextDl = tachesClient[0]?.deadline;
+                const dl = nextDl ? diffLabel(nextDl) : null;
+                return (
+                  <div key={clientNom} style={{ background: 'var(--surface2)', borderRadius: 'var(--radius)', padding: '12px 14px', border: urgentes > 0 ? '1px solid var(--danger)30' : '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 700, fontSize: 12, color: 'var(--pk-blue)', textTransform: 'uppercase', letterSpacing: '0.3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 150 }}>{clientNom}</div>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                        {urgentes > 0 && <span style={{ background: 'var(--danger)', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 8 }}>{urgentes} URGENT</span>}
+                        <span style={{ background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8 }}>{tachesClient.length}</span>
+                      </div>
+                    </div>
+                    {tachesClient.slice(0, 3).map(t => {
+                      const tdl = t.deadline ? diffLabel(t.deadline) : null;
+                      return (
+                        <div key={t.id} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{t.titre}</div>
+                          {tdl && <div style={{ fontSize: 10, fontWeight: 600, color: tdl.color, flexShrink: 0 }}>{tdl.txt}</div>}
+                        </div>
+                      );
+                    })}
+                    {tachesClient.length > 3 && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>+{tachesClient.length - 3} autre(s)</div>}
+                    {dl && <div style={{ fontSize: 11, color: dl.color, fontWeight: 600, marginTop: 6 }}>Prochaine : {dl.txt}</div>}
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid-2">
+        {/* Devis en cours */}
+        <div className="card">
+          <div className="card-header">
+            <div><div className="card-title">Devis en attente</div><div className="card-subtitle">Brouillon, envoyés, signés</div></div>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setView('devis')}>Voir tout</button>
+          </div>
+          {devisEnCours.length === 0 ? (
+            <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucun devis en cours.</div></div>
+          ) : devisEnCours.slice(0, 5).map(d => {
+            const STATUT_C = { brouillon: 'var(--text3)', envoyé: 'var(--pk-blue)', signé: 'var(--warn)' };
+            return (
+              <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13, alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>{d.client_nom}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{d.numero} · {d.periode?.slice(0, 30)}</div>
                 </div>
-                <div style={{ flexShrink:0, textAlign:'right' }}>
-                  {dl && <div style={{ fontSize:11, fontWeight:600, color:dl.color }}>{dl.label}</div>}
-                  {t.priorite === 'URGENT' && <div style={{ fontSize:10, background:'var(--danger-light)', color:'var(--danger)', padding:'1px 5px', borderRadius:8, fontWeight:700, marginTop:2 }}>URGENT</div>}
-                  {t.priorite === 'Attention' && !dl && <div style={{ fontSize:10, background:'var(--warn-light)', color:'var(--warn)', padding:'1px 5px', borderRadius:8 }}>Attention</div>}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 700 }}>{(d.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: STATUT_C[d.statut] || 'var(--text3)' }}>{d.statut}</div>
                 </div>
               </div>
             );
           })}
         </div>
 
-        {/* Prochaines échéances calendriers */}
+        {/* Échéances calendriers */}
         <div className="card">
           <div className="card-header">
-            <div>
-              <div className="card-title">Échéances calendriers</div>
-              <div className="card-subtitle">Formalités + Culturel</div>
-            </div>
-            <button className="btn" style={{ fontSize:12 }} onClick={() => setView('calendrier')}>Voir calendriers</button>
+            <div><div className="card-title">Prochaines échéances</div><div className="card-subtitle">Formalités + Culturel</div></div>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setView('calendrier')}>Voir calendriers</button>
           </div>
           {(() => {
-            const alertesEvents = (data?.alertes || [])
-              .filter(a => a.date_expiration && ['EXPIRÉ','URGENT','Attention'].includes(a.statut))
-              .map(a => ({
-                titre: `${a.organisme} — ${a.client || ''}`,
-                date: a.date_expiration, statut: a.statut, type: 'formalite',
-              }));
             const tachesEvts = tachesEnCours
               .filter(t => t.deadline)
-              .map(t => ({ titre: t.titre, date: t.deadline, type: t.calendrier || 'formalite', client: t.client_detecte }));
-            const all = [...alertesEvents, ...tachesEvts]
+              .map(t => ({ titre: t.titre, date: t.deadline, type: t.calendrier || 'formalite', client: t.client_detecte }))
               .filter(e => e.date >= todayStr)
               .sort((a,b) => a.date.localeCompare(b.date))
-              .slice(0, 7);
-            if (!all.length) return <div className="empty" style={{ padding:'16px 0' }}><div className="empty-text">Aucune échéance à venir.</div></div>;
-            return all.map((e, i) => {
+              .slice(0, 6);
+            if (!tachesEvts.length) return <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucune échéance à venir.</div></div>;
+            return tachesEvts.map((e, i) => {
               const dl = diffLabel(e.date);
               return (
-                <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 0', borderBottom:'1px solid var(--border)', fontSize:13 }}>
-                  <div style={{ width:8, height:8, borderRadius:'50%', background: e.type==='culturel' ? '#FF795A' : '#2834B7', flexShrink:0 }} />
-                  <div style={{ flex:1, overflow:'hidden' }}>
-                    <div style={{ fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{e.titre}</div>
-                    {e.client && <div style={{ fontSize:11, color:'var(--text3)' }}>{e.client}</div>}
-                  </div>
-                  <div style={{ fontSize:11, fontWeight:600, color:dl.color, flexShrink:0 }}>{dl.label}</div>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: e.type === 'culturel' ? '#FF795A' : '#2834B7', flexShrink: 0 }} />
+                  <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.titre}</div>
+                  {dl && <div style={{ fontSize: 11, fontWeight: 600, color: dl.color, flexShrink: 0 }}>{dl.txt}</div>}
                 </div>
               );
             });
           })()}
         </div>
       </div>
-
-      {/* Alertes conformité */}
-      {urgentes.length > 0 && (
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">🚨 Alertes conformité urgentes</div>
-            <button className="btn" style={{ fontSize:12 }} onClick={() => setView('alertes')}>Voir tout</button>
-          </div>
-          {urgentes.slice(0,4).map((a,i) => (
-            <div key={i} className="alert-row">
-              <div className={`alert-dot ${a.statut==='EXPIRÉ'?'dot-danger':'dot-warn'}`} />
-              <div><div className="alert-label">{a.organisme}</div><div className="alert-sub">{a.client} {a.date_expiration ? `— ${a.date_expiration}` : ''}</div></div>
-              <Badge statut={a.statut} />
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
+
 // ── Client detail view ────────────────────────────────────────────────────────
+
+// ── Logo & Signature client ───────────────────────────────────────────────────
+
+function IdentiteVisuelleTab({ slug, nomClient, logoUrl, saveLogo, signatureData, saveSig, onShowSigPad }) {
+  const [logoInput, setLogoInput] = useState(logoUrl || '');
+  const [sigMsg, setSigMsg] = useState('');
+
+  function handleLogoFile(file) {
+    const reader = new FileReader();
+    reader.onload = e => { saveLogo(e.target.result); setLogoInput(''); };
+    reader.readAsDataURL(file);
+  }
+
+  function applyLogoUrl() { saveLogo(logoInput); }
+
+  function downloadSig() {
+    if (!signatureData) return;
+    const a = document.createElement('a');
+    a.href = signatureData;
+    a.download = `signature_${slug}.png`;
+    a.click();
+  }
+
+  function copySigToClipboard() {
+    if (!signatureData) return;
+    fetch(signatureData).then(r => r.blob()).then(blob => {
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+        .then(() => setSigMsg('✅ Signature copiée — collez-la dans votre document'))
+        .catch(() => setSigMsg('📥 Téléchargez la signature et insérez-la manuellement'));
+      setTimeout(() => setSigMsg(''), 4000);
+    });
+  }
+
+  return (
+    <div className="grid-2">
+      {/* Logo */}
+      <div className="card">
+        <div className="card-header"><div className="card-title">🖼 Logo du client</div></div>
+
+        {logoUrl ? (
+          <div style={{ textAlign: 'center', marginBottom: 16, padding: 16, background: 'var(--surface2)', borderRadius: 8 }}>
+            <img src={logoUrl} alt="logo" style={{ maxHeight: 120, maxWidth: '100%', objectFit: 'contain' }} />
+            <div style={{ marginTop: 10 }}>
+              <button className="btn" style={{ fontSize: 11, color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => saveLogo('')}>🗑 Supprimer</button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: 24, background: 'var(--surface2)', borderRadius: 8, color: 'var(--text3)', marginBottom: 16 }}>
+            Aucun logo. Uploadez une image ou collez une URL.
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Uploader depuis votre ordinateur</div>
+        <label className="btn" style={{ cursor: 'pointer', marginBottom: 12 }}>
+          📁 Choisir une image (PNG, JPG, SVG)
+          <input type="file" accept="image/*" style={{ display: 'none' }}
+            onChange={e => e.target.files[0] && handleLogoFile(e.target.files[0])} />
+        </label>
+
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Ou depuis une URL (Drive, hébergement)</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input className="form-input" value={logoInput} onChange={e => setLogoInput(e.target.value)}
+            placeholder="https://drive.google.com/uc?id=..." style={{ fontSize: 12 }} />
+          <button className="btn btn-primary" style={{ fontSize: 12, flexShrink: 0 }} onClick={applyLogoUrl} disabled={!logoInput}>Appliquer</button>
+        </div>
+
+        <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text3)', padding: '8px 10px', background: 'var(--pk-blue-light)', borderRadius: 6 }}>
+          💡 Pour Drive : Fichier → Partager (accès public) → Copier le lien → Remplacer /view par /uc?id= dans l'URL
+        </div>
+      </div>
+
+      {/* Signature */}
+      <div className="card">
+        <div className="card-header"><div className="card-title">✍️ Signature manuscrite</div></div>
+
+        {signatureData ? (
+          <div>
+            <div style={{ textAlign: 'center', padding: 16, background: 'var(--surface2)', borderRadius: 8, marginBottom: 12 }}>
+              <img src={signatureData} alt="signature" style={{ maxHeight: 100, maxWidth: '100%', objectFit: 'contain' }} />
+            </div>
+            <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text2)' }}>
+              Signature enregistrée pour <strong>{nomClient}</strong>.
+              Utilisez le bouton "Coller" pour l'insérer dans un document.
+            </div>
+            {sigMsg && <div style={{ fontSize: 12, padding: '8px 12px', borderRadius: 6, background: 'var(--success-light)', color: 'var(--success)', marginBottom: 10 }}>{sigMsg}</div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={copySigToClipboard}>📋 Copier l'image</button>
+              <button className="btn" style={{ fontSize: 12 }} onClick={downloadSig}>⬇️ Télécharger PNG</button>
+              <button className="btn" style={{ fontSize: 12 }} onClick={onShowSigPad}>✏️ Redessiner</button>
+              <button className="btn" style={{ fontSize: 12, color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => saveSig('')}>🗑 Supprimer</button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ textAlign: 'center', padding: 32, background: 'var(--surface2)', borderRadius: 8, color: 'var(--text3)', marginBottom: 14 }}>
+              Aucune signature enregistrée.
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>Option 1 — Dessiner la signature</div>
+              <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={onShowSigPad}>✍️ Ouvrir le pad de signature</button>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>Option 2 — Importer une image</div>
+              <label className="btn" style={{ cursor: 'pointer', fontSize: 12 }}>
+                📁 Importer PNG/JPG de la signature
+                <input type="file" accept="image/*" style={{ display: 'none' }}
+                  onChange={e => {
+                    const f = e.target.files[0]; if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => saveSig(ev.target.result);
+                    reader.readAsDataURL(f);
+                  }} />
+              </label>
+            </div>
+
+            <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text2)', padding: '10px 12px', background: 'var(--pk-blue-light)', borderRadius: 6 }}>
+              <strong>💡 Usage :</strong> Une fois la signature enregistrée, utilisez "Copier l'image" puis collez-la (Ctrl+V) directement dans Word, Google Docs, un PDF ou un dossier de subvention.
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Pad de signature (style DocuSign) ─────────────────────────────────────────
+
+function SignaturePadModal({ onClose, onSave, existing }) {
+  const canvasRef = useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [hasDrawn, setHasDrawn] = useState(false);
+  const [lastPos, setLastPos] = useState(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#2834B7';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (existing) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0);
+      img.src = existing;
+    }
+  }, []);
+
+  function getPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    if (e.touches) {
+      return { x: (e.touches[0].clientX - rect.left) * scaleX, y: (e.touches[0].clientY - rect.top) * scaleY };
+    }
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  }
+
+  function startDraw(e) {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    setDrawing(true);
+    setHasDrawn(true);
+    setLastPos(getPos(e, canvas));
+  }
+
+  function draw(e) {
+    e.preventDefault();
+    if (!drawing) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const pos = getPos(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(lastPos.x, lastPos.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    setLastPos(pos);
+  }
+
+  function stopDraw(e) { e.preventDefault(); setDrawing(false); setLastPos(null); }
+
+  function clear() {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    setHasDrawn(false);
+  }
+
+  function save() {
+    const canvas = canvasRef.current;
+    onSave(canvas.toDataURL('image/png'));
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 520 }}>
+        <div className="modal-title">✍️ Signature</div>
+        <div className="modal-sub">Dessinez la signature ci-dessous (souris ou écran tactile)</div>
+
+        <div style={{ border: '2px solid var(--pk-blue)', borderRadius: 8, overflow: 'hidden', marginBottom: 14, background: 'white', touchAction: 'none' }}>
+          <canvas
+            ref={canvasRef}
+            width={480}
+            height={160}
+            style={{ display: 'block', width: '100%', cursor: 'crosshair' }}
+            onMouseDown={startDraw}
+            onMouseMove={draw}
+            onMouseUp={stopDraw}
+            onMouseLeave={stopDraw}
+            onTouchStart={startDraw}
+            onTouchMove={draw}
+            onTouchEnd={stopDraw}
+          />
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12, textAlign: 'center' }}>
+          — Signez ici —
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn" onClick={clear}>🗑 Effacer</button>
+          <button className="btn" onClick={onClose}>Annuler</button>
+          <button className="btn btn-primary" onClick={save} disabled={!hasDrawn && !existing}>
+            ✅ Enregistrer la signature
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ClientDetailView({ slug, onBack, onRefresh }) {
   const [detail, setDetail] = useState(null);
@@ -719,6 +956,14 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
   const [showEdit, setShowEdit] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [selectedProjet, setSelectedProjet] = useState(null);
+
+  // Logo + signature du client (stockés en localStorage par slug)
+  const [logoUrl, setLogoUrl] = useState(() => localStorage.getItem(`pk_logo_${slug}`) || '');
+  const [signatureData, setSignatureData] = useState(() => localStorage.getItem(`pk_sig_${slug}`) || '');
+  const [showSigPad, setShowSigPad] = useState(false);
+
+  function saveLogo(url) { setLogoUrl(url); localStorage.setItem(`pk_logo_${slug}`, url); }
+  function saveSig(data) { setSignatureData(data); localStorage.setItem(`pk_sig_${slug}`, data); }
 
   function load() {
     setLoading(true);
@@ -751,26 +996,47 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <button className="btn btn-desktop-back" onClick={onBack} style={{ padding: '6px 10px' }}>← Retour</button>
-        <div className="client-avatar" style={{ width: 40, height: 40, borderRadius: 10, fontSize: 15 }}>{initials(cd.nom_usuel || cd.nom_officiel || '?')}</div>
+        {/* Logo client ou avatar */}
+        {logoUrl ? (
+          <img src={logoUrl} alt="logo" style={{ height: 40, width: 'auto', borderRadius: 8, objectFit: 'contain', border: '1px solid var(--border)', background: 'white', padding: 2 }}
+            onError={() => saveLogo('')} />
+        ) : (
+          <div className="client-avatar" style={{ width: 40, height: 40, borderRadius: 10, fontSize: 15 }}>{initials(cd.nom_usuel || cd.nom_officiel || '?')}</div>
+        )}
         <div>
           <div style={{ fontSize: 17, fontWeight: 600 }}>{cd.nom_usuel || cd.nom_officiel}</div>
           <div style={{ fontSize: 12, color: 'var(--text3)' }}>{typeLabel}</div>
         </div>
-        <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setShowNewProject(true)}>+ Nouveau projet</button>
-        <button className="btn" onClick={() => setShowImport(true)}>📊 Importer Excel</button>
-        <button className="btn" onClick={() => setShowEdit(true)}>✏️ Modifier</button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button className="btn btn-primary" onClick={() => setShowNewProject(true)}>+ Nouveau projet</button>
+          <button className="btn" onClick={() => setShowImport(true)}>📊 Excel</button>
+          <button className="btn" onClick={() => setTab('identite_visuelle')}>🖼 Logo & Signature</button>
+          <button className="btn" onClick={() => setShowEdit(true)}>✏️ Modifier</button>
+        </div>
       </div>
 
       {showNewProject && <NewProjectModal slug={slug} clientMeta={detail} onClose={() => setShowNewProject(false)} onCreated={() => { load(); if (onRefresh) onRefresh(); }} />}
       {showEdit && detail && <EditClientModal detail={detail} onClose={() => setShowEdit(false)} onSaved={handleSaved} onDeleted={() => { if (onRefresh) onRefresh(); onBack(); }} />}
       {showImport && <ImportExcelModal slug={slug} onClose={() => setShowImport(false)} onDone={handleSaved} />}
+      {showSigPad && <SignaturePadModal onClose={() => setShowSigPad(false)} onSave={data => { saveSig(data); setShowSigPad(false); }} existing={signatureData} />}
 
       {/* Tabs */}
       <div className="tabs">
-        {[['infos', 'Informations'], ['suivi', 'Suivi'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents'], ['facturation', 'Facturation'], ['historique', 'Historique']].map(([k, l]) => (
+        {[['infos', 'Informations'], ['suivi', 'Suivi'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents'], ['facturation', 'Facturation'], ['identite_visuelle', '🖼 Logo & Signature'], ['historique', 'Historique']].map(([k, l]) => (
           <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
+
+      {/* Identité visuelle — logo + signature */}
+      {tab === 'identite_visuelle' && (
+        <IdentiteVisuelleTab
+          slug={slug}
+          nomClient={cd.nom_usuel || cd.nom_officiel}
+          logoUrl={logoUrl} saveLogo={saveLogo}
+          signatureData={signatureData} saveSig={saveSig}
+          onShowSigPad={() => setShowSigPad(true)}
+        />
+      )}
 
       {/* Infos */}
       {tab === 'infos' && (
@@ -3294,6 +3560,8 @@ function CalendrierView({ alertes, clients, taches = [] }) {
 function DevisFacturesView() {
   const [tab, setTab] = useState('devis');
   const [filterArchive, setFilterArchive] = useState(false);
+  const [filterAnnee, setFilterAnnee] = useState('tous');
+  const anneesDispos = ['tous', ...Array.from(new Set((data?.liste_devis || []).map(d => d.annee).filter(Boolean))).sort((a,b) => b-a)];
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showNewDevis, setShowNewDevis] = useState(false);
@@ -3366,10 +3634,12 @@ function DevisFacturesView() {
   const f = data?.factures || {};
 
   const listeDevis = (data?.liste_devis || []).filter(d =>
-    filterArchive ? d.archived : !d.archived
+    (filterAnnee === 'tous' || String(d.annee) === String(filterAnnee)) &&
+    (filterArchive ? d.archived : !d.archived)
   );
   const listeFactures = (data?.liste_factures || []).filter(f =>
-    filterArchive ? ['annulée','en_retard'].includes(f.statut) && f.archived : !f.archived
+    (filterAnnee === 'tous' || String(f.annee) === String(filterAnnee)) &&
+    (filterArchive ? ['annulée','en_retard'].includes(f.statut) && f.archived : !f.archived)
   );
 
   return (
@@ -3416,7 +3686,12 @@ function DevisFacturesView() {
             <button key={k} className={`tab ${tab===k?'active':''}`} onClick={() => setTab(k)}>{l}</button>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Filtre année */}
+          <select className="form-input" style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
+            value={filterAnnee} onChange={e => setFilterAnnee(e.target.value)}>
+            {anneesDispos.map(a => <option key={a} value={a}>{a === 'tous' ? 'Toutes années' : a}</option>)}
+          </select>
           <label style={{ fontSize: 12, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input type="checkbox" checked={filterArchive} onChange={e => setFilterArchive(e.target.checked)} />
             Voir archives
@@ -4180,6 +4455,500 @@ const icons = {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
+// ── Subventions ───────────────────────────────────────────────────────────────
+
+const MODELES_SUBVENTIONS = [
+  {
+    id: 'feac',
+    nom: 'FEAC — Fonds d'aide aux échanges artistiques et culturels pour les Outre-mer',
+    organisme: 'Direction générale de la démocratie culturelle (DGDCER)',
+    type: 'mobilité',
+    deadline_indicative: '30 janvier',
+    montant_max: 3000,
+    description: 'Soutien aux projets de mobilité artistique et culturelle depuis les Outre-mer vers l'étranger ou la métropole.',
+    champs: ['Titre du projet', 'Territoire de départ', 'Pays d'arrivée', 'Nombre de personnes', 'Budget total', 'Montant sollicité', 'Partenaires', 'Description détaillée', 'Calendrier', 'Évaluation'],
+    pieces: ['RIB', 'Statuts', 'Récépissé préfecture', 'Budget projet', 'Dossier artistique', 'Compte certifié N-1'],
+    url: 'https://demarche.numerique.gouv.fr',
+    couleur: '#2834B7',
+    icone: '🌐',
+  },
+  {
+    id: 'fme_citoyennete',
+    nom: 'AAP Citoyenneté — Fondation pour la Mémoire de l'Esclavage',
+    organisme: 'Fondation pour la Mémoire de l'Esclavage (FME)',
+    type: 'projet pédagogique',
+    deadline_indicative: '31 janvier',
+    montant_max: 3000,
+    description: 'Appel à projets pour des actions citoyennes autour de la mémoire de l'esclavage, ciblant les jeunes 12-25 ans.',
+    champs: ['Nom de la structure', 'SIRET', 'Titre du projet', 'Résumé (800 car.)', 'Domaine du projet', 'Type de projet', 'Bénéficiaires', 'Territoire', 'Description détaillée', 'Moyens humains', 'Budget total', 'Montant sollicité', 'Évaluation'],
+    pieces: ['RIB', 'Statuts', 'Récépissé préfecture', 'JO', 'Budget projet', 'Budget association', 'Dossier descriptif', 'Compte certifié 2025', 'Déclaration co-financement', 'Attestation sur l'honneur'],
+    url: '',
+    couleur: '#FF795A',
+    icone: '🏛',
+  },
+  {
+    id: 'fdva',
+    nom: 'FDVA — Fonds de Développement de la Vie Associative',
+    organisme: 'Préfecture de région',
+    type: 'fonctionnement / formation',
+    deadline_indicative: 'mars (varie par région)',
+    montant_max: 10000,
+    description: 'Subvention nationale pour les associations : formation des bénévoles et fonctionnement.',
+    champs: ['RNA', 'Projet associatif', 'Budget prévisionnel', 'Effectif bénévoles', 'Formations prévues'],
+    pieces: ['Statuts', 'Récépissé préfecture', 'Compte de résultat N-1', 'Budget prévisionnel'],
+    url: 'https://www.associations.gouv.fr',
+    couleur: '#6A1B9A',
+    icone: '🤝',
+  },
+  {
+    id: 'dac_creation',
+    nom: 'DAC — Aide à la création artistique',
+    organisme: 'Direction des Affaires Culturelles (Martinique / Guadeloupe)',
+    type: 'création artistique',
+    deadline_indicative: 'variable (AAP annuel)',
+    montant_max: 15000,
+    description: 'Aide à la création artistique pour les associations des Outre-mer. Soutient des projets de spectacle vivant, arts visuels, patrimoine.',
+    champs: ['Présentation de la compagnie / structure', 'Description du projet artistique', 'Budget prévisionnel', 'Calendrier de création', 'Partenaires', 'Diffusion prévue'],
+    pieces: ['Statuts', 'RNA', 'SIRET', 'RIB', 'Budget prévisionnel', 'Dossier artistique', 'CV artistes'],
+    url: '',
+    couleur: '#E65100',
+    icone: '🎨',
+  },
+  {
+    id: 'cnm',
+    nom: 'CNM — Centre National de la Musique',
+    organisme: 'Centre National de la Musique',
+    type: 'musique / diffusion',
+    deadline_indicative: 'variable',
+    montant_max: 20000,
+    description: 'Aides aux projets musicaux : création, diffusion, export, festivals.',
+    champs: ['Identité de la structure', 'Projet musical', 'Territoires de diffusion', 'Artistes concernés', 'Budget', 'Partenaires'],
+    pieces: ['SIRET', 'RIB', 'Statuts', 'Budget', 'Dossier artistique'],
+    url: 'https://cnm.fr',
+    couleur: '#1B5E20',
+    icone: '🎵',
+  },
+];
+
+function SubventionsView({ clients }) {
+  const [tab, setTab] = useState('catalogue');
+  const [subventions, setSubventions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pk_subventions') || '[]'); } catch { return []; }
+  });
+  const [selectedModele, setSelectedModele] = useState(null);
+  const [showNew, setShowNew] = useState(false);
+  const [newSub, setNewSub] = useState({ modele_id: '', client_slug: '', projet_nom: '', montant_sollicite: '', statut: 'À préparer', notes: '', deadline: '', organisme: '' });
+  const [clientsDetails, setClientsDetails] = useState([]);
+
+  useEffect(() => {
+    Promise.all(clients.map(c =>
+      fetch(`${API}/clients/${c.slug}`).then(r => r.ok ? r.json() : null).catch(() => null)
+    )).then(details => setClientsDetails(details.filter(Boolean)));
+  }, [clients]);
+
+  function save(list) {
+    setSubventions(list);
+    try { localStorage.setItem('pk_subventions', JSON.stringify(list)); } catch {}
+  }
+
+  function createSub() {
+    const modele = MODELES_SUBVENTIONS.find(m => m.id === newSub.modele_id);
+    const client = clients.find(c => c.slug === newSub.client_slug);
+    const sub = {
+      id: `sub_${Date.now()}`,
+      ...newSub,
+      modele_nom: modele?.nom || '',
+      client_nom: client?.nom || '',
+      created_at: new Date().toISOString(),
+    };
+    save([sub, ...subventions]);
+    setShowNew(false);
+    setNewSub({ modele_id: '', client_slug: '', projet_nom: '', montant_sollicite: '', statut: 'À préparer', notes: '', deadline: '', organisme: '' });
+  }
+
+  const STATUTS = ['À préparer', 'En cours', 'Déposée', 'En instruction', 'Accordée', 'Refusée', 'Versée'];
+  const STATUT_COLORS = {
+    'À préparer': { bg: 'var(--surface2)', c: 'var(--text3)' },
+    'En cours': { bg: 'var(--pk-blue-light)', c: 'var(--pk-blue)' },
+    'Déposée': { bg: '#FFF3E0', c: '#E65100' },
+    'En instruction': { bg: 'var(--warn-light)', c: 'var(--warn)' },
+    'Accordée': { bg: 'var(--success-light)', c: 'var(--success)' },
+    'Versée': { bg: 'var(--success-light)', c: 'var(--success)' },
+    'Refusée': { bg: 'var(--danger-light)', c: 'var(--danger)' },
+  };
+
+  const selectedClient = clientsDetails.find(c => c.slug === newSub.client_slug);
+  const projetsClient = selectedClient?.projets || [];
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div className="tabs" style={{ marginBottom: 0 }}>
+          {[['catalogue', '📚 Catalogue modèles'], ['suivi', `📊 Suivi (${subventions.length})`]].map(([k,l]) => (
+            <button key={k} className={`tab ${tab===k?'active':''}`} onClick={() => setTab(k)}>{l}</button>
+          ))}
+        </div>
+        {tab === 'suivi' && (
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Nouvelle demande</button>
+        )}
+      </div>
+
+      {/* ── CATALOGUE ── */}
+      {tab === 'catalogue' && (
+        <div>
+          {selectedModele ? (
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                <button className="btn" onClick={() => setSelectedModele(null)}>← Retour</button>
+                <div style={{ fontSize: 28 }}>{selectedModele.icone}</div>
+                <div>
+                  <div style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 700, fontSize: 15, color: selectedModele.couleur }}>{selectedModele.nom}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)' }}>{selectedModele.organisme}</div>
+                </div>
+              </div>
+
+              <div className="grid-2" style={{ marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>Informations clés</div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}><strong>Type :</strong> {selectedModele.type}</div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}><strong>Deadline indicative :</strong> {selectedModele.deadline_indicative}</div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}><strong>Montant max :</strong> {selectedModele.montant_max.toLocaleString('fr-FR')} €</div>
+                  <div style={{ fontSize: 13, marginBottom: 12 }}>{selectedModele.description}</div>
+                  {selectedModele.url && (
+                    <a href={selectedModele.url} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: 'var(--pk-blue)' }}>🔗 Accéder au formulaire</a>
+                  )}
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>Pièces justificatives</div>
+                  {selectedModele.pieces.map((p, i) => (
+                    <div key={i} style={{ fontSize: 12, padding: '5px 0', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--pk-orange)' }}>📄</span> {p}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>Champs du formulaire</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {selectedModele.champs.map((c, i) => (
+                    <span key={i} style={{ background: 'var(--surface2)', color: 'var(--text2)', padding: '3px 10px', borderRadius: 12, fontSize: 12 }}>{c}</span>
+                  ))}
+                </div>
+              </div>
+
+              <button className="btn btn-primary" onClick={() => { setTab('suivi'); setShowNew(true); setNewSub(p => ({ ...p, modele_id: selectedModele.id, organisme: selectedModele.organisme })); }}>
+                + Créer une demande depuis ce modèle
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+              {MODELES_SUBVENTIONS.map(m => (
+                <div key={m.id} className="card" style={{ cursor: 'pointer', borderLeft: `4px solid ${m.couleur}` }}
+                  onClick={() => setSelectedModele(m)}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 8 }}>
+                    <div style={{ fontSize: 28, flexShrink: 0 }}>{m.icone}</div>
+                    <div>
+                      <div style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 700, fontSize: 13, color: m.couleur, marginBottom: 2 }}>{m.nom}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>{m.organisme}</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>{m.description}</div>
+                  <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+                    <span style={{ background: m.couleur + '15', color: m.couleur, padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>Jusqu'à {m.montant_max.toLocaleString('fr-FR')} €</span>
+                    <span style={{ color: 'var(--text3)' }}>⏰ {m.deadline_indicative}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SUIVI ── */}
+      {tab === 'suivi' && (
+        <div className="card">
+          {subventions.length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">🏛</div>
+              <div className="empty-text">Aucune demande de subvention. Utilisez le catalogue pour en créer une.</div>
+            </div>
+          ) : subventions.map(s => {
+            const sc = STATUT_COLORS[s.statut] || STATUT_COLORS['À préparer'];
+            return (
+              <div key={s.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3 }}>{s.modele_nom || s.organisme}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>
+                    {s.client_nom && <span style={{ color: 'var(--pk-blue)', fontWeight: 500 }}>{s.client_nom}</span>}
+                    {s.projet_nom && <span style={{ color: 'var(--text3)' }}> › {s.projet_nom}</span>}
+                  </div>
+                  {s.deadline && <div style={{ fontSize: 11, color: 'var(--warn)' }}>⏰ Deadline : {s.deadline}</div>}
+                  {s.notes && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3, fontStyle: 'italic' }}>{s.notes}</div>}
+                </div>
+                <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                  {s.montant_sollicite && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{Number(s.montant_sollicite).toLocaleString('fr-FR')} €</div>}
+                  <select style={{ fontSize: 11, padding: '3px 6px', border: `1px solid ${sc.c}40`, borderRadius: 6, background: sc.bg, color: sc.c, fontWeight: 600, cursor: 'pointer' }}
+                    value={s.statut}
+                    onChange={e => {
+                      const updated = subventions.map(x => x.id === s.id ? { ...x, statut: e.target.value } : x);
+                      save(updated);
+                    }}>
+                    {STATUTS.map(st => <option key={st} value={st}>{st}</option>)}
+                  </select>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal nouvelle demande */}
+      {showNew && (
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNew(false)}>
+          <div className="modal">
+            <div className="modal-title">🏛 Nouvelle demande de subvention</div>
+            <div className="form-group">
+              <label className="form-label">Modèle de subvention</label>
+              <select className="form-input" value={newSub.modele_id} onChange={e => {
+                const m = MODELES_SUBVENTIONS.find(x => x.id === e.target.value);
+                setNewSub(p => ({ ...p, modele_id: e.target.value, organisme: m?.organisme || '' }));
+              }}>
+                <option value="">— Choisir un modèle —</option>
+                {MODELES_SUBVENTIONS.map(m => <option key={m.id} value={m.id}>{m.icone} {m.nom}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Client bénéficiaire</label>
+              <select className="form-input" value={newSub.client_slug} onChange={e => setNewSub(p => ({ ...p, client_slug: e.target.value, projet_nom: '' }))}>
+                <option value="">— Aucun client —</option>
+                {clients.map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
+              </select>
+            </div>
+            {projetsClient.length > 0 && (
+              <div className="form-group">
+                <label className="form-label">Projet associé</label>
+                <select className="form-input" value={newSub.projet_nom} onChange={e => setNewSub(p => ({ ...p, projet_nom: e.target.value }))}>
+                  <option value="">— Niveau association —</option>
+                  {projetsClient.map(p => <option key={p.slug} value={p.nom}>{p.nom}</option>)}
+                </select>
+              </div>
+            )}
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Montant sollicité (€)</label>
+                <input className="form-input" type="number" value={newSub.montant_sollicite} onChange={e => setNewSub(p => ({ ...p, montant_sollicite: e.target.value }))} placeholder="3000" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Deadline de dépôt</label>
+                <input className="form-input" type="date" value={newSub.deadline} onChange={e => setNewSub(p => ({ ...p, deadline: e.target.value }))} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Notes / contexte</label>
+              <textarea className="form-input" rows={2} value={newSub.notes} onChange={e => setNewSub(p => ({ ...p, notes: e.target.value }))} placeholder="Dossier n°, contact instructeur..." style={{ resize: 'vertical' }} />
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowNew(false)}>Annuler</button>
+              <button className="btn btn-primary" onClick={createSub} disabled={!newSub.modele_id && !newSub.organisme}>Créer →</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Annuaire ──────────────────────────────────────────────────────────────────
+
+function AnnuaireView() {
+  const [tab, setTab] = useState('interne');
+  const [contacts, setContacts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pk_contacts_internes') || '[]'); } catch { return []; }
+  });
+  const [diffusion, setDiffusion] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pk_contacts_diffusion') || '[]'); } catch { return []; }
+  });
+  const [showNew, setShowNew] = useState(false);
+  const [showNewDiff, setShowNewDiff] = useState(false);
+  const [newContact, setNewContact] = useState({ nom: '', prenom: '', email: '', telephone: '', organisation: '', role: '', note: '' });
+  const [newDiff, setNewDiff] = useState({ nom: '', email: '', liste: 'generale', organisation: '' });
+  const [search, setSearch] = useState('');
+
+  function saveContacts(list) { setContacts(list); try { localStorage.setItem('pk_contacts_internes', JSON.stringify(list)); } catch {} }
+  function saveDiffusion(list) { setDiffusion(list); try { localStorage.setItem('pk_contacts_diffusion', JSON.stringify(list)); } catch {} }
+
+  function addContact() {
+    if (!newContact.email) return;
+    saveContacts([{ id: Date.now(), ...newContact, created_at: new Date().toISOString(), source: 'manuel' }, ...contacts]);
+    setShowNew(false);
+    setNewContact({ nom: '', prenom: '', email: '', telephone: '', organisation: '', role: '', note: '' });
+  }
+  function addDiffusion() {
+    if (!newDiff.email) return;
+    saveDiffusion([{ id: Date.now(), ...newDiff, created_at: new Date().toISOString() }, ...diffusion]);
+    setShowNewDiff(false);
+    setNewDiff({ nom: '', email: '', liste: 'generale', organisation: '' });
+  }
+
+  const filteredContacts = contacts.filter(c =>
+    !search || [c.nom, c.prenom, c.email, c.organisation].some(v => v?.toLowerCase().includes(search.toLowerCase()))
+  );
+  const filteredDiff = diffusion.filter(c =>
+    !search || [c.nom, c.email, c.organisation].some(v => v?.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const LISTES = { generale: { label: 'Générale', color: 'var(--pk-blue)' }, partenaires: { label: 'Partenaires', color: '#6A1B9A' }, presse: { label: 'Presse', color: '#E65100' }, artistes: { label: 'Artistes', color: 'var(--pk-orange)' }, institutions: { label: 'Institutions', color: 'var(--success)' } };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div className="tabs" style={{ marginBottom: 0 }}>
+          {[['interne', `📋 Annuaire interne (${contacts.length})`], ['diffusion', `📨 Liste de diffusion (${diffusion.length})`]].map(([k,l]) => (
+            <button key={k} className={`tab ${tab===k?'active':''}`} onClick={() => setTab(k)}>{l}</button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input className="form-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 180 }} />
+          {tab === 'interne' && <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Contact</button>}
+          {tab === 'diffusion' && <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNewDiff(true)}>+ Abonné</button>}
+        </div>
+      </div>
+
+      {/* ── ANNUAIRE INTERNE ── */}
+      {tab === 'interne' && (
+        <div>
+          <div className="card" style={{ marginBottom: 12, background: 'var(--pk-blue-light)', border: '1px solid var(--pk-blue)20' }}>
+            <div style={{ fontSize: 12, color: 'var(--pk-blue)' }}>
+              <strong>💡 Annuaire interne :</strong> contacts professionnels d'Océane (partenaires, financeurs, artistes, institutions...). 
+              Intégration scan de boîte mail à venir — chaque nouveau contact pourra être accepté ou refusé avant intégration.
+            </div>
+          </div>
+
+          {filteredContacts.length === 0 ? (
+            <div className="card"><div className="empty"><div className="empty-icon">📋</div><div className="empty-text">{search ? 'Aucun résultat.' : 'Aucun contact. Ajoutez-en un ou connectez votre boîte mail.'}</div></div></div>
+          ) : (
+            <div className="card">
+              {filteredContacts.map(c => (
+                <div key={c.id} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+                  <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Josefin Sans', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                    {(c.prenom?.[0] || '') + (c.nom?.[0] || '')}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{c.prenom} {c.nom}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>{c.role}{c.organisation ? ` · ${c.organisation}` : ''}</div>
+                    <div style={{ fontSize: 11, color: 'var(--pk-blue)' }}>{c.email}</div>
+                  </div>
+                  {c.telephone && <div style={{ fontSize: 12, color: 'var(--text3)' }}>{c.telephone}</div>}
+                  <button onClick={() => saveContacts(contacts.filter(x => x.id !== c.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── LISTE DE DIFFUSION ── */}
+      {tab === 'diffusion' && (
+        <div>
+          <div className="card" style={{ marginBottom: 12, background: 'var(--pk-orange-light)', border: '1px solid var(--pk-orange)20' }}>
+            <div style={{ fontSize: 12, color: 'var(--pk-orange)' }}>
+              <strong>📨 Liste de diffusion :</strong> contacts pour vos futures campagnes emailing (newsletter, invitations, appels à candidatures...).
+              Chaque contact est segmenté par liste. Export CSV disponible pour vos outils d'emailing (Mailchimp, Brevo...).
+            </div>
+          </div>
+
+          {/* Stats par liste */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            {Object.entries(LISTES).map(([key, { label, color }]) => {
+              const count = diffusion.filter(c => c.liste === key).length;
+              if (!count) return null;
+              return <span key={key} style={{ background: color + '15', color, padding: '4px 12px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>{label} : {count}</span>;
+            })}
+          </div>
+
+          {filteredDiff.length === 0 ? (
+            <div className="card"><div className="empty"><div className="empty-icon">📨</div><div className="empty-text">{search ? 'Aucun résultat.' : 'Aucun abonné.'}</div></div></div>
+          ) : (
+            <div className="card">
+              {/* Export CSV */}
+              <div style={{ marginBottom: 12, textAlign: 'right' }}>
+                <button className="btn" style={{ fontSize: 11 }} onClick={() => {
+                  const csv = ['Nom,Email,Organisation,Liste', ...filteredDiff.map(c => `${c.nom},${c.email},${c.organisation || ''},${c.liste}`)].join('
+');
+                  const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+                  a.download = 'liste_diffusion_pausekreyol.csv'; a.click();
+                }}>⬇️ Exporter CSV</button>
+              </div>
+              {filteredDiff.map(c => {
+                const listInfo = LISTES[c.liste] || LISTES.generale;
+                return (
+                  <div key={c.id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{c.nom}</div>
+                      <div style={{ fontSize: 11, color: 'var(--pk-blue)' }}>{c.email}</div>
+                      {c.organisation && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{c.organisation}</div>}
+                    </div>
+                    <span style={{ background: listInfo.color + '15', color: listInfo.color, padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600 }}>{listInfo.label}</span>
+                    <button onClick={() => saveDiffusion(diffusion.filter(x => x.id !== c.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal contact interne */}
+      {showNew && (
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNew(false)}>
+          <div className="modal">
+            <div className="modal-title">📋 Nouveau contact</div>
+            <div className="form-grid">
+              <div className="form-group"><label className="form-label">Prénom</label><input className="form-input" value={newContact.prenom} onChange={e => setNewContact(p=>({...p,prenom:e.target.value}))} /></div>
+              <div className="form-group"><label className="form-label">Nom</label><input className="form-input" value={newContact.nom} onChange={e => setNewContact(p=>({...p,nom:e.target.value}))} /></div>
+            </div>
+            <div className="form-group"><label className="form-label">Email *</label><input className="form-input" type="email" value={newContact.email} onChange={e => setNewContact(p=>({...p,email:e.target.value}))} /></div>
+            <div className="form-grid">
+              <div className="form-group"><label className="form-label">Téléphone</label><input className="form-input" value={newContact.telephone} onChange={e => setNewContact(p=>({...p,telephone:e.target.value}))} /></div>
+              <div className="form-group"><label className="form-label">Organisation</label><input className="form-input" value={newContact.organisation} onChange={e => setNewContact(p=>({...p,organisation:e.target.value}))} /></div>
+            </div>
+            <div className="form-group"><label className="form-label">Rôle / Fonction</label><input className="form-input" value={newContact.role} onChange={e => setNewContact(p=>({...p,role:e.target.value}))} /></div>
+            <div className="form-group"><label className="form-label">Note</label><input className="form-input" value={newContact.note} onChange={e => setNewContact(p=>({...p,note:e.target.value}))} /></div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowNew(false)}>Annuler</button>
+              <button className="btn btn-primary" onClick={addContact} disabled={!newContact.email}>Ajouter →</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal abonné diffusion */}
+      {showNewDiff && (
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNewDiff(false)}>
+          <div className="modal">
+            <div className="modal-title">📨 Nouvel abonné</div>
+            <div className="form-group"><label className="form-label">Nom</label><input className="form-input" value={newDiff.nom} onChange={e => setNewDiff(p=>({...p,nom:e.target.value}))} /></div>
+            <div className="form-group"><label className="form-label">Email *</label><input className="form-input" type="email" value={newDiff.email} onChange={e => setNewDiff(p=>({...p,email:e.target.value}))} /></div>
+            <div className="form-group"><label className="form-label">Organisation</label><input className="form-input" value={newDiff.organisation} onChange={e => setNewDiff(p=>({...p,organisation:e.target.value}))} /></div>
+            <div className="form-group">
+              <label className="form-label">Liste</label>
+              <select className="form-input" value={newDiff.liste} onChange={e => setNewDiff(p=>({...p,liste:e.target.value}))}>
+                {Object.entries(LISTES).map(([k,{label}]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowNewDiff(false)}>Annuler</button>
+              <button className="btn btn-primary" onClick={addDiffusion} disabled={!newDiff.email}>Ajouter →</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   // ── Auth ────────────────────────────────────────────────────────────────
   const [authed, setAuthed] = useState(() => sessionStorage.getItem('pk_auth') === '1');
@@ -4240,12 +5009,13 @@ function AppContent() {
     { key: 'clients', label: 'Dossiers clients', icon: icons.clients },
     { key: 'taches', label: 'Tâches', icon: icons.taches, badge: urgentCount || null },
     { key: 'devis', label: 'Devis & Factures', icon: icons.subventions },
+    { key: 'subventions', label: 'Subventions', icon: icons.alertes },
+    { key: 'annuaire', label: 'Annuaire', icon: icons.comm },
     { key: 'calendrier', label: 'Calendriers', icon: icons.calendrier },
-    { key: 'comm', label: 'Comm', icon: icons.comm },
-    { key: 'alertes', label: 'Alertes', icon: icons.alertes, badge: data?.nb_alertes_urgentes || null },
+    { key: 'comm', label: 'Comm & Assets', icon: icons.comm },
   ];
 
-  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', calendrier: 'Calendriers', comm: 'Communication', alertes: 'Alertes conformité' };
+  const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', subventions: 'Subventions', annuaire: 'Annuaire', calendrier: 'Calendriers', comm: 'Communication' };
 
   return (
     <div className="app">
@@ -4310,6 +5080,8 @@ function AppContent() {
           {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
           {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
           {view === 'devis' && <DevisFacturesView />}
+          {view === 'subventions' && <SubventionsView clients={data?.clients || []} />}
+          {view === 'annuaire' && <AnnuaireView />}
           {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} />}
           {view === 'comm' && <CommView clients={data?.clients || []} />}
           {view === 'subventions' && <SubventionsView />}
