@@ -47,6 +47,151 @@ def run_gmail_agent():
         logger.error(f"Erreur agent Gmail : {e}")
 
 
+def _check_relances_auto():
+    """
+    Job planifié toutes les 12h : vérifie les échéances devis/factures
+    et crée les tâches de relance J-7, J-1, J, J+7 si pas encore créées.
+    """
+    try:
+        today = datetime.now().date()
+        devis = _load_devis()
+        factures = _load_factures()
+        tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+        existing_task_refs = {t.get("facture_id") or t.get("devis_id") for t in tasks}
+
+        new_tasks = []
+
+        # Relances factures : J-7, J-1, J, J+7
+        for f in factures:
+            if f.get("statut") not in ("envoyée",):
+                continue
+            if not f.get("date_echeance"):
+                continue
+            try:
+                echeance = datetime.strptime(f["date_echeance"], "%d/%m/%Y").date()
+            except Exception:
+                continue
+            diff = (echeance - today).days
+            fid = f["id"]
+            nom = f.get("client_nom", "?")
+            numero = f.get("numero", "?")
+            montant = f.get("total_ht", 0)
+            montant_maj = round(montant * 1.10, 2)
+
+            # Vérifie que la tâche pour ce jour précis n'existe pas
+            jour_key = f"relance_{fid}_{diff}j"
+            existing_keys = {t.get("jour_key") for t in tasks}
+
+            if diff == 7 and jour_key not in existing_keys:
+                new_tasks.append({
+                    "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_r7",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "Scheduler", "categorie": "finance",
+                    "titre": f"Relance paiement J-7 — {nom} ({numero})",
+                    "priorite": "Attention",
+                    "description": f"Facture {numero} ({montant}€) à échéance dans 7 jours ({f['date_echeance']}).",
+                    "client_slug": f.get("client_slug"), "client_nom": nom,
+                    "facture_id": fid, "jour_key": jour_key, "done": False, "auto": True,
+                })
+            elif diff == 1 and jour_key not in existing_keys:
+                new_tasks.append({
+                    "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_r1",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "Scheduler", "categorie": "finance",
+                    "titre": f"⚠️ Relance paiement J-1 — {nom} ({numero})",
+                    "priorite": "URGENT",
+                    "description": f"Facture {numero} ({montant}€) expire DEMAIN ({f['date_echeance']}). Pénalités : {montant_maj}€ si retard.",
+                    "client_slug": f.get("client_slug"), "client_nom": nom,
+                    "facture_id": fid, "jour_key": jour_key, "done": False, "auto": True,
+                })
+            elif diff == 0 and jour_key not in existing_keys:
+                new_tasks.append({
+                    "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_r0",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "Scheduler", "categorie": "finance",
+                    "titre": f"🚨 Facture impayée aujourd'hui — {nom} ({numero})",
+                    "priorite": "URGENT",
+                    "description": f"Facture {numero} ({montant}€) arrive à échéance AUJOURD'HUI. Pénalités applicables : +{montant_maj}€.",
+                    "client_slug": f.get("client_slug"), "client_nom": nom,
+                    "facture_id": fid, "jour_key": jour_key, "done": False, "auto": True,
+                })
+            elif diff == -7 and jour_key not in existing_keys:
+                # J+7 : crée aussi la facture de majoration
+                facture_maj = _create_facture_majoration(f)
+                new_tasks.append({
+                    "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_r_7",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "Scheduler", "categorie": "finance",
+                    "titre": f"🚨 URGENT — Impayé J+7 — {nom} ({numero})",
+                    "priorite": "URGENT",
+                    "description": (
+                        f"Facture {numero} impayée depuis 7 jours. "
+                        f"Facture majoration 10% créée ({facture_maj['numero']}). "
+                        f"Procédure de recouvrement à engager."
+                    ),
+                    "client_slug": f.get("client_slug"), "client_nom": nom,
+                    "facture_id": fid, "facture_maj_id": facture_maj["id"],
+                    "jour_key": jour_key, "done": False, "auto": True,
+                })
+
+        # Relances devis : date limite signature dépassée
+        for d in devis:
+            if d.get("statut") != "envoyé" or d.get("archived"):
+                continue
+            if not d.get("date_limite_signature"):
+                continue
+            try:
+                limite = datetime.strptime(d["date_limite_signature"], "%d/%m/%Y").date()
+            except Exception:
+                continue
+            diff = (limite - today).days
+            did = d["id"]
+            nom = d.get("client_nom", "?")
+            numero = d.get("numero", "?")
+            jour_key = f"relance_devis_{did}_{diff}j"
+            existing_keys = {t.get("jour_key") for t in tasks}
+            if diff == 3 and jour_key not in existing_keys:
+                new_tasks.append({
+                    "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_rd3",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "Scheduler", "categorie": "devis",
+                    "titre": f"Relancer devis J-3 — {nom} ({numero})",
+                    "priorite": "Attention",
+                    "description": f"Le devis {numero} expire dans 3 jours ({d['date_limite_signature']}). Relancer {nom}.",
+                    "client_slug": d.get("client_slug"), "devis_id": did,
+                    "jour_key": jour_key, "done": False, "auto": True,
+                })
+
+        if new_tasks:
+            tasks.extend(new_tasks)
+            _save_tasks(tasks)
+            logger.info(f"Scheduler relances : {len(new_tasks)} tâche(s) créée(s)")
+        else:
+            logger.info("Scheduler relances : aucune nouvelle tâche")
+
+    except Exception as e:
+        logger.error(f"Erreur scheduler relances : {e}")
+
+
+def _restore_devis_factures_drive():
+    """Restore nightly devis.json + factures.json from Drive if needed."""
+    try:
+        if os.getenv("ENV") != "production":
+            return
+        from engine.drive_storage import drive_download_json, drive_upload_json, get_root_folder_id
+        root_id = get_root_folder_id()
+        # Sync local → Drive (backup)
+        if DEVIS_FILE.exists():
+            devis = json.loads(DEVIS_FILE.read_text())
+            drive_upload_json(devis, "devis.json", root_id)
+        if FACTURES_FILE.exists():
+            factures = json.loads(FACTURES_FILE.read_text())
+            drive_upload_json(factures, "factures.json", root_id)
+        logger.info("Backup nightly devis.json + factures.json → Drive OK")
+    except Exception as e:
+        logger.warning(f"Backup Drive nightly : {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Crée le dossier clients/ au démarrage
@@ -113,8 +258,10 @@ async def lifespan(app: FastAPI):
     if env == "production" and gmail_token:
         scheduler = BackgroundScheduler()
         scheduler.add_job(run_gmail_agent, "interval", minutes=5, id="gmail_agent")
+        scheduler.add_job(_check_relances_auto, "interval", hours=12, id="relances_auto")
+        scheduler.add_job(_restore_devis_factures_drive, "cron", hour=3, minute=0, id="restore_drive_nightly")
         scheduler.start()
-        logger.info("Agent Gmail démarré — cycle toutes les 5 minutes")
+        logger.info("Scheduler démarré — Gmail 5min, Relances 12h, Restore Drive 3h00")
     else:
         logger.warning(f"Agent Gmail NON démarré — ENV={env}, token={'ok' if gmail_token else 'MANQUANT'}")
     yield
@@ -670,6 +817,20 @@ def _retroaction_projet_asso(meta: dict, projet: dict, client_dir, meta_path) ->
     _save_tasks(tasks)
 
     logger.info(f"Rétroaction : {nom_projet} réalisé — tâche MAJ bilan asso créée")
+
+    # Sync Drive automatique du client.json mis à jour
+    try:
+        if os.getenv("ENV") == "production":
+            from engine.drive_storage import drive_find_file, drive_update_json
+            folder_id = meta.get("drive_folder_id", "")
+            if folder_id:
+                file_id = drive_find_file("client.json", folder_id)
+                if file_id:
+                    drive_update_json(file_id, meta)
+                    logger.info(f"Drive sync client.json après réalisation {nom_projet}")
+    except Exception as e:
+        logger.warning(f"Drive sync rétroaction : {e}")
+
     return {
         "tache_creee": True,
         "total_accorde": total_accorde,
@@ -1570,12 +1731,21 @@ def _save_factures(factures: list):
             logger.warning(f"Drive sync factures.json : {e}")
 
 
-def _next_numero_devis() -> str:
+def _next_numero_devis(client_slug: str = "") -> str:
+    """Numéro de devis par client : D{YEAR}-{CLIENT_INITIALS}-{N:03d}"""
     year = datetime.now().year
     devis = _load_devis()
-    this_year = [d for d in devis if str(d.get("annee", "")) == str(year)]
-    n = len(this_year) + 1
-    return f"D{year}-{n:03d}"
+    # Filtre par client si fourni, sinon global
+    if client_slug:
+        same = [d for d in devis if str(d.get("annee", "")) == str(year) and d.get("client_slug", "") == client_slug]
+        # Initiales du slug (3 chars)
+        initials = "".join(c.upper() for c in client_slug if c.isalpha())[:3] or "CLI"
+        n = len(same) + 1
+        return f"D{year}-{initials}-{n:03d}"
+    else:
+        this_year = [d for d in devis if str(d.get("annee", "")) == str(year)]
+        n = len(this_year) + 1
+        return f"D{year}-{n:03d}"
 
 
 def _next_numero_facture() -> str:
@@ -1724,7 +1894,7 @@ def create_devis(body: dict):
 
     new_devis = {
         "id": f"devis_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        "numero": body.get("numero") or _next_numero_devis(),
+        "numero": body.get("numero") or _next_numero_devis(body.get("client_slug", "")),
         "annee": datetime.now().year,
         "created_at": datetime.now().isoformat(),
         "client_slug": body.get("client_slug", ""),
@@ -1912,6 +2082,43 @@ def update_devis(devis_id: str, body: dict):
 
 
 # ── Routes factures ───────────────────────────────────────────────────────────
+
+@app.delete("/devis/{devis_id}")
+def delete_devis(devis_id: str):
+    """Supprime définitivement un devis (ou l'archive si facture liée)."""
+    devis = _load_devis()
+    d = next((x for x in devis if x["id"] == devis_id), None)
+    if not d:
+        raise HTTPException(status_code=404, detail="Devis non trouvé")
+    if d.get("factures_liees"):
+        # Si facture liée, archive plutôt que suppression
+        d["archived"] = True
+        d["annulation_marker"] = "🗑 ARCHIVÉ"
+        d.setdefault("historique", []).append({"statut": "archivé_manuellement", "date": datetime.now().isoformat()})
+        _save_devis(devis)
+        return {"status": "archived", "reason": "factures_liées_conservées"}
+    devis = [x for x in devis if x["id"] != devis_id]
+    _save_devis(devis)
+    return {"status": "deleted"}
+
+
+@app.delete("/factures/{facture_id}")
+def delete_facture(facture_id: str):
+    """Supprime une facture (si non payée) ou l'annule (si payée)."""
+    factures = _load_factures()
+    f = next((x for x in factures if x["id"] == facture_id), None)
+    if not f:
+        raise HTTPException(status_code=404, detail="Facture non trouvée")
+    if f.get("statut") == "payée":
+        # Ne peut pas supprimer une facture payée — on l'annule
+        f["statut"] = "annulée"
+        f["date_annulation"] = datetime.now().strftime("%d/%m/%Y")
+        f.setdefault("historique", []).append({"statut": "annulée", "date": datetime.now().isoformat()})
+        _save_factures(factures)
+        return {"status": "annulée", "reason": "facture_payée_ne_peut_être_supprimée"}
+    factures = [x for x in factures if x["id"] != facture_id]
+    _save_factures(factures)
+    return {"status": "deleted"}
 
 @app.get("/factures")
 def get_all_factures():
