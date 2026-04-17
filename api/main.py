@@ -205,6 +205,11 @@ def _restore_devis_factures_drive():
             if ann_data:
                 ANNUAIRE_FILE.parent.mkdir(parents=True, exist_ok=True)
                 ANNUAIRE_FILE.write_text(json.dumps(ann_data, ensure_ascii=False, indent=2))
+        if not CAMPAIGNS_FILE.exists():
+            camp_data = drive_download_json("campaigns.json", root_id)
+            if camp_data:
+                CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                CAMPAIGNS_FILE.write_text(json.dumps(camp_data, ensure_ascii=False, indent=2))
 
         # Backup local → Drive
         if DEVIS_FILE.exists():
@@ -242,6 +247,13 @@ def _restore_devis_factures_drive():
                 drive_update_json(fid, annuaire)
             else:
                 drive_upload_json(annuaire, "annuaire.json", root_id)
+        if CAMPAIGNS_FILE.exists():
+            campaigns = json.loads(CAMPAIGNS_FILE.read_text())
+            fid = drive_find_file("campaigns.json", root_id)
+            if fid:
+                drive_update_json(fid, campaigns)
+            else:
+                drive_upload_json(campaigns, "campaigns.json", root_id)
         logger.info("Sync nightly globale ↔ Drive OK")
     except Exception as e:
         logger.warning(f"Sync Drive nightly : {e}")
@@ -714,6 +726,7 @@ def root():
 TASKS_FILE = CLIENTS_DIR / "tasks.json"
 SUBVENTIONS_FILE = CLIENTS_DIR / "subventions.json"
 ANNUAIRE_FILE = CLIENTS_DIR / "annuaire.json"
+CAMPAIGNS_FILE = CLIENTS_DIR / "campaigns.json"
 
 def _load_subventions() -> list:
     if SUBVENTIONS_FILE.exists():
@@ -754,6 +767,26 @@ def _save_annuaire(annuaire: list):
                 drive_upload_json(annuaire, "annuaire.json", root_id)
         except Exception as e:
             logger.warning(f"Drive sync annuaire.json : {e}")
+
+def _load_campaigns() -> list:
+    if CAMPAIGNS_FILE.exists():
+        return json.loads(CAMPAIGNS_FILE.read_text())
+    return []
+
+def _save_campaigns(campaigns: list):
+    CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CAMPAIGNS_FILE.write_text(json.dumps(campaigns, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("campaigns.json", root_id)
+            if file_id:
+                drive_update_json(file_id, campaigns)
+            else:
+                drive_upload_json(campaigns, "campaigns.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync campaigns.json : {e}")
 
 def _save_tasks(tasks: list):
     """Sauvegarde tasks.json localement et sur Drive."""
@@ -2953,3 +2986,121 @@ def delete_annuaire(contact_id: str):
     annuaire = [s for s in annuaire if s["id"] != contact_id]
     _save_annuaire(annuaire)
     return {"status": "ok"}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE EMAILING & STRATÉGIE (AI)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/campaigns")
+def get_campaigns():
+    return _load_campaigns()
+
+@app.post("/campaigns")
+def post_campaigns(data: dict):
+    campaigns = _load_campaigns()
+    from datetime import datetime
+    if "id" not in data:
+        data["id"] = f"camp_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        data["created_at"] = datetime.now().isoformat()
+    # Default status and metrics
+    if "statut" not in data:
+        data["statut"] = "brouillon"
+    campaigns.insert(0, data)
+    _save_campaigns(campaigns)
+    return data
+
+@app.patch("/campaigns/{comp_id}")
+def patch_campaign(comp_id: str, data: dict):
+    campaigns = _load_campaigns()
+    updated = None
+    for i, s in enumerate(campaigns):
+        if s["id"] == comp_id:
+            campaigns[i].update(data)
+            updated = campaigns[i]
+            break
+    if not updated:
+        raise HTTPException(status_code=404, detail="Campagne non trouvée")
+    _save_campaigns(campaigns)
+    return updated
+
+@app.delete("/campaigns/{comp_id}")
+def delete_campaign(comp_id: str):
+    campaigns = _load_campaigns()
+    campaigns = [s for s in campaigns if s["id"] != comp_id]
+    _save_campaigns(campaigns)
+    return {"status": "ok"}
+
+
+@app.post("/ai/emailing/generate")
+def ai_emailing_generate(data: dict):
+    system_prompt = """Tu es un expert en webmarketing, copywriting et e-mailing pour PauseKreyol (société de gestion administrative et stratégique B2B en industrie culturelle).
+Tu dois rédiger un brouillon parfait de newsletter ou de campagne e-mailing en respectant les règles d'or du Storytelling (Structure AIDA : Attirer l'attention, Créer de l'intérêt, Susciter du Désir, Pousser à l'Action) et le plan stratégique de la marque.
+Sois structuré, engageant et professionnel mais chaleureux.
+Mets toujours en place 3 propositions d'objets d'email très accrocheurs tout en haut, puis le corps complet de l'email.
+Formate ton rendu en un beau fichier Markdown clair."""
+
+    import anthropic as anthropic_sdk
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY manquante dans le .env")
+    
+    ai = anthropic_sdk.Anthropic(api_key=api_key)
+    user_msg = f"Sujet / Thème principal : {data.get('sujet')}\nCible visée : {data.get('cible')}\nObjectif attendu : {data.get('objectif')}\n\nRédige l'email."
+    
+    try:
+        resp = ai.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=2500,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_msg}]
+        )
+        return {"result": resp.content[0].text}
+    except Exception as e:
+        logger.error(f"Erreur API Emailing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ai/strategie/analyze")
+def ai_strategie_analyze(data: dict):
+    # Charge le panorama métrique pour injecter dans le contexte
+    factures = _load_factures()
+    en_retard = sum(1 for f in factures if f.get("statut") == "en_retard")
+    ca_encaisse = sum(f.get("total_ht", 0) for f in factures if f.get("statut") == "payée")
+    ca_attendu = sum(f.get("solde_a_payer", 0) for f in factures if f.get("statut") in ("envoyée", "en_retard"))
+    clients = list_clients()
+    nb_clients = len(clients)
+
+    system_prompt = f"""Tu es un Senior Consultant en stratégie de croissance d'entreprise, et spécifiquement le 'Chief Strategy Officer' IA d'un cabinet appelé PauseKreyol (gestion administrative, B2B, industrie culturelle, etc.).
+Voici le contexte de l'entreprise (données réelles mesurées en temps réel) :
+- Nombre de dossiers clients : {nb_clients}
+- CA Encaissé (Factures payées) : {ca_encaisse} €
+- CA en attente de paiement : {ca_attendu} €
+- Nombre de factures actuellement en retard client : {en_retard}
+
+L'utilisatrice te demandera des bilans, des synthèses ou des idées pour :
+- Développer son CA.
+- Optimiser sa trésorerie ou ses relances.
+- Suggérer de nouvelles offres, ou pivoter.
+- Améliorer sa visibilité selon des stratégies de communication (sur les réseaux ou en 10 étapes structurées).
+
+Sois incisif, analytique et apporte une très forte valeur ajoutée B2B (évite les conseils lisses, donne des hacks/stratégies concrètes). Utilise beaucoup de Markdown (Titrage riche, émojis professionnels, puces) car le résultat sera lu dans un outil de tableau de bord de pilotage."""
+
+    import anthropic as anthropic_sdk
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY manquante dans le .env")
+    
+    ai = anthropic_sdk.Anthropic(api_key=api_key)
+    user_msg = data.get("prompt", "Génère un diagnostic flash de ma situation financière et propose moi 3 actions prioritaires pour augmenter mon CA sans engorger mon temps de travail.")
+    
+    try:
+        resp = ai.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=3000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_msg}]
+        )
+        return {"result": resp.content[0].text}
+    except Exception as e:
+        logger.error(f"Erreur API Strategie: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
