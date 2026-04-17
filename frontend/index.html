@@ -2279,32 +2279,73 @@ function AddSubventionModal({ onClose, onAdd }) {
 // ── Clients view ──────────────────────────────────────────────────────────────
 
 function ClientsView({ clients, onNewClient, onOpenClient }) {
+  const [search, setSearch] = useState('');
+
+  const filtered = clients.filter(c =>
+    !search || c.nom?.toLowerCase().includes(search.toLowerCase()) ||
+    c.siret?.includes(search)
+  );
+
   return (
     <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, color: 'var(--text3)' }}>{clients.length} dossier(s) client</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input className="form-input" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 180 }} />
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={onNewClient}>+ Nouveau client</button>
+        </div>
+      </div>
+
       <div className="card">
-        {clients.length === 0 && (
+        {filtered.length === 0 && (
           <div className="empty" style={{ padding: '40px 20px' }}>
             <div className="empty-icon">📁</div>
-            <div className="empty-text" style={{ marginBottom: 8 }}>Aucun dossier client</div>
-            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, maxWidth: 320, textAlign: 'center' }}>
-              Pour créer un dossier, envoyez la fiche de renseignements au client, puis importez-la une fois complétée.
-            </div>
-            <button className="btn btn-primary" onClick={onNewClient}>+ Créer un premier dossier</button>
+            <div className="empty-text" style={{ marginBottom: 8 }}>{search ? 'Aucun résultat.' : 'Aucun dossier client'}</div>
+            {!search && (
+              <>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, maxWidth: 320, textAlign: 'center' }}>
+                  Créez un dossier ou importez l'historique via Devis & Factures → 📥 Historique Excel.
+                </div>
+                <button className="btn btn-primary" onClick={onNewClient}>+ Créer un premier dossier</button>
+              </>
+            )}
           </div>
         )}
-        {clients.map((c, i) => (
-          <div key={i} className="client-row" onClick={() => onOpenClient(c.slug)}>
-            <div className="client-avatar">{initials(c.nom)}</div>
-            <div className="client-info">
-              <div className="client-name">{c.nom}</div>
-              <div className="client-meta">{c.siret ? `SIRET ${c.siret} · ` : ''}{c.nb_projets} projet(s)</div>
+        {filtered.map((c, i) => {
+          // Récupère le logo s'il existe
+          const logo = localStorage.getItem(`pk_logo_${c.slug}`);
+          const typeIcon = c.type === 'sas_senegal' ? '🇸🇳' : '🇫🇷';
+          return (
+            <div key={i} className="client-row" onClick={() => onOpenClient(c.slug)}
+              style={{ cursor: 'pointer', padding: '12px 4px' }}>
+              {/* Avatar ou logo */}
+              {logo
+                ? <img src={logo} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain', border: '1px solid var(--border)', background: 'white', padding: 2, flexShrink: 0 }} />
+                : <div className="client-avatar" style={{ flexShrink: 0 }}>{initials(c.nom)}</div>
+              }
+              <div className="client-info" style={{ flex: 1 }}>
+                <div className="client-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>{c.nom}</span>
+                  <span style={{ fontSize: 12 }}>{typeIcon}</span>
+                </div>
+                <div className="client-meta">
+                  {c.nb_projets > 0 && <span>{c.nb_projets} projet(s)</span>}
+                  {c.siret && <span> · {c.siret.slice(0,9)}…</span>}
+                  {c.implantation && <span> · {c.implantation}</span>}
+                </div>
+              </div>
+              <div className="client-right" style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  {c.created_at?.slice(0, 7)}
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3l4 4-4 4" stroke="var(--text3)" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                </div>
+              </div>
             </div>
-            <div className="client-right">
-              <Badge statut="OK" />
-              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>depuis {c.created_at?.slice(0, 10)}</div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -2315,6 +2356,8 @@ function ClientsView({ clients, onNewClient, onOpenClient }) {
 function TachesView({ taches, setTaches }) {
   const [filterStatut, setFilterStatut] = useState('pending');
   const [filterCategorie, setFilterCategorie] = useState('all');
+  const [filterClient, setFilterClient] = useState('all');
+  const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '' });
 
@@ -2350,10 +2393,25 @@ function TachesView({ taches, setTaches }) {
   }
 
   // Filtre
+  const clientsUniques = [...new Set(taches.filter(t => t.client_detecte).map(t => t.client_detecte))].sort();
+
   const filtered = taches.filter(t => {
     const statutOk = filterStatut === 'all' ? true : filterStatut === 'pending' ? !t.done : t.done;
     const catOk = filterCategorie === 'all' ? true : catFor(t) === filterCategorie;
-    return statutOk && catOk;
+    const clientOk = filterClient === 'all' ? true : t.client_detecte === filterClient;
+    const searchOk = !search || [t.titre, t.client_detecte, t.description, t.projet_nom].some(v => v?.toLowerCase().includes(search.toLowerCase()));
+    return statutOk && catOk && clientOk && searchOk;
+  }).sort((a, b) => {
+    // Tri : URGENT d'abord, puis par deadline
+    const prio = { 'URGENT': 0, 'Attention': 1, 'Normal': 2 };
+    if (!a.done && !b.done) {
+      const pd = (prio[a.priorite]||2) - (prio[b.priorite]||2);
+      if (pd !== 0) return pd;
+      if (a.deadline && b.deadline) return a.deadline.localeCompare(b.deadline);
+      if (a.deadline) return -1;
+      if (b.deadline) return 1;
+    }
+    return 0;
   });
 
   // Compte par catégorie (non terminées)
@@ -2422,14 +2480,24 @@ function TachesView({ taches, setTaches }) {
   return (
     <div>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 600 }}>
             Tâches
             {urgentCount > 0 && <span style={{ marginLeft: 8, background: 'var(--danger)', color: 'white', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 }}>{urgentCount} urgentes</span>}
           </div>
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>{filtered.length} tâche(s) affichée(s)</div>
         </div>
-        <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Nouvelle tâche</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input className="form-input" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 160 }} />
+          <select className="form-input" style={{ fontSize: 12, padding: '5px 8px', width: 'auto' }}
+            value={filterClient} onChange={e => setFilterClient(e.target.value)}>
+            <option value="all">Tous clients</option>
+            {clientsUniques.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Nouvelle tâche</button>
+        </div>
       </div>
 
       {/* Filtres catégorie — chips horizontaux */}
@@ -3636,11 +3704,12 @@ function DevisFacturesView() {
   const listeDevis = (data?.liste_devis || []).filter(d =>
     (filterAnnee === 'tous' || String(d.annee) === String(filterAnnee)) &&
     (filterArchive ? d.archived : !d.archived)
-  );
+  ).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
   const listeFactures = (data?.liste_factures || []).filter(f =>
     (filterAnnee === 'tous' || String(f.annee) === String(filterAnnee)) &&
     (filterArchive ? ['annulée','en_retard'].includes(f.statut) && f.archived : !f.archived)
-  );
+  ).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
   return (
     <div>
@@ -4150,56 +4219,7 @@ function NewDevisModal({ onClose, onCreated, defaultClientSlug = '', defaultClie
 
 // ── Subventions pipeline view ─────────────────────────────────────────────────
 
-function SubventionsView() {
-  const COLS = ['À préparer', 'Déposée', 'En instruction', 'Accordée', 'Versée'];
-  return (
-    <div>
-      <div className="section-header">
-        <div className="section-title">Pipeline subventions</div>
-        <button className="btn btn-primary">+ Ajouter</button>
-      </div>
-      <div className="pipeline">
-        {COLS.map(col => (
-          <div key={col} className="pipeline-col">
-            <div className="pipeline-header">{col} <span style={{ opacity: 0.5 }}>(0)</span></div>
-            <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text3)', border: '1px dashed var(--border)', borderRadius: 6, textAlign: 'center' }}>
-              Aucune
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{ marginTop: 20, padding: 16, background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>
-        Le suivi des subventions sera connecté aux dossiers clients dans une prochaine version.
-      </div>
-    </div>
-  );
-}
 
-// ── Alertes view ──────────────────────────────────────────────────────────────
-
-function AlertesView({ data }) {
-  const alertes = data?.alertes || [];
-  return (
-    <div>
-      <div className="section-header">
-        <div className="section-title">Alertes conformité</div>
-      </div>
-      <div className="card">
-        {alertes.length === 0 && <div className="empty"><div className="empty-text">Aucune alerte.</div></div>}
-        {alertes.map((a, i) => (
-          <div key={i} className="alert-row">
-            <AlertDot statut={a.statut} />
-            <div style={{ flex: 1 }}>
-              <div className="alert-label">{a.organisme}</div>
-              <div className="alert-sub">{a.client} {a.date_expiration ? `— échéance : ${a.date_expiration}` : ''}</div>
-            </div>
-            <Badge statut={a.statut} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ── Modal nouveau client ──────────────────────────────────────────────────────
 
@@ -4444,13 +4464,14 @@ function NewClientModal({ onClose, onCreated }) {
 // ── Nav icons SVG ─────────────────────────────────────────────────────────────
 
 const icons = {
-  dashboard: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>,
-  clients: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M6 7a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M1 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/><path d="M12 5.5a2 2 0 1 1 0-4M15 14c0-2.2-1.4-4-3-4.5"/></svg>,
-  taches: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="2" y="2" width="12" height="12" rx="1.5"/><polyline points="5,8 7,10 11,6"/></svg>,
-  subventions: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M2 4h12M2 8h8M2 12h5"/><circle cx="12" cy="11" r="3"/><path d="M12 9.5v1.5l1 1"/></svg>,
-  alertes: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M8 1L1 14h14L8 1z"/><line x1="8" y1="6" x2="8" y2="9"/><circle cx="8" cy="12" r="0.5" fill="currentColor"/></svg>,
-  calendrier: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="3" width="14" height="12" rx="1.5"/><path d="M1 7h14M5 1v4M11 1v4"/></svg>,
-  comm: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><circle cx="8" cy="6" r="3"/><path d="M2 14c0-3.31 2.69-6 6-6s6 2.69 6 6"/><path d="M11 3l2-2M13 5l-2-2"/></svg>,
+  dashboard:    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>,
+  clients:      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M6 7a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M1 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/><path d="M12 5.5a2 2 0 1 1 0-4M15 14c0-2.2-1.4-4-3-4.5"/></svg>,
+  taches:       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="2" y="2" width="12" height="12" rx="1.5"/><polyline points="5,8 7,10 11,6"/></svg>,
+  devis:        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M3 2h8l3 3v9a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z"/><path d="M11 2v4h3M5 7h6M5 10h4"/></svg>,
+  subventions:  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M8 2l1.5 3 3.5.5-2.5 2.4.6 3.5L8 9.8l-3.1 1.6.6-3.5L3 5.5l3.5-.5z"/></svg>,
+  annuaire:     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>,
+  calendrier:   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="3" width="14" height="12" rx="1.5"/><path d="M1 7h14M5 1v4M11 1v4"/></svg>,
+  comm:         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M14 2H2a1 1 0 00-1 1v8a1 1 0 001 1h4l2 2 2-2h4a1 1 0 001-1V3a1 1 0 00-1-1z"/></svg>,
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -4967,8 +4988,13 @@ function AppContent() {
 
   async function fetchFinance() {
     try {
-      const res = await fetch(`${API}/devis-factures/dashboard`);
-      if (res.ok) setFinance(await res.json());
+      const [dashRes, devisRes] = await Promise.all([
+        fetch(`${API}/devis-factures/dashboard`),
+        fetch(`${API}/devis`),
+      ]);
+      const dashData = dashRes.ok ? await dashRes.json() : {};
+      const devisData = devisRes.ok ? await devisRes.json() : [];
+      setFinance({ ...dashData, liste_devis: devisData });
     } catch {}
   }
   const [showModal, setShowModal] = useState(false);
@@ -5005,14 +5031,14 @@ function AppContent() {
   const urgentCount = taches.filter(t => !t.done && t.priorite === 'URGENT').length;
 
   const navItems = [
-    { key: 'dashboard', label: 'Tableau de bord', icon: icons.dashboard },
-    { key: 'clients', label: 'Dossiers clients', icon: icons.clients },
-    { key: 'taches', label: 'Tâches', icon: icons.taches, badge: urgentCount || null },
-    { key: 'devis', label: 'Devis & Factures', icon: icons.subventions },
-    { key: 'subventions', label: 'Subventions', icon: icons.alertes },
-    { key: 'annuaire', label: 'Annuaire', icon: icons.comm },
-    { key: 'calendrier', label: 'Calendriers', icon: icons.calendrier },
-    { key: 'comm', label: 'Comm & Assets', icon: icons.comm },
+    { key: 'dashboard',    label: 'Tableau de bord',  icon: icons.dashboard,   section: 'gestion' },
+    { key: 'clients',      label: 'Dossiers clients',  icon: icons.clients,     section: 'gestion' },
+    { key: 'taches',       label: 'Tâches',            icon: icons.taches,      section: 'gestion', badge: urgentCount || null },
+    { key: 'devis',        label: 'Devis & Factures',  icon: icons.devis,       section: 'gestion' },
+    { key: 'subventions',  label: 'Subventions',       icon: icons.subventions, section: 'gestion' },
+    { key: 'calendrier',   label: 'Calendriers',       icon: icons.calendrier,  section: 'outils' },
+    { key: 'annuaire',     label: 'Annuaire',          icon: icons.annuaire,    section: 'outils' },
+    { key: 'comm',         label: 'Comm & Assets',     icon: icons.comm,        section: 'outils' },
   ];
 
   const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', subventions: 'Subventions', annuaire: 'Annuaire', calendrier: 'Calendriers', comm: 'Communication' };
@@ -5021,16 +5047,29 @@ function AppContent() {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <h1>PauseKreyol</h1>
+          <div style={{ fontFamily: "'Josefin Sans', sans-serif", letterSpacing: '2px', lineHeight: 1.1 }}>
+            <span style={{ color: '#FF795A', fontWeight: 700, fontSize: 14, textTransform: 'uppercase' }}>PAUSE</span>
+            <span style={{ color: '#FFD2AD', fontWeight: 700, fontSize: 14, textTransform: 'uppercase' }}> KRÉYOL</span>
+          </div>
           <p>Administration culturelle</p>
         </div>
         <nav className="sidebar-nav">
           <div className="nav-section">
-            {navItems.map(item => (
+            <div className="nav-label">Gestion</div>
+            {navItems.filter(i => i.section === 'gestion').map(item => (
               <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => { setView(item.key); setSelectedClient(null); }}>
                 {item.icon}
                 {item.label}
                 {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="nav-section" style={{ marginTop: 8 }}>
+            <div className="nav-label">Outils</div>
+            {navItems.filter(i => i.section === 'outils').map(item => (
+              <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => { setView(item.key); setSelectedClient(null); }}>
+                {item.icon}
+                {item.label}
               </button>
             ))}
           </div>
@@ -5084,8 +5123,6 @@ function AppContent() {
           {view === 'annuaire' && <AnnuaireView />}
           {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} />}
           {view === 'comm' && <CommView clients={data?.clients || []} />}
-          {view === 'subventions' && <SubventionsView />}
-          {view === 'alertes' && <AlertesView data={data} />}
         </main>
       </div>
 
