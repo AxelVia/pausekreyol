@@ -174,22 +174,48 @@ def _check_relances_auto():
 
 
 def _restore_devis_factures_drive():
-    """Restore nightly devis.json + factures.json from Drive if needed."""
+    """Sync bidirectionnel devis.json + factures.json avec Drive.
+    - Si le fichier local est absent : restaure depuis Drive
+    - Toujours : backup local → Drive
+    """
     try:
         if os.getenv("ENV") != "production":
             return
-        from engine.drive_storage import drive_download_json, drive_upload_json, get_root_folder_id
+        from engine.drive_storage import drive_download_json, drive_find_file, drive_upload_json, drive_update_json, get_root_folder_id
         root_id = get_root_folder_id()
-        # Sync local → Drive (backup)
+
+        # Restore Drive → local si fichier absent
+        if not DEVIS_FILE.exists():
+            devis_data = drive_download_json("devis.json", root_id)
+            if devis_data:
+                DEVIS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                DEVIS_FILE.write_text(json.dumps(devis_data, ensure_ascii=False, indent=2))
+                logger.info(f"devis.json restauré depuis Drive ({len(devis_data)} entrées)")
+        if not FACTURES_FILE.exists():
+            factures_data = drive_download_json("factures.json", root_id)
+            if factures_data:
+                FACTURES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                FACTURES_FILE.write_text(json.dumps(factures_data, ensure_ascii=False, indent=2))
+                logger.info(f"factures.json restauré depuis Drive ({len(factures_data)} entrées)")
+
+        # Backup local → Drive
         if DEVIS_FILE.exists():
             devis = json.loads(DEVIS_FILE.read_text())
-            drive_upload_json(devis, "devis.json", root_id)
+            fid = drive_find_file("devis.json", root_id)
+            if fid:
+                drive_update_json(fid, devis)
+            else:
+                drive_upload_json(devis, "devis.json", root_id)
         if FACTURES_FILE.exists():
             factures = json.loads(FACTURES_FILE.read_text())
-            drive_upload_json(factures, "factures.json", root_id)
-        logger.info("Backup nightly devis.json + factures.json → Drive OK")
+            fid = drive_find_file("factures.json", root_id)
+            if fid:
+                drive_update_json(fid, factures)
+            else:
+                drive_upload_json(factures, "factures.json", root_id)
+        logger.info("Sync nightly devis.json + factures.json ↔ Drive OK")
     except Exception as e:
-        logger.warning(f"Backup Drive nightly : {e}")
+        logger.warning(f"Sync Drive nightly : {e}")
 
 
 @asynccontextmanager
@@ -241,6 +267,30 @@ async def lifespan(app: FastAPI):
                 logger.info(f"tasks.json restauré depuis Drive ({len(tasks_data)} tâches)")
         except Exception as e:
             logger.warning(f"tasks.json non restauré : {e}")
+
+        # Restaure devis.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            devis_data = drive_download_json("devis.json", root_id)
+            if devis_data:
+                DEVIS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                DEVIS_FILE.write_text(json.dumps(devis_data, ensure_ascii=False, indent=2))
+                logger.info(f"devis.json restauré depuis Drive ({len(devis_data)} devis)")
+        except Exception as e:
+            logger.warning(f"devis.json non restauré : {e}")
+
+        # Restaure factures.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            factures_data = drive_download_json("factures.json", root_id)
+            if factures_data:
+                FACTURES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                FACTURES_FILE.write_text(json.dumps(factures_data, ensure_ascii=False, indent=2))
+                logger.info(f"factures.json restauré depuis Drive ({len(factures_data)} factures)")
+        except Exception as e:
+            logger.warning(f"factures.json non restauré : {e}")
 
         # Restaure processed_emails.json depuis Drive
         try:
