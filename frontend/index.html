@@ -1239,30 +1239,20 @@
 
     function DashboardView({ data, taches, finance, onNewClient, setView }) {
       const today = new Date();
-      const todayStr = today.toISOString().slice(0, 10);
+      const todayStr = String(today.getFullYear()) + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = String(tomorrow.getFullYear()) + '-' + String(tomorrow.getMonth() + 1).padStart(2, '0') + '-' + String(tomorrow.getDate()).padStart(2, '0');
+
       const tachesEnCours = taches.filter(t => !t.done);
+      
+      const tachesUrgentes = tachesEnCours.filter(t => t.priorite === 'URGENT' || (t.deadline && t.deadline < todayStr));
+      const facturesEnRetard = (finance?.liste_factures || []).filter(f => f.statut === 'en_retard');
 
-      // Tâches groupées par client
-      const tachesParClient = {};
-      tachesEnCours.forEach(t => {
-        const key = t.client_detecte || t.client_nom || '— Sans client —';
-        if (!tachesParClient[key]) tachesParClient[key] = [];
-        tachesParClient[key].push(t);
-      });
-      // Trier : avec deadline proche d'abord
-      Object.keys(tachesParClient).forEach(k => {
-        tachesParClient[k].sort((a, b) => {
-          const da = a.deadline || '9999', db = b.deadline || '9999';
-          return da.localeCompare(db);
-        });
-      });
-      const clientsKeys = Object.keys(tachesParClient).sort((a, b) => {
-        const nextA = tachesParClient[a][0]?.deadline || '9999';
-        const nextB = tachesParClient[b][0]?.deadline || '9999';
-        return nextA.localeCompare(nextB);
-      });
+      const tachesAujourdhuiDemain = tachesEnCours.filter(t => !tachesUrgentes.includes(t) && t.deadline && (t.deadline === todayStr || t.deadline === tomorrowStr));
 
-      const devisEnCours = (finance?.liste_devis || []).filter(d => !d.archived && ['brouillon', 'envoyé', 'signé'].includes(d.statut));
+      const devisEnvoyes = (finance?.liste_devis || []).filter(d => d.statut === 'envoyé');
+      const facturesEnvoyees = (finance?.liste_factures || []).filter(f => f.statut === 'envoyée');
 
       function diffLabel(deadline) {
         if (!deadline) return null;
@@ -1275,137 +1265,108 @@
       }
 
       return (
-        <div>
-          {/* Strip calendrier — vraies deadlines des tâches */}
-          <CalendarStrip taches={tachesEnCours} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Ligne métriques */}
-          <div className="metrics-grid" style={{ marginBottom: 16 }}>
+          <div className="metrics-grid">
             <div className="metric-card accent-info" onClick={() => setView('clients')} style={{ cursor: 'pointer' }}>
               <div className="metric-label">Clients actifs</div>
               <div className="metric-value">{data?.nb_clients || 0}</div>
-              <div className="metric-sub">{(data?.clients || []).filter(c => c.nb_projets > 0).length} avec projet(s)</div>
             </div>
             <div className="metric-card accent-warn" onClick={() => setView('taches')} style={{ cursor: 'pointer' }}>
               <div className="metric-label">Tâches en cours</div>
               <div className="metric-value">{tachesEnCours.length}</div>
-              <div className="metric-sub">{tachesEnCours.filter(t => t.priorite === 'URGENT').length} urgentes · {clientsKeys.length} clients</div>
+              <div className="metric-sub">{tachesUrgentes.length} urgentes</div>
             </div>
             <div className="metric-card" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
-              <div className="metric-label">Devis en cours</div>
-              <div className="metric-value">{devisEnCours.length}</div>
-              <div className="metric-sub">{devisEnCours.reduce((s, d) => s + (d.total_ht || 0), 0).toLocaleString('fr-FR')} € en jeu</div>
+              <div className="metric-label">Devis envoyés</div>
+              <div className="metric-value">{devisEnvoyes.length}</div>
             </div>
             <div className="metric-card accent-green" onClick={() => setView('devis')} style={{ cursor: 'pointer' }}>
               <div className="metric-label">CA encaissé</div>
               <div className="metric-value" style={{ fontSize: 20 }}>{((finance?.factures?.ca_encaisse) || 0).toLocaleString('fr-FR')} €</div>
-              <div className="metric-sub">{finance?.factures?.en_attente ? `${Number(finance.factures.en_attente).toLocaleString('fr-FR')}€ attendus` : ''}</div>
             </div>
-          </div>
+           </div>
 
-          <div className="grid-2" style={{ marginBottom: 16 }}>
-            {/* Tâches par client */}
-            <div className="card" style={{ gridColumn: '1 / -1' }}>
-              <div className="card-header" style={{ marginBottom: 12 }}>
-                <div>
-                  <div className="card-title">Tâches par client</div>
-                  <div className="card-subtitle">Triées par deadline</div>
-                </div>
-                <button className="btn" style={{ fontSize: 12 }} onClick={() => setView('taches')}>Voir tout</button>
-              </div>
+           <div className="grid-2">
+             {/* URGENCES */}
+             <div className="card" style={{ borderTop: '4px solid var(--danger)' }}>
+               <div className="card-header"><div className="card-title" style={{ color: 'var(--danger)' }}>🔥 URGENCES & RETARDS</div></div>
+               
+               {tachesUrgentes.length === 0 && facturesEnRetard.length === 0 && (
+                 <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucune urgence. 🧘</div></div>
+               )}
 
-              {clientsKeys.length === 0 ? (
-                <div className="empty" style={{ padding: '16px 0' }}>
-                  <div className="empty-icon">🎉</div>
-                  <div className="empty-text">Aucune tâche en cours !</div>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                  {clientsKeys.slice(0, 6).map(clientNom => {
-                    const tachesClient = tachesParClient[clientNom];
-                    const urgentes = tachesClient.filter(t => t.priorite === 'URGENT').length;
-                    const nextDl = tachesClient[0]?.deadline;
-                    const dl = nextDl ? diffLabel(nextDl) : null;
-                    return (
-                      <div key={clientNom} style={{ background: 'var(--surface2)', borderRadius: 'var(--radius)', padding: '12px 14px', border: urgentes > 0 ? '1px solid var(--danger)30' : '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <div style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 700, fontSize: 12, color: 'var(--pk-blue)', textTransform: 'uppercase', letterSpacing: '0.3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 150 }}>{clientNom}</div>
-                          <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
-                            {urgentes > 0 && <span style={{ background: 'var(--danger)', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 8 }}>{urgentes} URGENT</span>}
-                            <span style={{ background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8 }}>{tachesClient.length}</span>
-                          </div>
-                        </div>
-                        {tachesClient.slice(0, 3).map(t => {
-                          const tdl = t.deadline ? diffLabel(t.deadline) : null;
-                          return (
-                            <div key={t.id} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{t.titre}</div>
-                              {tdl && <div style={{ fontSize: 10, fontWeight: 600, color: tdl.color, flexShrink: 0 }}>{tdl.txt}</div>}
-                            </div>
-                          );
-                        })}
-                        {tachesClient.length > 3 && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>+{tachesClient.length - 3} autre(s)</div>}
-                        {dl && <div style={{ fontSize: 11, color: dl.color, fontWeight: 600, marginTop: 6 }}>Prochaine : {dl.txt}</div>}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="grid-2">
-            {/* Devis en cours */}
-            <div className="card">
-              <div className="card-header">
-                <div><div className="card-title">Devis en attente</div><div className="card-subtitle">Brouillon, envoyés, signés</div></div>
-                <button className="btn" style={{ fontSize: 12 }} onClick={() => setView('devis')}>Voir tout</button>
-              </div>
-              {devisEnCours.length === 0 ? (
-                <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucun devis en cours.</div></div>
-              ) : devisEnCours.slice(0, 5).map(d => {
-                const STATUT_C = { brouillon: 'var(--text3)', envoyé: 'var(--pk-blue)', signé: 'var(--warn)' };
-                return (
-                  <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13, alignItems: 'center' }}>
-                    <div>
-                      <div style={{ fontWeight: 500 }}>{d.client_nom}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>{d.numero} · {d.periode?.slice(0, 30)}</div>
+               {tachesUrgentes.map(t => (
+                 <div key={t.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ flex: 1 }}>
+                       <div style={{ fontSize: 13, fontWeight: 500 }}>{t.titre}</div>
+                       <div style={{ fontSize: 11, color: 'var(--text2)' }}>{t.client_detecte || t.client_nom}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 700 }}>{(d.total_ht || 0).toLocaleString('fr-FR')} €</div>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: STATUT_C[d.statut] || 'var(--text3)' }}>{d.statut}</div>
+                       {t.priorite === 'URGENT' && <span style={{ background: 'var(--danger)', color: 'white', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>URGENT</span>}
+                       {t.deadline && <div style={{ fontSize: 10, color: 'var(--danger)', marginTop: 4 }}>{diffLabel(t.deadline)?.txt}</div>}
+                    </div>
+                 </div>
+               ))}
+
+               {facturesEnRetard.map(f => (
+                 <div key={f.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                     <div style={{ flex: 1 }}>
+                       <div style={{ fontSize: 13, fontWeight: 500 }}>Facture impayée : {f.numero}</div>
+                       <div style={{ fontSize: 11, color: 'var(--danger)' }}>{f.client_nom}</div>
+                     </div>
+                     <div style={{ textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>
+                       {Number(f.total_ht).toLocaleString('fr-FR')} €
+                     </div>
+                 </div>
+               ))}
+             </div>
+
+             {/* AUJOURD'HUI & DEMAIN */}
+             <div className="card" style={{ borderTop: '4px solid var(--warn)' }}>
+                <div className="card-header"><div className="card-title">📅 AUJOURD'HUI & DEMAIN</div></div>
+                {tachesAujourdhuiDemain.length === 0 ? (
+                  <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Rien de prévu pour ces 48h.</div></div>
+                ) : tachesAujourdhuiDemain.map(t => (
+                  <div key={t.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ flex: 1 }}>
+                       <div style={{ fontSize: 13, fontWeight: 500 }}>{t.titre}</div>
+                       <div style={{ fontSize: 11, color: 'var(--text2)' }}>{t.client_detecte || t.client_nom}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--warn)' }}>
+                       {diffLabel(t.deadline)?.txt}
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+             </div>
 
-            {/* Échéances calendriers */}
-            <div className="card">
-              <div className="card-header">
-                <div><div className="card-title">Prochaines échéances</div><div className="card-subtitle">Formalités + Culturel</div></div>
-                <button className="btn" style={{ fontSize: 12 }} onClick={() => setView('calendrier')}>Voir calendriers</button>
-              </div>
-              {(() => {
-                const tachesEvts = tachesEnCours
-                  .filter(t => t.deadline)
-                  .map(t => ({ titre: t.titre, date: t.deadline, type: t.calendrier || 'formalite', client: t.client_detecte }))
-                  .filter(e => e.date >= todayStr)
-                  .sort((a, b) => a.date.localeCompare(b.date))
-                  .slice(0, 6);
-                if (!tachesEvts.length) return <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucune échéance à venir.</div></div>;
-                return tachesEvts.map((e, i) => {
-                  const dl = diffLabel(e.date);
-                  return (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: e.type === 'culturel' ? '#FF795A' : '#2834B7', flexShrink: 0 }} />
-                      <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.titre}</div>
-                      {dl && <div style={{ fontSize: 11, fontWeight: 600, color: dl.color, flexShrink: 0 }}>{dl.txt}</div>}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </div>
+             {/* EN ATTENTE */}
+             <div className="card" style={{ gridColumn: '1 / -1', borderTop: '4px solid var(--pk-blue)' }}>
+               <div className="card-header"><div className="card-title">⏳ SUIVI (Devis & Factures envoyés)</div></div>
+               
+               <div className="grid-2">
+                 <div>
+                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase' }}>Devis en attente de signature</div>
+                   {devisEnvoyes.length === 0 ? <div className="empty-text" style={{ fontSize: 12 }}>Aucun devis en attente.</div> : devisEnvoyes.map(d => (
+                     <div key={d.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                        <div style={{ fontWeight: 600 }}>{d.client_nom}</div>
+                        <div style={{ color: 'var(--text2)' }}>{d.numero} — {Number(d.total_ht).toLocaleString()}€</div>
+                     </div>
+                   ))}
+                 </div>
+                 <div>
+                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase' }}>Factures en attente de paiement</div>
+                   {facturesEnvoyees.length === 0 ? <div className="empty-text" style={{ fontSize: 12 }}>Aucune facture en attente.</div> : facturesEnvoyees.map(f => (
+                     <div key={f.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                        <div style={{ fontWeight: 600 }}>{f.client_nom}</div>
+                        <div style={{ color: 'var(--text2)' }}>{f.numero} — {Number(f.total_ht).toLocaleString()}€</div>
+                        <div style={{ color: 'var(--warn)', fontSize: 10 }}>Échéance : {f.date_echeance}</div>
+                     </div>
+                   ))}
+                 </div>
+               </div>
+             </div>
+           </div>
         </div>
       );
     }
