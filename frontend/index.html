@@ -4348,65 +4348,65 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [showNewDevis, setShowNewDevis] = useState(false);
       const [importMsg, setImportMsg] = useState('');
 
+      function exportComptaExcel() {
+        // Génère un CSV structuré (compatible Excel) style Compta_Pro
+        const devisList = data?.liste_devis || [];
+        const facturesList = data?.liste_factures || [];
+
+        // Feuille Devis
+        const devisHeader = ['#', 'ANNÉE', 'N° DEVIS', 'CLIENT', 'ÉTAT', 'DÉTAIL PRESTATION', 'PÉRIODE', 'DATE ENVOI', 'MONTANT DEVIS (€)', 'ACOMPTE (€)', 'RETOUR SIGNÉ', 'N° FACTURE LIÉ', 'MONTANT FACTURÉ (€)', 'NOTES'];
+        const devisRows = devisList.map((d, i) => [
+          i + 1, d.annee || '', d.numero || '', d.client_nom || '', d.statut || '',
+          d.prestations?.[0]?.description || '', d.periode || '', d.date_envoi || '',
+          d.total_ht || 0, d.acompte_montant || 0, d.date_signature || '',
+          d.factures_liees?.[0] || '', d.montant_facture || '',
+          d.notes || ''
+        ]);
+
+        // Feuille Factures
+        const factHeader = ['#', 'ANNÉE', 'N° FACTURE', 'CLIENT', 'ÉTAT', 'PRESTATION', 'PÉRIODE', 'DEVIS LIÉ', 'MONTANT (€)', 'DATE ENVOI', 'DATE PAIEMENT', 'SOLDE DÛ (€)', 'NOTES'];
+        const factRows = facturesList.map((f, i) => [
+          i + 1, f.annee || '', f.numero || '', f.client_nom || '', f.statut || '',
+          f.prestations?.[0]?.description || '', f.periode || '', f.devis_numero || '',
+          f.total_ht || 0, f.date_envoi || '', f.date_paiement || '',
+          f.solde_a_payer || 0, f.notes || ''
+        ]);
+
+        // Export CSV (2 sections séparées)
+        const rows = [
+          ['PAUSE KRÉYOL — SUIVI DES DEVIS'],
+          devisHeader,
+          ...devisRows,
+          [],
+          ['PAUSE KRÉYOL — SUIVI DES FACTURES'],
+          factHeader,
+          ...factRows,
+          [],
+          ['TOTAL FACTURÉ', '', '', '', '', '', '', '', facturesList.reduce((s, f) => s + (f.total_ht || 0), 0), '', '', facturesList.filter(f => f.statut === 'payée').reduce((s, f) => s + (f.total_ht || 0), 0)],
+        ];
+
+        const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
+        const bom = '\uFEFF'; // BOM UTF-8 pour Excel français
+        const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `PauseKreyol_Comptabilite_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+      }
+
+      async function deleteDevis(id) {
+        if (!window.confirm('Supprimer ce devis ? (irréversible si aucune facture liée)')) return;
+        await fetch(`${API}/devis/${id}`, { method: 'DELETE' });
+        load();
+      }
+
+      async function deleteFacture(id) {
+        if (!window.confirm('Supprimer / annuler cette facture ?')) return;
+        await fetch(`${API}/factures/${id}`, { method: 'DELETE' });
+        load();
+      }
+
       async function importHistorique(file) {
-
-        function exportComptaExcel() {
-          // Génère un CSV structuré (compatible Excel) style Compta_Pro
-          const devisList = data?.liste_devis || [];
-          const facturesList = data?.liste_factures || [];
-
-          // Feuille Devis
-          const devisHeader = ['#', 'ANNÉE', 'N° DEVIS', 'CLIENT', 'ÉTAT', 'DÉTAIL PRESTATION', 'PÉRIODE', 'DATE ENVOI', 'MONTANT DEVIS (€)', 'ACOMPTE (€)', 'RETOUR SIGNÉ', 'N° FACTURE LIÉ', 'MONTANT FACTURÉ (€)', 'NOTES'];
-          const devisRows = devisList.map((d, i) => [
-            i + 1, d.annee || '', d.numero || '', d.client_nom || '', d.statut || '',
-            d.prestations?.[0]?.description || '', d.periode || '', d.date_envoi || '',
-            d.total_ht || 0, d.acompte_montant || 0, d.date_signature || '',
-            d.factures_liees?.[0] || '', d.montant_facture || '',
-            d.notes || ''
-          ]);
-
-          // Feuille Factures
-          const factHeader = ['#', 'ANNÉE', 'N° FACTURE', 'CLIENT', 'ÉTAT', 'PRESTATION', 'PÉRIODE', 'DEVIS LIÉ', 'MONTANT (€)', 'DATE ENVOI', 'DATE PAIEMENT', 'SOLDE DÛ (€)', 'NOTES'];
-          const factRows = facturesList.map((f, i) => [
-            i + 1, f.annee || '', f.numero || '', f.client_nom || '', f.statut || '',
-            f.prestations?.[0]?.description || '', f.periode || '', f.devis_numero || '',
-            f.total_ht || 0, f.date_envoi || '', f.date_paiement || '',
-            f.solde_a_payer || 0, f.notes || ''
-          ]);
-
-          // Export CSV (2 sections séparées)
-          const rows = [
-            ['PAUSE KRÉYOL — SUIVI DES DEVIS'],
-            devisHeader,
-            ...devisRows,
-            [],
-            ['PAUSE KRÉYOL — SUIVI DES FACTURES'],
-            factHeader,
-            ...factRows,
-            [],
-            ['TOTAL FACTURÉ', '', '', '', '', '', '', '', facturesList.reduce((s, f) => s + (f.total_ht || 0), 0), '', '', facturesList.filter(f => f.statut === 'payée').reduce((s, f) => s + (f.total_ht || 0), 0)],
-          ];
-
-          const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
-          const bom = '\uFEFF'; // BOM UTF-8 pour Excel français
-          const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `PauseKreyol_Comptabilite_${new Date().toISOString().slice(0, 10)}.csv`;
-          a.click();
-        }
-
-        async function deleteDevis(id) {
-          if (!window.confirm('Supprimer ce devis ? (irréversible si aucune facture liée)')) return;
-          await fetch(`${API}/devis/${id}`, { method: 'DELETE' });
-          load();
-        }
-
-        async function deleteFacture(id) {
-          if (!window.confirm('Supprimer / annuler cette facture ?')) return;
-          await fetch(`${API}/factures/${id}`, { method: 'DELETE' });
-          load();
-        }
         const form = new FormData();
         form.append('file', file);
         setImportMsg('Import en cours…');
