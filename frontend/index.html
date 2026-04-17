@@ -5512,9 +5512,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
     function SubventionsView({ clients }) {
       const [tab, setTab] = useState('catalogue');
-      const [subventions, setSubventions] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('pk_subventions') || '[]'); } catch { return []; }
-      });
+      const [subventions, setSubventions] = useState([]);
+      useEffect(() => {
+        fetch(`${API}/subventions`).then(r => r.json()).then(setSubventions).catch(console.error);
+      }, []);
       const [selectedModele, setSelectedModele] = useState(null);
       const [showNew, setShowNew] = useState(false);
       const [newSub, setNewSub] = useState({ modele_id: '', client_slug: '', projet_nom: '', montant_sollicite: '', statut: 'À préparer', notes: '', deadline: '', organisme: '' });
@@ -5528,20 +5529,29 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       function save(list) {
         setSubventions(list);
-        try { localStorage.setItem('pk_subventions', JSON.stringify(list)); } catch { }
       }
 
-      function createSub() {
+      async function createSub() {
         const modele = MODELES_SUBVENTIONS.find(m => m.id === newSub.modele_id);
         const client = clients.find(c => c.slug === newSub.client_slug);
         const sub = {
-          id: `sub_${Date.now()}`,
           ...newSub,
           modele_nom: modele?.nom || '',
           client_nom: client?.nom || '',
-          created_at: new Date().toISOString(),
         };
-        save([sub, ...subventions]);
+        try {
+          const res = await fetch(`${API}/subventions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sub)
+          });
+          if (res.ok) {
+            const savedItem = await res.json();
+            save([savedItem, ...subventions]);
+          }
+        } catch (e) {
+          console.error(e);
+        }
         setShowNew(false);
         setNewSub({ modele_id: '', client_slug: '', projet_nom: '', montant_sollicite: '', statut: 'À préparer', notes: '', deadline: '', organisme: '' });
       }
@@ -5671,9 +5681,18 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                       {s.montant_sollicite && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{Number(s.montant_sollicite).toLocaleString('fr-FR')} €</div>}
                       <select style={{ fontSize: 11, padding: '3px 6px', border: `1px solid ${sc.c}40`, borderRadius: 6, background: sc.bg, color: sc.c, fontWeight: 600, cursor: 'pointer' }}
                         value={s.statut}
-                        onChange={e => {
-                          const updated = subventions.map(x => x.id === s.id ? { ...x, statut: e.target.value } : x);
+                        onChange={async e => {
+                          const val = e.target.value;
+                          const updated = subventions.map(x => x.id === s.id ? { ...x, statut: val } : x);
+                          // Optimistic ui update
                           save(updated);
+                          try {
+                            await fetch(`${API}/subventions/${s.id}`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ statut: val })
+                            });
+                          } catch(err) { console.error(err); }
                         }}>
                         {STATUTS.map(st => <option key={st} value={st}>{st}</option>)}
                       </select>
@@ -5744,20 +5763,47 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
     function AnnuaireView() {
       const [tab, setTab] = useState('interne');
-      const [contacts, setContacts] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('pk_contacts_internes') || '[]'); } catch { return []; }
-      });
-      const [diffusion, setDiffusion] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('pk_contacts_diffusion') || '[]'); } catch { return []; }
-      });
+      const [allContacts, setAllContacts] = useState([]);
       const [showNew, setShowNew] = useState(false);
       const [showNewDiff, setShowNewDiff] = useState(false);
       const [newContact, setNewContact] = useState({ nom: '', prenom: '', email: '', telephone: '', organisation: '', role: '', note: '' });
       const [newDiff, setNewDiff] = useState({ nom: '', email: '', liste: 'generale', organisation: '' });
       const [search, setSearch] = useState('');
 
-      function saveContacts(list) { setContacts(list); try { localStorage.setItem('pk_contacts_internes', JSON.stringify(list)); } catch { } }
-      function saveDiffusion(list) { setDiffusion(list); try { localStorage.setItem('pk_contacts_diffusion', JSON.stringify(list)); } catch { } }
+      useEffect(() => {
+        fetch(`${API}/annuaire`).then(r => r.json()).then(setAllContacts).catch(console.error);
+      }, []);
+
+      const contacts = allContacts.filter(c => !c.liste); // 'interne' has no liste defined
+      const diffusion = allContacts.filter(c => c.liste);
+
+      function saveContacts(list) {
+        // Optimistic UI updates
+        const merged = [...list, ...diffusion];
+        setAllContacts(merged);
+      }
+      function saveDiffusion(list) {
+        // Optimistic UI updates
+        const merged = [...contacts, ...list];
+        setAllContacts(merged);
+      }
+
+      async function apiSaveContact(c) {
+        try {
+          const res = await fetch(`${API}/annuaire`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(c)
+          });
+          if (res.ok) {
+            const savedItem = await res.json();
+            setAllContacts(prev => [savedItem, ...prev]);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
 
       function addContact() {
         if (!newContact.email) return;

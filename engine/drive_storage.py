@@ -354,12 +354,19 @@ def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
     asso_files = list(client_dir.glob("ASSOCIATION_*.xlsx"))
     if asso_files:
         asso_file = asso_files[0]
-        existing_id = drive_find_file(asso_file.name, client_folder_id)
+        existing_id = meta.get("drive_asso_id")
         if existing_id:
-            drive_update_file(existing_id, asso_file)
-            meta["drive_asso_id"] = existing_id
-        else:
-            meta["drive_asso_id"] = drive_upload_file(asso_file, asso_file.name, client_folder_id)
+            try:
+                drive_update_file(existing_id, asso_file)
+            except Exception:
+                existing_id = None
+        if not existing_id:
+            existing_id = drive_find_file(asso_file.name, client_folder_id)
+            if existing_id:
+                drive_update_file(existing_id, asso_file)
+                meta["drive_asso_id"] = existing_id
+            else:
+                meta["drive_asso_id"] = drive_upload_file(asso_file, asso_file.name, client_folder_id)
         logger.info(f"Association Excel synchronisé : {asso_file.name}")
 
     # Dossier projets Drive
@@ -373,13 +380,32 @@ def sync_client_to_drive(client_dir: Path, meta: dict) -> dict:
         projet_slug = projet_dir.name
         projet_drive_id = drive_get_or_create_folder(projet_slug, projets_folder_id)
 
-        for budget_file in projet_dir.glob("BUDGET_*.xlsx"):
-            existing_id = drive_find_file(budget_file.name, projet_drive_id)
+        # Recherche de l'ID stocké pour ce projet
+        projet_meta = next((p for p in meta.get("projets", []) if p["slug"] == projet_slug), None)
+
+        for budget_file in projet_dir.glob("*.xlsx"): # BUDGET ou PROSPECT
+            existing_id = None
+            if projet_meta and "drive" in projet_meta:
+                # Cherche l'ID dans le meta par rapport au nom de fichier
+                for key, val in projet_meta["drive"].items():
+                    if key.endswith("_name") and val == budget_file.name:
+                        id_key = key.replace("_name", "_id")
+                        existing_id = projet_meta["drive"].get(id_key)
+                        break
+
             if existing_id:
-                drive_update_file(existing_id, budget_file)
-            else:
-                drive_upload_file(budget_file, budget_file.name, projet_drive_id)
-            logger.info(f"Budget synchronisé : {budget_file.name}")
+                try:
+                    drive_update_file(existing_id, budget_file)
+                except Exception:
+                    existing_id = None
+            
+            if not existing_id:
+                existing_id = drive_find_file(budget_file.name, projet_drive_id)
+                if existing_id:
+                    drive_update_file(existing_id, budget_file)
+                else:
+                    drive_upload_file(budget_file, budget_file.name, projet_drive_id)
+            logger.info(f"Fichier projet synchronisé : {budget_file.name}")
 
     # Upload client.json
     meta_file_id = drive_find_file("client.json", client_folder_id)

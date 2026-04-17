@@ -190,13 +190,21 @@ def _restore_devis_factures_drive():
             if devis_data:
                 DEVIS_FILE.parent.mkdir(parents=True, exist_ok=True)
                 DEVIS_FILE.write_text(json.dumps(devis_data, ensure_ascii=False, indent=2))
-                logger.info(f"devis.json restauré depuis Drive ({len(devis_data)} entrées)")
         if not FACTURES_FILE.exists():
             factures_data = drive_download_json("factures.json", root_id)
             if factures_data:
                 FACTURES_FILE.parent.mkdir(parents=True, exist_ok=True)
                 FACTURES_FILE.write_text(json.dumps(factures_data, ensure_ascii=False, indent=2))
-                logger.info(f"factures.json restauré depuis Drive ({len(factures_data)} entrées)")
+        if not SUBVENTIONS_FILE.exists():
+            sub_data = drive_download_json("subventions.json", root_id)
+            if sub_data:
+                SUBVENTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                SUBVENTIONS_FILE.write_text(json.dumps(sub_data, ensure_ascii=False, indent=2))
+        if not ANNUAIRE_FILE.exists():
+            ann_data = drive_download_json("annuaire.json", root_id)
+            if ann_data:
+                ANNUAIRE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                ANNUAIRE_FILE.write_text(json.dumps(ann_data, ensure_ascii=False, indent=2))
 
         # Backup local → Drive
         if DEVIS_FILE.exists():
@@ -213,7 +221,28 @@ def _restore_devis_factures_drive():
                 drive_update_json(fid, factures)
             else:
                 drive_upload_json(factures, "factures.json", root_id)
-        logger.info("Sync nightly devis.json + factures.json ↔ Drive OK")
+        if TASKS_FILE.exists():
+            tasks = json.loads(TASKS_FILE.read_text())
+            fid = drive_find_file("tasks.json", root_id)
+            if fid:
+                drive_update_json(fid, tasks)
+            else:
+                drive_upload_json(tasks, "tasks.json", root_id)
+        if SUBVENTIONS_FILE.exists():
+            subventions = json.loads(SUBVENTIONS_FILE.read_text())
+            fid = drive_find_file("subventions.json", root_id)
+            if fid:
+                drive_update_json(fid, subventions)
+            else:
+                drive_upload_json(subventions, "subventions.json", root_id)
+        if ANNUAIRE_FILE.exists():
+            annuaire = json.loads(ANNUAIRE_FILE.read_text())
+            fid = drive_find_file("annuaire.json", root_id)
+            if fid:
+                drive_update_json(fid, annuaire)
+            else:
+                drive_upload_json(annuaire, "annuaire.json", root_id)
+        logger.info("Sync nightly globale ↔ Drive OK")
     except Exception as e:
         logger.warning(f"Sync Drive nightly : {e}")
 
@@ -264,9 +293,23 @@ async def lifespan(app: FastAPI):
             if tasks_data:
                 TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
                 TASKS_FILE.write_text(json.dumps(tasks_data, ensure_ascii=False, indent=2))
-                logger.info(f"tasks.json restauré depuis Drive ({len(tasks_data)} tâches)")
         except Exception as e:
-            logger.warning(f"tasks.json non restauré : {e}")
+            pass
+
+        # Restaure subventions.json et annuaire.json
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            sub_data = drive_download_json("subventions.json", root_id)
+            if sub_data:
+                SUBVENTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                SUBVENTIONS_FILE.write_text(json.dumps(sub_data, ensure_ascii=False, indent=2))
+            ann_data = drive_download_json("annuaire.json", root_id)
+            if ann_data:
+                ANNUAIRE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                ANNUAIRE_FILE.write_text(json.dumps(ann_data, ensure_ascii=False, indent=2))
+        except Exception as e:
+            pass
 
         # Restaure devis.json depuis Drive
         try:
@@ -478,6 +521,43 @@ def delete_client(slug: str, confirm: str = ""):
     except Exception as e:
         logger.warning(f"Archivage avant suppression : {e}")
 
+    # Suppression en cascade des entités liées
+    try:
+        # Tâches
+        if TASKS_FILE.exists():
+            tasks = json.loads(TASKS_FILE.read_text())
+            old_len = len(tasks)
+            tasks = [t for t in tasks if t.get("client_slug") != slug]
+            if len(tasks) < old_len:
+                _save_tasks(tasks)
+        
+        # Devis
+        if DEVIS_FILE.exists():
+            devis = json.loads(DEVIS_FILE.read_text())
+            old_len = len(devis)
+            devis = [d for d in devis if d.get("client_slug") != slug]
+            if len(devis) < old_len:
+                _save_devis(devis)
+
+        # Factures
+        if FACTURES_FILE.exists():
+            factures = json.loads(FACTURES_FILE.read_text())
+            old_len = len(factures)
+            factures = [f for f in factures if f.get("client_slug") != slug]
+            if len(factures) < old_len:
+                _save_factures(factures)
+
+        # Subventions
+        if SUBVENTIONS_FILE.exists():
+            subs = json.loads(SUBVENTIONS_FILE.read_text())
+            old_len = len(subs)
+            subs = [s for s in subs if s.get("client_slug") != slug]
+            if len(subs) < old_len:
+                _save_subventions(subs)
+                
+    except Exception as e:
+        logger.warning(f"Erreur suppression en cascade pour {slug}: {e}")
+
     # Supprime localement
     shutil.rmtree(client_dir, ignore_errors=True)
 
@@ -632,7 +712,48 @@ def root():
 # ── Routes tâches ─────────────────────────────────────────────────────────────
 
 TASKS_FILE = CLIENTS_DIR / "tasks.json"
+SUBVENTIONS_FILE = CLIENTS_DIR / "subventions.json"
+ANNUAIRE_FILE = CLIENTS_DIR / "annuaire.json"
 
+def _load_subventions() -> list:
+    if SUBVENTIONS_FILE.exists():
+        return json.loads(SUBVENTIONS_FILE.read_text())
+    return []
+
+def _save_subventions(subventions: list):
+    SUBVENTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SUBVENTIONS_FILE.write_text(json.dumps(subventions, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("subventions.json", root_id)
+            if file_id:
+                drive_update_json(file_id, subventions)
+            else:
+                drive_upload_json(subventions, "subventions.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync subventions.json : {e}")
+
+def _load_annuaire() -> list:
+    if ANNUAIRE_FILE.exists():
+        return json.loads(ANNUAIRE_FILE.read_text())
+    return []
+
+def _save_annuaire(annuaire: list):
+    ANNUAIRE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ANNUAIRE_FILE.write_text(json.dumps(annuaire, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("annuaire.json", root_id)
+            if file_id:
+                drive_update_json(file_id, annuaire)
+            else:
+                drive_upload_json(annuaire, "annuaire.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync annuaire.json : {e}")
 
 def _save_tasks(tasks: list):
     """Sauvegarde tasks.json localement et sur Drive."""
@@ -2752,3 +2873,83 @@ async def import_compta_historique(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Import compta historique : {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE SUBVENTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/subventions")
+def get_subventions():
+    return _load_subventions()
+
+@app.post("/subventions")
+def post_subvention(data: dict):
+    subs = _load_subventions()
+    if "id" not in data:
+        from datetime import datetime
+        data["id"] = f"sub_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        data["created_at"] = datetime.now().isoformat()
+    subs.insert(0, data)
+    _save_subventions(subs)
+    return data
+
+@app.patch("/subventions/{sub_id}")
+def patch_subvention(sub_id: str, data: dict):
+    subs = _load_subventions()
+    updated = None
+    for i, s in enumerate(subs):
+        if s["id"] == sub_id:
+            subs[i].update(data)
+            updated = subs[i]
+            break
+    if not updated:
+        raise HTTPException(status_code=404, detail="Subvention non trouvée")
+    _save_subventions(subs)
+    return updated
+
+@app.delete("/subventions/{sub_id}")
+def delete_subvention(sub_id: str):
+    subs = _load_subventions()
+    subs = [s for s in subs if s["id"] != sub_id]
+    _save_subventions(subs)
+    return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE ANNUAIRE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/annuaire")
+def get_annuaire():
+    return _load_annuaire()
+
+@app.post("/annuaire")
+def post_annuaire(data: dict):
+    annuaire = _load_annuaire()
+    if "id" not in data:
+        from datetime import datetime
+        data["id"] = f"contact_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    annuaire.append(data)
+    _save_annuaire(annuaire)
+    return data
+
+@app.patch("/annuaire/{contact_id}")
+def patch_annuaire(contact_id: str, data: dict):
+    annuaire = _load_annuaire()
+    updated = None
+    for i, s in enumerate(annuaire):
+        if s["id"] == contact_id:
+            annuaire[i].update(data)
+            updated = annuaire[i]
+            break
+    if not updated:
+        raise HTTPException(status_code=404, detail="Contact non trouvé")
+    _save_annuaire(annuaire)
+    return updated
+
+@app.delete("/annuaire/{contact_id}")
+def delete_annuaire(contact_id: str):
+    annuaire = _load_annuaire()
+    annuaire = [s for s in annuaire if s["id"] != contact_id]
+    _save_annuaire(annuaire)
+    return {"status": "ok"}
