@@ -2227,29 +2227,116 @@ def login(body: dict):
 @app.post("/import/compta-historique")
 async def import_compta_historique(file: UploadFile = File(...)):
     """
-    Importe l'historique complet depuis Pause_Kreyol_Comptabilite_Pro.xlsx.
-    Crée devis + factures + subventions dans le système sans écraser les données existantes.
+    Importe l'historique complet depuis Pause_Kreyol_Comptabilite_Pro.xlsx :
+    1. Crée les dossiers clients manquants dans la base locale + Drive
+    2. Rattache chaque devis/facture au bon slug client
+    3. Sauvegarde devis.json + factures.json sur Drive
     """
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Fichier Excel requis (.xlsx)")
 
     try:
         from openpyxl import load_workbook
+
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = Path(tmp.name)
-
         wb = load_workbook(str(tmp_path), data_only=True)
         tmp_path.unlink()
 
+        # ── 1. Crée les clients manquants ─────────────────────────────────────
+        clients_existants = list_clients()
+        noms_existants = {c["nom"].lower().strip() for c in clients_existants}
+        slug_par_nom = {c["nom"].lower().strip(): c["slug"] for c in clients_existants}
+        clients_crees = {}
+        stats = {"clients_crees": 0, "devis_importes": 0, "factures_importees": 0,
+                 "devis_ignores": 0, "factures_ignorees": 0}
+
+        # Collecte tous les noms clients uniques dans devis + factures
+        noms_compta = set()
+        for sheet in ["📝 Devis", "🧾 Factures"]:
+            if sheet in wb.sheetnames:
+                ws = wb[sheet]
+                for row in ws.iter_rows(min_row=5, values_only=True):
+                    if row[3] and not str(row[2] or "").startswith("TOTAL"):
+                        noms_compta.add(str(row[3]).strip())
+
+        # Crée les clients manquants (version légère, sans Excel Drive)
+        for nom_client in sorted(noms_compta):
+            nom_lower = nom_client.lower().strip()
+            if nom_lower in noms_existants:
+                continue
+            # Cherche correspondance partielle
+            match = next((s for n, s in slug_par_nom.items() if nom_lower in n or n in nom_lower), None)
+            if match:
+                slug_par_nom[nom_lower] = match
+                continue
+
+            # Crée le dossier client minimal
+            slug_raw = "".join(c if c.isalnum() or c in " _-" else "_" for c in nom_client).strip().replace(" ", "_")
+            timestamp = datetime.now().strftime("%Y%m")
+            slug = f"{slug_raw}_{timestamp}"
+            client_dir = CLIENTS_DIR / slug
+            client_dir.mkdir(parents=True, exist_ok=True)
+            (client_dir / "projets").mkdir(exist_ok=True)
+            (client_dir / "documents").mkdir(exist_ok=True)
+
+            meta = {
+                "slug": slug,
+                "created_at": datetime.now().isoformat(),
+                "source": "import_compta_historique",
+                "client_data": {
+                    "nom_officiel": nom_client,
+                    "nom_usuel": nom_client,
+                    "type_structure": "asso_france",
+                    "email_contact": "",
+                    "president": "",
+                },
+                "projets": [],
+                "devis": [],
+            }
+
+            # Upload Drive si prod
+            try:
+                if os.getenv("ENV") == "production":
+                    from engine.drive_storage import drive_get_or_create_folder, drive_upload_json, get_root_folder_id
+                    root_id = get_root_folder_id()
+                    folder_id = drive_get_or_create_folder(slug, root_id)
+                    meta["drive_folder_id"] = folder_id
+                    drive_upload_json(meta, "client.json", folder_id)
+            except Exception as e:
+                logger.warning(f"Drive client {slug} : {e}")
+
+            (client_dir / "client.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+            slug_par_nom[nom_lower] = slug
+            noms_existants.add(nom_lower)
+            clients_crees[nom_client] = slug
+            stats["clients_crees"] += 1
+            logger.info(f"Client créé depuis historique : {nom_client} → {slug}")
+
+        # Recharge la liste clients à jour
+        clients_existants = list_clients()
+        slug_par_nom = {}
+        for c in clients_existants:
+            slug_par_nom[c["nom"].lower().strip()] = c["slug"]
+
+        def find_slug(nom_client: str) -> str:
+            nom_l = nom_client.lower().strip()
+            if nom_l in slug_par_nom:
+                return slug_par_nom[nom_l]
+            # Correspondance partielle
+            for n, s in slug_par_nom.items():
+                if nom_l in n or n in nom_l:
+                    return s
+            return ""
+
+        # ── 2. Import Devis ───────────────────────────────────────────────────
         devis_existants = _load_devis()
         factures_existantes = _load_factures()
         numeros_devis = {d.get("numero") for d in devis_existants}
         numeros_factures = {f.get("numero") for f in factures_existantes}
-
         nouveaux_devis = []
         nouvelles_factures = []
-        stats = {"devis_importes": 0, "factures_importees": 0, "devis_ignores": 0, "factures_ignorees": 0}
 
         STATUT_DEVIS_MAP = {
             "VALIDÉ": "validé", "EN COURS": "envoyé", "ANNULÉ": "annulé",
@@ -2260,7 +2347,6 @@ async def import_compta_historique(file: UploadFile = File(...)):
             "À FAIRE": "à_faire", "ANNULÉ": "annulée", "ANNULÉE": "annulée",
         }
 
-        # ── Import Devis ──────────────────────────────────────────────────────
         if "📝 Devis" in wb.sheetnames:
             ws = wb["📝 Devis"]
             for row in ws.iter_rows(min_row=5, values_only=True):
@@ -2271,35 +2357,37 @@ async def import_compta_historique(file: UploadFile = File(...)):
                     stats["devis_ignores"] += 1
                     continue
 
-                annee = str(row[1]) if row[1] else "2023"
                 client_nom = str(row[3]).strip() if row[3] else ""
+                client_slug = find_slug(client_nom)
                 etat_raw = str(row[4]).strip().upper() if row[4] else ""
                 statut = STATUT_DEVIS_MAP.get(etat_raw, "brouillon")
                 description = str(row[5]).strip() if row[5] else ""
                 periode = str(row[6]).strip() if row[6] else ""
                 date_envoi = str(row[7]).split(" ")[0] if row[7] else ""
-                montant = float(row[8]) if row[8] and str(row[8]).replace('.','').isdigit() else 0
-                acompte_montant = float(row[9]) if row[9] and str(row[9]).replace('.','').replace('-','').isdigit() else 0
+                montant = float(row[8]) if isinstance(row[8], (int, float)) else 0
+                acompte_m = float(row[9]) if isinstance(row[9], (int, float)) else 0
                 retour_signe = str(row[10]).strip() if row[10] else ""
                 facture_liee = str(row[11]).strip() if row[11] else ""
                 notes = str(row[14]).strip() if row[14] else ""
+                annee = str(row[1]) if row[1] else "2023"
 
                 devis = {
                     "id": f"hist_devis_{numero.replace(' ','_').replace('/','_')}",
                     "numero": numero,
                     "annee": annee,
                     "created_at": datetime.now().isoformat(),
-                    "client_slug": "",
+                    "client_slug": client_slug,
                     "client_nom": client_nom,
-                    "statut": "annulé" if etat_raw == "ANNULÉ" else statut,
-                    "archived": etat_raw in ("ANNULÉ",),
+                    "statut": statut,
+                    "archived": etat_raw in ("ANNULÉ", "NON SIGNÉ"),
                     "annulation_marker": "⛔ DEVIS ANNULÉ" if etat_raw == "ANNULÉ" else None,
-                    "prestations": [{"description": description, "type": "", "quantite": 1, "tarif_unitaire": montant, "sous_total": montant}],
+                    "prestations": [{"description": description, "type": "", "quantite": 1,
+                                     "tarif_unitaire": montant, "sous_total": montant}],
                     "total_ht": montant,
                     "tva": "Non applicable — Art. 293B du CGI",
-                    "acompte_pct": round(acompte_montant / montant * 100) if montant > 0 and acompte_montant > 0 else 30,
-                    "acompte_montant": acompte_montant,
-                    "solde": round(montant - acompte_montant, 2),
+                    "acompte_pct": round(acompte_m / montant * 100) if montant > 0 and acompte_m > 0 else 30,
+                    "acompte_montant": acompte_m,
+                    "solde": round(montant - acompte_m, 2),
                     "validite_jours": 30,
                     "periode": periode,
                     "date_emission": date_envoi,
@@ -2315,7 +2403,7 @@ async def import_compta_historique(file: UploadFile = File(...)):
                 numeros_devis.add(numero)
                 stats["devis_importes"] += 1
 
-        # ── Import Factures ───────────────────────────────────────────────────
+        # ── 3. Import Factures ────────────────────────────────────────────────
         if "🧾 Factures" in wb.sheetnames:
             ws = wb["🧾 Factures"]
             for row in ws.iter_rows(min_row=5, values_only=True):
@@ -2326,20 +2414,19 @@ async def import_compta_historique(file: UploadFile = File(...)):
                     stats["factures_ignorees"] += 1
                     continue
 
-                annee = str(row[1]) if row[1] else "2023"
                 client_nom = str(row[3]).strip() if row[3] else ""
+                client_slug = find_slug(client_nom)
                 etat_raw = str(row[4]).strip().upper() if row[4] else ""
                 statut = STATUT_FACT_MAP.get(etat_raw, "à_faire")
                 description = str(row[5]).strip() if row[5] else ""
                 periode = str(row[6]).strip() if row[6] else ""
                 devis_lie = str(row[7]).strip() if row[7] else ""
-                montant = float(row[8]) if row[8] and isinstance(row[8], (int, float)) else 0
-                date_envoi_raw = row[9]
-                date_paiement_raw = row[10]
-                solde_du = float(row[11]) if row[11] and isinstance(row[11], (int, float)) else 0
+                montant = float(row[8]) if isinstance(row[8], (int, float)) else 0
+                solde_du = float(row[11]) if isinstance(row[11], (int, float)) else 0
                 notes = str(row[13]).strip() if row[13] else ""
+                annee = str(row[1]) if row[1] else "2023"
 
-                def fmt_date(v):
+                def fmt(v):
                     if not v: return ""
                     if hasattr(v, 'strftime'): return v.strftime("%d/%m/%Y")
                     return str(v).split(" ")[0]
@@ -2349,18 +2436,19 @@ async def import_compta_historique(file: UploadFile = File(...)):
                     "numero": numero,
                     "annee": annee,
                     "created_at": datetime.now().isoformat(),
-                    "client_slug": "",
+                    "client_slug": client_slug,
                     "client_nom": client_nom,
                     "devis_numero": devis_lie,
                     "statut": statut,
-                    "prestations": [{"description": description, "type": "", "quantite": 1, "tarif_unitaire": montant, "sous_total": montant}],
+                    "prestations": [{"description": description, "type": "", "quantite": 1,
+                                     "tarif_unitaire": montant, "sous_total": montant}],
                     "total_ht": montant,
                     "tva": "Non applicable — Art. 293B du CGI",
                     "acompte_encaisse": 0,
                     "solde_a_payer": solde_du,
-                    "date_emission": fmt_date(date_envoi_raw),
-                    "date_envoi": fmt_date(date_envoi_raw),
-                    "date_paiement": fmt_date(date_paiement_raw) if statut == "payée" else None,
+                    "date_emission": fmt(row[9]),
+                    "date_envoi": fmt(row[9]),
+                    "date_paiement": fmt(row[10]) if statut == "payée" else None,
                     "periode": periode,
                     "notes": notes,
                     "historique": [{"statut": statut, "date": datetime.now().isoformat(), "source": "import_compta"}],
@@ -2370,18 +2458,40 @@ async def import_compta_historique(file: UploadFile = File(...)):
                 numeros_factures.add(numero)
                 stats["factures_importees"] += 1
 
-        # Sauvegarde
-        _save_devis(devis_existants + nouveaux_devis)
-        _save_factures(factures_existantes + nouvelles_factures)
+        # ── 4. Sauvegarde + sync Drive ────────────────────────────────────────
+        all_devis = devis_existants + nouveaux_devis
+        all_factures = factures_existantes + nouvelles_factures
+        _save_devis(all_devis)
+        _save_factures(all_factures)
+
+        # Rattache aussi les devis au client.json correspondant
+        for d in nouveaux_devis:
+            slug = d.get("client_slug")
+            if not slug:
+                continue
+            matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+            if not matches:
+                continue
+            mp = matches[0] / "client.json"
+            if mp.exists():
+                meta = json.loads(mp.read_text())
+                meta.setdefault("devis", [])
+                # Évite les doublons
+                if not any(x.get("numero") == d["numero"] for x in meta["devis"]):
+                    meta["devis"].append({"id": d["id"], "numero": d["numero"],
+                                          "total_ht": d["total_ht"], "statut": d["statut"]})
+                mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
         return {
             "status": "ok",
             **stats,
-            "total_devis": len(devis_existants) + len(nouveaux_devis),
-            "total_factures": len(factures_existantes) + len(nouvelles_factures),
+            "clients_crees_noms": list(clients_crees.keys()),
+            "total_devis": len(all_devis),
+            "total_factures": len(all_factures),
         }
 
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Import compta historique : {e}")
         raise HTTPException(status_code=500, detail=str(e))

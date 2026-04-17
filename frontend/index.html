@@ -767,7 +767,7 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
 
       {/* Tabs */}
       <div className="tabs">
-        {[['infos', 'Informations'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents'], ['facturation', 'Facturation'], ['historique', 'Historique']].map(([k, l]) => (
+        {[['infos', 'Informations'], ['suivi', 'Suivi'], ['projets', `Projets (${projets.length})`], ['alertes', 'Alertes'], ['documents', 'Documents'], ['facturation', 'Facturation'], ['historique', 'Historique']].map(([k, l]) => (
           <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -902,6 +902,9 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
             </div>
           )}
         </div>
+      )}
+      {tab === 'suivi' && (
+        <SuiviClientView slug={slug} detail={detail} />
       )}
       {tab === 'projets' && !selectedProjet && (
         <div className="card">
@@ -1083,6 +1086,207 @@ function ClientDetailView({ slug, onBack, onRefresh }) {
               </div>
             ));
           })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Suivi opérationnel par client ─────────────────────────────────────────────
+
+function SuiviClientView({ slug, detail }) {
+  const [devis, setDevis] = useState([]);
+  const [factures, setFactures] = useState([]);
+  const [taches, setTaches] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const cd = detail?.client_data || {};
+  const projets = detail?.projets || [];
+  const today = new Date().toISOString().slice(0, 10);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      fetch(`${API}/devis`).then(r => r.ok ? r.json() : []),
+      fetch(`${API}/factures`).then(r => r.ok ? r.json() : []),
+      fetch(`${API}/taches`).then(r => r.ok ? r.json() : []),
+    ]).then(([d, f, t]) => {
+      setDevis((d || []).filter(x => x.client_slug === slug || x.client_nom?.toLowerCase() === (cd.nom_officiel || '').toLowerCase() || x.client_nom?.toLowerCase() === (cd.nom_usuel || '').toLowerCase()));
+      setFactures((f || []).filter(x => x.client_slug === slug || x.client_nom?.toLowerCase() === (cd.nom_officiel || '').toLowerCase()));
+      setTaches((t || []).filter(x => !x.done && (x.client_slug === slug || x.client_detecte?.toLowerCase().includes((cd.nom_usuel || cd.nom_officiel || '').toLowerCase().slice(0, 8)))));
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [slug]);
+
+  if (loading) return <div className="empty"><div className="empty-text">Chargement du suivi...</div></div>;
+
+  const caEncaisse = factures.filter(f => f.statut === 'payée').reduce((s, f) => s + (f.total_ht || 0), 0);
+  const caEnAttente = factures.filter(f => ['envoyée', 'à_faire'].includes(f.statut)).reduce((s, f) => s + (f.solde_a_payer || 0), 0);
+  const devisEnCours = devis.filter(d => !d.archived && !['annulé', 'facturé'].includes(d.statut));
+  const facturesEnCours = factures.filter(f => f.statut !== 'payée' && f.statut !== 'annulée');
+  const projetsEnCours = projets.filter(p => !['archive', 'realise'].includes(p.statut));
+  const projetsRealises = projets.filter(p => p.statut === 'realise');
+
+  function diffLabel(date) {
+    if (!date) return null;
+    const diff = Math.round((new Date(date.includes('/') ? date.split('/').reverse().join('-') : date) - new Date()) / 86400000);
+    if (diff < 0) return { txt: `${Math.abs(diff)}j retard`, color: 'var(--danger)' };
+    if (diff === 0) return { txt: "Aujourd'hui", color: 'var(--danger)' };
+    if (diff === 1) return { txt: 'Demain', color: 'var(--warn)' };
+    if (diff <= 7) return { txt: `J-${diff}`, color: 'var(--warn)' };
+    return { txt: date.includes('/') ? date : date.split('-').reverse().join('/'), color: 'var(--text3)' };
+  }
+
+  return (
+    <div>
+      {/* Métriques globales client */}
+      <div className="metrics-grid" style={{ marginBottom: 16 }}>
+        <div className="metric-card accent-green">
+          <div className="metric-label">CA encaissé</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{caEncaisse.toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{factures.filter(f => f.statut === 'payée').length} factures payées</div>
+        </div>
+        <div className="metric-card accent-warn">
+          <div className="metric-label">En attente</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{caEnAttente.toLocaleString('fr-FR')} €</div>
+          <div className="metric-sub">{facturesEnCours.length} facture(s) en cours</div>
+        </div>
+        <div className="metric-card accent-info">
+          <div className="metric-label">Projets en cours</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{projetsEnCours.length}</div>
+          <div className="metric-sub">{projetsRealises.length} réalisé(s)</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Tâches en attente</div>
+          <div className="metric-value" style={{ fontSize: 22 }}>{taches.length}</div>
+          <div className="metric-sub">{taches.filter(t => t.priorite === 'URGENT').length} urgente(s)</div>
+        </div>
+      </div>
+
+      <div className="grid-2" style={{ marginBottom: 16 }}>
+        {/* Projets en cours */}
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Projets en cours</div>
+          </div>
+          {projetsEnCours.length === 0 ? (
+            <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucun projet en cours.</div></div>
+          ) : projetsEnCours.map((p, i) => {
+            const nbSubs = (p.subventions || []).length;
+            const totalAccorde = (p.subventions || []).reduce((s, x) => s + (Number(x.montant_accorde) || 0), 0);
+            const STATUT_COLORS = { en_construction: 'var(--text3)', en_cours: 'var(--pk-blue)', depose: 'var(--warn)', realise: 'var(--success)', archive: 'var(--text3)', en_attente_conditions: 'var(--warn)' };
+            return (
+              <div key={i} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{p.nom}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    <span style={{ color: STATUT_COLORS[p.statut] || 'var(--text3)', fontWeight: 600 }}>{p.statut?.replace('_', ' ')}</span>
+                    {p.dates?.debut && <span> · {p.dates.debut}</span>}
+                  </div>
+                  {nbSubs > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                      {nbSubs} subvention(s)
+                      {totalAccorde > 0 && <span style={{ color: 'var(--success)', fontWeight: 600 }}> · {totalAccorde.toLocaleString('fr-FR')} € accordés</span>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Tâches à traiter */}
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Tâches à traiter</div>
+          </div>
+          {taches.length === 0 ? (
+            <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucune tâche en attente.</div></div>
+          ) : taches.slice(0, 6).map((t, i) => {
+            const dl = t.deadline ? diffLabel(t.deadline) : null;
+            return (
+              <div key={t.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{t.titre}</div>
+                  {t.projet_nom && <div style={{ fontSize: 11, color: 'var(--pk-blue)' }}>› {t.projet_nom}</div>}
+                </div>
+                <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                  {dl && <div style={{ fontSize: 11, fontWeight: 600, color: dl.color }}>{dl.txt}</div>}
+                  {t.priorite === 'URGENT' && <div style={{ fontSize: 10, background: 'var(--danger-light)', color: 'var(--danger)', padding: '1px 5px', borderRadius: 8, fontWeight: 700 }}>URGENT</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Devis & factures en cours */}
+      <div className="grid-2" style={{ marginBottom: 16 }}>
+        <div className="card">
+          <div className="card-header"><div className="card-title">Devis en cours</div></div>
+          {devisEnCours.length === 0 ? (
+            <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucun devis en cours.</div></div>
+          ) : devisEnCours.slice(0, 5).map(d => {
+            const STATUT_C = { brouillon: 'var(--text3)', envoyé: 'var(--pk-blue)', signé: 'var(--warn)', validé: 'var(--accent)', facturé: 'var(--success)' };
+            return (
+              <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>{d.numero}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>{d.periode}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 700 }}>{(d.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: STATUT_C[d.statut] || 'var(--text3)' }}>{d.statut}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="card">
+          <div className="card-header"><div className="card-title">Factures en cours</div></div>
+          {facturesEnCours.length === 0 ? (
+            <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucune facture en attente.</div></div>
+          ) : facturesEnCours.slice(0, 5).map(f => {
+            const dl = f.date_echeance ? diffLabel(f.date_echeance) : null;
+            const STATUT_C = { à_faire: 'var(--warn)', envoyée: 'var(--pk-blue)', en_retard: 'var(--danger)' };
+            return (
+              <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>{f.numero}</div>
+                  {dl && <div style={{ fontSize: 11, fontWeight: 600, color: dl.color }}>⏰ {dl.txt}</div>}
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 700 }}>{(f.total_ht || 0).toLocaleString('fr-FR')} €</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: STATUT_C[f.statut] || 'var(--text3)' }}>{f.statut}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Subventions toutes associations */}
+      {projets.some(p => (p.subventions || []).length > 0) && (
+        <div className="card">
+          <div className="card-header"><div className="card-title">Pipeline subventions</div></div>
+          {projets.flatMap(p => (p.subventions || []).map(s => ({ ...s, projet_nom: p.nom }))).map((s, i) => {
+            const STATUT_SUB = { 'À préparer': { c: 'var(--text3)', bg: 'var(--surface2)' }, 'Déposée': { c: 'var(--pk-blue)', bg: 'var(--pk-blue-light)' }, 'En instruction': { c: 'var(--warn)', bg: 'var(--warn-light)' }, 'Accordée': { c: 'var(--success)', bg: 'var(--success-light)' }, 'Versée': { c: 'var(--success)', bg: 'var(--success-light)' }, 'Refusée': { c: 'var(--danger)', bg: 'var(--danger-light)' } };
+            const sc = STATUT_SUB[s.statut] || { c: 'var(--text3)', bg: 'var(--surface2)' };
+            return (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>{s.financeur}</div>
+                  <div style={{ fontSize: 11, color: 'var(--pk-blue)' }}>› {s.projet_nom}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  {s.montant_accorde > 0 && <span style={{ fontWeight: 700, color: 'var(--success)' }}>{Number(s.montant_accorde).toLocaleString('fr-FR')} €</span>}
+                  {s.montant_demande > 0 && s.montant_accorde === 0 && <span style={{ color: 'var(--text3)' }}>{Number(s.montant_demande).toLocaleString('fr-FR')} € demandés</span>}
+                  <span style={{ background: sc.bg, color: sc.c, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 }}>{s.statut}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1912,6 +2116,24 @@ function TachesView({ taches, setTaches }) {
 
   const [editingDeadline, setEditingDeadline] = useState(null); // task id en cours d'édition deadline
 
+  // Charge la liste clients pour le sélecteur arborescent
+  useEffect(() => {
+    fetch(`${API}/clients`)
+      .then(r => r.json())
+      .then(clients => {
+        // Charge aussi les projets de chaque client
+        Promise.all(clients.map(c =>
+          fetch(`${API}/clients/${c.slug}`).then(r => r.ok ? r.json() : null).catch(() => null)
+        )).then(details => {
+          window._tachesClients = clients.map((c, i) => ({
+            ...c,
+            projets: details[i]?.projets || [],
+          }));
+        });
+      })
+      .catch(() => {});
+  }, []);
+
   async function createTask() {
     if (!newTask.titre) return;
     try {
@@ -2006,7 +2228,9 @@ function TachesView({ taches, setTaches }) {
                 </div>
                 <div className="task-title" style={{ textDecoration: t.done ? 'line-through' : 'none', marginBottom: 3 }}>{t.titre}</div>
                 <div className="task-meta">
-                  {t.client_detecte && <span>{t.client_detecte} · </span>}
+                  {t.client_detecte && <span style={{ fontWeight: 500 }}>{t.client_detecte}</span>}
+                  {t.projet_nom && <span style={{ color: 'var(--pk-blue)' }}> › {t.projet_nom}</span>}
+                  {(t.client_detecte || t.projet_nom) && <span> · </span>}
                   <span>{t.source}</span>
                   {t.deadline && (
                     editingDeadline === t.id ? (
@@ -2104,29 +2328,59 @@ function TachesView({ taches, setTaches }) {
               </div>
             </div>
 
+            <div className="form-group">
+              <label className="form-label">Client associé</label>
+              <select className="form-input" value={newTask.client_slug || ''}
+                onChange={e => {
+                  const c = (window._tachesClients || []).find(x => x.slug === e.target.value);
+                  setNewTask(p => ({ ...p, client_slug: e.target.value, client_detecte: c?.nom || '', projet_slug: '', projet_nom: '' }));
+                }}>
+                <option value="">— Aucun client —</option>
+                {(window._tachesClients || []).map(c => (
+                  <option key={c.slug} value={c.slug}>{c.nom}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Projet — arborescence du client sélectionné */}
+            {newTask.client_slug && (() => {
+              const client = (window._tachesClients || []).find(c => c.slug === newTask.client_slug);
+              const projets = client?.projets || [];
+              if (!projets.length) return null;
+              return (
+                <div className="form-group">
+                  <label className="form-label">Projet associé (optionnel)</label>
+                  <select className="form-input" value={newTask.projet_slug || ''}
+                    onChange={e => {
+                      const p = projets.find(x => x.slug === e.target.value);
+                      setNewTask(prev => ({ ...prev, projet_slug: e.target.value, projet_nom: p?.nom || '' }));
+                    }}>
+                    <option value="">— Projet général du client —</option>
+                    {projets.map(p => (
+                      <option key={p.slug} value={p.slug}>{p.nom}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })()}
+
             <div className="form-grid">
-              <div className="form-group">
-                <label className="form-label">Client associé</label>
-                <input className="form-input" value={newTask.client_detecte} onChange={e => setNewTask(p => ({ ...p, client_detecte: e.target.value }))}
-                  placeholder="Nom du client (optionnel)" />
-              </div>
               <div className="form-group">
                 <label className="form-label">Deadline</label>
                 <input className="form-input" type="date" value={newTask.deadline} onChange={e => setNewTask(p => ({ ...p, deadline: e.target.value }))} />
               </div>
+              <div className="form-group">
+                <label className="form-label">Calendrier</label>
+                <select className="form-input" value={newTask.calendrier || ''} onChange={e => setNewTask(p => ({ ...p, calendrier: e.target.value }))}>
+                  <option value="">— Aucun —</option>
+                  <option value="formalite">📋 Formalités & Échéances</option>
+                  <option value="culturel">🎭 Calendrier Culturel</option>
+                </select>
+              </div>
             </div>
-
-            <div className="form-group">
-              <label className="form-label">Ajouter au calendrier</label>
-              <select className="form-input" value={newTask.calendrier || ''} onChange={e => setNewTask(p => ({ ...p, calendrier: e.target.value }))}>
-                <option value="">— Aucun —</option>
-                <option value="formalite">📋 Formalités & Échéances</option>
-                <option value="culturel">🎭 Calendrier Culturel</option>
-              </select>
-              {newTask.calendrier && !newTask.deadline && (
-                <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 4 }}>⚠️ Ajoutez une deadline pour que la tâche apparaisse sur le calendrier.</div>
-              )}
-            </div>
+            {newTask.calendrier && !newTask.deadline && (
+              <div style={{ fontSize: 11, color: 'var(--warn)', marginBottom: 8 }}>⚠️ Ajoutez une deadline pour que la tâche apparaisse sur le calendrier.</div>
+            )}
 
             <div className="form-group">
               <label className="form-label">Description</label>
