@@ -1203,7 +1203,7 @@
 
     // ── Calendar strip ────────────────────────────────────────────────────────────
 
-    function CalendarStrip() {
+    function CalendarStrip({ taches = [] }) {
       const today = new Date();
       const days = [];
       for (let i = -2; i <= 12; i++) {
@@ -1212,13 +1212,17 @@
         days.push(d);
       }
       const names = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
-      const events = [today.getDate() + 2, today.getDate() + 7, today.getDate() + 10];
+      // Dates avec vraies tâches (deadlines)
+      const deadlineDates = new Set(
+        taches.filter(t => !t.done && t.deadline).map(t => t.deadline)
+      );
 
       return (
         <div className="calendar-strip">
           {days.map((d, i) => {
             const isToday = d.toDateString() === today.toDateString();
-            const hasEvent = events.includes(d.getDate());
+            const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const hasEvent = deadlineDates.has(dStr);
             return (
               <div key={i} className={`cal-day ${isToday ? 'today' : ''} ${hasEvent ? 'has-event' : ''}`}>
                 <div className="cal-day-name">{names[d.getDay()]}</div>
@@ -1272,6 +1276,8 @@
 
       return (
         <div>
+          {/* Strip calendrier — vraies deadlines des tâches */}
+          <CalendarStrip taches={tachesEnCours} />
           {/* Ligne métriques */}
           <div className="metrics-grid" style={{ marginBottom: 16 }}>
             <div className="metric-card accent-info" onClick={() => setView('clients')} style={{ cursor: 'pointer' }}>
@@ -3061,7 +3067,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
     // ── Tâches view ───────────────────────────────────────────────────────────────
 
-    function TachesView({ taches, setTaches }) {
+    function TachesView({ taches, setTaches, setView, setSelectedClient }) {
       const [filterStatut, setFilterStatut] = useState('pending');
       const [filterCategorie, setFilterCategorie] = useState('all');
       const [filterClient, setFilterClient] = useState('all');
@@ -3316,6 +3322,12 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                           onClick={() => markDone(t.id)}
                           style={{ fontSize: 11, padding: '3px 10px', background: 'var(--success-light)', color: 'var(--success)', border: '1px solid #86efac', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
                         >✅ Fait</button>
+                        {t.client_slug && setView && setSelectedClient && (
+                          <button
+                            onClick={() => { setSelectedClient(t.client_slug); setView('clients'); }}
+                            style={{ fontSize: 11, padding: '3px 10px', background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', border: '1px solid var(--pk-blue)30', borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >👤 Client</button>
+                        )}
                         {!t.deadline && (
                           <button
                             onClick={() => setEditingDeadline(t.id)}
@@ -4338,7 +4350,107 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
     // ── Devis & Factures ──────────────────────────────────────────────────────────
 
-    function DevisFacturesView() {
+    // ── Modal PDF (URL + Upload) ────────────────────────────────────────────────
+    function PdfAttachModal({ type, id, currentUrl, onClose, onSaved }) {
+      const [tabPdf, setTabPdf] = useState(currentUrl ? 'url' : 'url');
+      const [urlInput, setUrlInput] = useState(currentUrl || '');
+      const [uploading, setUploading] = useState(false);
+      const [msg, setMsg] = useState('');
+
+      async function saveUrl() {
+        if (!urlInput.trim()) return;
+        const endpoint = type === 'devis' ? `${API}/devis/${id}` : `${API}/factures/${id}`;
+        await fetch(endpoint, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pdf_url: urlInput.trim() }) });
+        onSaved(urlInput.trim());
+        onClose();
+      }
+
+      async function handleUpload(file) {
+        if (!file) return;
+        setUploading(true);
+        setMsg('Upload en cours...');
+        try {
+          // Convertit le PDF en base64 DataURL et le stocke comme pdf_url
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            const dataUrl = e.target.result;
+            const endpoint = type === 'devis' ? `${API}/devis/${id}` : `${API}/factures/${id}`;
+            await fetch(endpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pdf_url: dataUrl, pdf_nom: file.name })
+            });
+            onSaved(dataUrl);
+            setMsg('✅ PDF attaché !');
+            setTimeout(() => onClose(), 800);
+          };
+          reader.readAsDataURL(file);
+        } catch (err) {
+          setMsg('❌ Erreur : ' + err.message);
+        }
+        setUploading(false);
+      }
+
+      return (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+          <div className="modal" style={{ maxWidth: 460 }}>
+            <div className="modal-title">📎 Attacher un PDF</div>
+            <div className="tabs" style={{ marginBottom: 16 }}>
+              <button className={`tab ${tabPdf === 'url' ? 'active' : ''}`} onClick={() => setTabPdf('url')}>🔗 Lien URL</button>
+              <button className={`tab ${tabPdf === 'upload' ? 'active' : ''}`} onClick={() => setTabPdf('upload')}>📁 Depuis l'ordinateur</button>
+            </div>
+
+            {tabPdf === 'url' && (
+              <div>
+                <div className="form-group">
+                  <label className="form-label">URL du PDF (Google Drive, Dropbox, site...)</label>
+                  <input className="form-input" value={urlInput} onChange={e => setUrlInput(e.target.value)}
+                    placeholder="https://drive.google.com/file/d/.../view" autoFocus />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14, padding: '8px 10px', background: 'var(--pk-blue-light)', borderRadius: 6 }}>
+                  💡 Drive : ouvrir le PDF → Partager (accès public) → Copier le lien
+                </div>
+                {currentUrl && (
+                  <div style={{ marginBottom: 12 }}>
+                    <a href={currentUrl.startsWith('data:') ? '#' : currentUrl} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: 'var(--accent)' }}>📄 Voir le PDF actuel →</a>
+                    <button onClick={async () => {
+                      const ep = type === 'devis' ? `${API}/devis/${id}` : `${API}/factures/${id}`;
+                      await fetch(ep, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pdf_url: null, pdf_nom: null }) });
+                      onSaved(null); onClose();
+                    }} style={{ marginLeft: 12, fontSize: 11, background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer' }}>🗑 Supprimer</button>
+                  </div>
+                )}
+                <div className="modal-footer">
+                  <button className="btn" onClick={onClose}>Annuler</button>
+                  <button className="btn btn-primary" onClick={saveUrl} disabled={!urlInput.trim()}>Enregistrer →</button>
+                </div>
+              </div>
+            )}
+
+            {tabPdf === 'upload' && (
+              <div>
+                <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                  <label className="btn btn-primary" style={{ cursor: 'pointer', fontSize: 13 }}>
+                    📁 Choisir un fichier PDF
+                    <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }}
+                      onChange={e => e.target.files[0] && handleUpload(e.target.files[0])} />
+                  </label>
+                  {uploading && <div style={{ marginTop: 12, color: 'var(--text3)', fontSize: 12 }}>⏳ Upload en cours...</div>}
+                  {msg && <div style={{ marginTop: 12, fontSize: 12, color: msg.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }}>{msg}</div>}
+                  <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text3)' }}>Le PDF sera stocké directement dans l'application.</div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={onClose}>Fermer</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function DevisFacturesView({ setView, setSelectedClient, newDevisTrigger }) {
       const [tab, setTab] = useState('devis');
       const [filterArchive, setFilterArchive] = useState(false);
       const [filterAnnee, setFilterAnnee] = useState('tous');
@@ -4347,6 +4459,12 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [loading, setLoading] = useState(true);
       const [showNewDevis, setShowNewDevis] = useState(false);
       const [importMsg, setImportMsg] = useState('');
+      const [pdfModal, setPdfModal] = useState(null); // { type, id, currentUrl }
+
+      // Ouvre la modale "Nouveau devis" quand le bouton topbar est pressé
+      useEffect(() => {
+        if (newDevisTrigger > 0) setShowNewDevis(true);
+      }, [newDevisTrigger]);
 
       function exportComptaExcel() {
         // Génère un CSV structuré (compatible Excel) style Compta_Pro
@@ -4572,7 +4690,14 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                         )}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 2 }}>
-                        <strong>{devis.client_nom}</strong>
+                        {devis.client_slug && setView && setSelectedClient ? (
+                          <button onClick={() => { setSelectedClient(devis.client_slug); setView('clients'); }}
+                            style={{ fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--pk-blue)', fontSize: 12, padding: 0 }}>
+                            👤 {devis.client_nom}
+                          </button>
+                        ) : (
+                          <strong>{devis.client_nom}</strong>
+                        )}
                         {devis.periode && <span style={{ color: 'var(--text3)' }}> · {devis.periode}</span>}
                       </div>
                       {/* Échéances */}
@@ -4626,7 +4751,18 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                             <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
                               onClick={() => patchDevis(devis.id, { statut: 'annulé' })}>⛔ Annuler</button>
                           )}
-                          <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => printDevis(devis)} title="PDF">🖨</button>
+                          {devis.pdf_url ? (
+                            <>
+                              <a href={devis.pdf_url.startsWith('data:') ? devis.pdf_url : devis.pdf_url} target="_blank" rel="noopener noreferrer"
+                                className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--success)', borderColor: 'var(--success)' }}
+                                title={devis.pdf_nom || 'Voir le PDF'}>📄 PDF</a>
+                              <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                                onClick={() => setPdfModal({ type: 'devis', id: devis.id, currentUrl: devis.pdf_url })} title="Changer le PDF">✏️</button>
+                            </>
+                          ) : (
+                            <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                              onClick={() => setPdfModal({ type: 'devis', id: devis.id, currentUrl: null })} title="Attacher un PDF">📎 PDF</button>
+                          )}
                           <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'transparent' }}
                             onClick={() => deleteDevis(devis.id)} title="Supprimer">🗑</button>
                         </div>
@@ -4658,7 +4794,14 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                         )}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 2 }}>
-                        <strong>{fac.client_nom}</strong>
+                        {fac.client_slug && setView && setSelectedClient ? (
+                          <button onClick={() => { setSelectedClient(fac.client_slug); setView('clients'); }}
+                            style={{ fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--pk-blue)', fontSize: 12, padding: 0 }}>
+                            👤 {fac.client_nom}
+                          </button>
+                        ) : (
+                          <strong>{fac.client_nom}</strong>
+                        )}
                         {fac.devis_numero && <span style={{ color: 'var(--text3)' }}> · Devis : {fac.devis_numero}</span>}
                       </div>
                       {fac.date_echeance && fac.statut !== 'payée' && (
@@ -4693,6 +4836,18 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                           <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
                             onClick={() => patchFacture(fac.id, { statut: 'en_retard' })}>🚨 J+7 impayé</button>
                         )}
+                        {fac.pdf_url ? (
+                          <>
+                            <a href={fac.pdf_url.startsWith('data:') ? fac.pdf_url : fac.pdf_url} target="_blank" rel="noopener noreferrer"
+                              className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--success)', borderColor: 'var(--success)' }}
+                              title={fac.pdf_nom || 'Voir le PDF'}>📄 PDF</a>
+                            <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                              onClick={() => setPdfModal({ type: 'facture', id: fac.id, currentUrl: fac.pdf_url })} title="Changer le PDF">✏️</button>
+                          </>
+                        ) : (
+                          <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }}
+                            onClick={() => setPdfModal({ type: 'facture', id: fac.id, currentUrl: null })} title="Attacher un PDF">📎 PDF</button>
+                        )}
                         <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'transparent' }}
                           onClick={() => deleteFacture(fac.id)} title="Supprimer/Annuler">🗑</button>
                       </div>
@@ -4709,6 +4864,31 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           )}
 
           {showNewDevis && <NewDevisModal onClose={() => setShowNewDevis(false)} onCreated={() => { load(); setShowNewDevis(false); }} />}
+
+          {/* Modal PDF */}
+          {pdfModal && (
+            <PdfAttachModal
+              type={pdfModal.type}
+              id={pdfModal.id}
+              currentUrl={pdfModal.currentUrl}
+              onClose={() => setPdfModal(null)}
+              onSaved={(url) => {
+                // Met à jour localement sans recharger tout
+                setData(prev => {
+                  if (!prev) return prev;
+                  const updateList = (list) => list.map(item =>
+                    item.id === pdfModal.id ? { ...item, pdf_url: url } : item
+                  );
+                  return {
+                    ...prev,
+                    liste_devis: pdfModal.type === 'devis' ? updateList(prev.liste_devis || []) : (prev.liste_devis || []),
+                    liste_factures: pdfModal.type === 'facture' ? updateList(prev.liste_factures || []) : (prev.liste_factures || []),
+                  };
+                });
+                setPdfModal(null);
+              }}
+            />
+          )}
         </div>
       );
     }
@@ -5760,6 +5940,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
     function AppContent() {
       const [view, setView] = useState('dashboard');
       const [selectedClient, setSelectedClient] = useState(null);
+      const [newDevisFromTopbar, setNewDevisFromTopbar] = useState(0); // incrémenté pour déclencher ouverture modale dans DevisFacturesView
       const [data, setData] = useState({ nb_clients: 0, nb_alertes_urgentes: 0, clients: [], alertes: [] });
       const [taches, setTaches] = useState([]);
       const [finance, setFinance] = useState(null);
@@ -5885,6 +6066,9 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 {view === 'clients' && !selectedClient && (
                   <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Nouveau client</button>
                 )}
+                {view === 'devis' && (
+                  <button className="btn btn-primary" onClick={() => setNewDevisFromTopbar(p => p + 1)}>+ Nouveau devis</button>
+                )}
               </div>
             </header>
             <div className="mobile-readonly-banner">
@@ -5895,8 +6079,8 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
               {view === 'dashboard' && <DashboardView data={data} taches={taches} finance={finance} onNewClient={() => setShowModal(true)} setView={setView} />}
               {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
               {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
-              {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} />}
-              {view === 'devis' && <DevisFacturesView />}
+              {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} setView={setView} setSelectedClient={setSelectedClient} />}
+              {view === 'devis' && <DevisFacturesView setView={setView} setSelectedClient={setSelectedClient} newDevisTrigger={newDevisFromTopbar} />}
               {view === 'subventions' && <SubventionsView clients={data?.clients || []} />}
               {view === 'annuaire' && <AnnuaireView />}
               {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} />}
