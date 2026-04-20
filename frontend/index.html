@@ -5737,7 +5737,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           const res = await fetch(`${API}/subventions`, {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
           });
-          if (res.ok) setSubventions(p => [await res.clone().json(), ...p]);
+          if (res.ok) {
+            const saved = await res.json();
+            setSubventions(p => [saved, ...p]);
+          }
         } catch {}
         setShowNew(false);
         setNewSub(EMPTY_SUB);
