@@ -1245,14 +1245,21 @@
       const tomorrowStr = String(tomorrow.getFullYear()) + '-' + String(tomorrow.getMonth() + 1).padStart(2, '0') + '-' + String(tomorrow.getDate()).padStart(2, '0');
 
       const tachesEnCours = taches.filter(t => !t.done);
-
       const tachesUrgentes = tachesEnCours.filter(t => t.priorite === 'URGENT' || (t.deadline && t.deadline < todayStr));
       const facturesEnRetard = (finance?.liste_factures || []).filter(f => f.statut === 'en_retard');
-
       const tachesAujourdhuiDemain = tachesEnCours.filter(t => !tachesUrgentes.includes(t) && t.deadline && (t.deadline === todayStr || t.deadline === tomorrowStr));
-
       const devisEnvoyes = (finance?.liste_devis || []).filter(d => d.statut === 'envoyé');
       const facturesEnvoyees = (finance?.liste_factures || []).filter(f => f.statut === 'envoyée');
+
+      // Subventions
+      const subventions = (finance?.subventions || []).filter(s => !s.archived);
+      const subvEnCours = subventions.filter(s => ['À préparer','En cours','Déposée','En instruction'].includes(s.statut));
+      const subvObtenues = subventions.filter(s => ['Accordée','Versée'].includes(s.statut));
+      const caSubvObtenu = subvObtenues.reduce((sum, s) => sum + (Number(s.montant_sollicite)||0), 0);
+      const subvDeadlines = subventions
+        .filter(s => s.deadline && s.deadline >= todayStr && !['Accordée','Versée','Refusée'].includes(s.statut))
+        .sort((a,b) => a.deadline.localeCompare(b.deadline))
+        .slice(0, 3);
 
       function diffLabel(deadline) {
         if (!deadline) return null;
@@ -1285,94 +1292,269 @@
               <div className="metric-label">CA encaissé</div>
               <div className="metric-value" style={{ fontSize: 20 }}>{((finance?.factures?.ca_encaisse) || 0).toLocaleString('fr-FR')} €</div>
             </div>
-          </div>
+           </div>
 
-          <div className="grid-2">
-            {/* URGENCES */}
-            <div className="card" style={{ borderTop: '4px solid var(--danger)' }}>
-              <div className="card-header"><div className="card-title" style={{ color: 'var(--danger)' }}>🔥 URGENCES & RETARDS</div></div>
+           <div className="grid-2">
+             {/* URGENCES */}
+             <div className="card" style={{ borderTop: '4px solid var(--danger)' }}>
+               <div className="card-header"><div className="card-title" style={{ color: 'var(--danger)' }}>🔥 URGENCES & RETARDS</div></div>
+               
+               {tachesUrgentes.length === 0 && facturesEnRetard.length === 0 && (
+                 <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucune urgence. 🧘</div></div>
+               )}
 
-              {tachesUrgentes.length === 0 && facturesEnRetard.length === 0 && (
-                <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Aucune urgence. 🧘</div></div>
-              )}
-
-              {tachesUrgentes.map(t => (
-                <div key={t.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{t.titre}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text2)' }}>{t.client_detecte || t.client_nom}</div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    {t.priorite === 'URGENT' && <span style={{ background: 'var(--danger)', color: 'white', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>URGENT</span>}
-                    {t.deadline && <div style={{ fontSize: 10, color: 'var(--danger)', marginTop: 4 }}>{diffLabel(t.deadline)?.txt}</div>}
-                  </div>
-                </div>
-              ))}
-
-              {facturesEnRetard.map(f => (
-                <div key={f.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>Facture impayée : {f.numero}</div>
-                    <div style={{ fontSize: 11, color: 'var(--danger)' }}>{f.client_nom}</div>
-                  </div>
-                  <div style={{ textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>
-                    {Number(f.total_ht).toLocaleString('fr-FR')} €
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* AUJOURD'HUI & DEMAIN */}
-            <div className="card" style={{ borderTop: '4px solid var(--warn)' }}>
-              <div className="card-header"><div className="card-title">📅 AUJOURD'HUI & DEMAIN</div></div>
-              {tachesAujourdhuiDemain.length === 0 ? (
-                <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Rien de prévu pour ces 48h.</div></div>
-              ) : tachesAujourdhuiDemain.map(t => (
-                <div key={t.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{t.titre}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text2)' }}>{t.client_detecte || t.client_nom}</div>
-                  </div>
-                  <div style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--warn)' }}>
-                    {diffLabel(t.deadline)?.txt}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* EN ATTENTE */}
-            <div className="card" style={{ gridColumn: '1 / -1', borderTop: '4px solid var(--pk-blue)' }}>
-              <div className="card-header"><div className="card-title">⏳ SUIVI (Devis & Factures envoyés)</div></div>
-
-              <div className="grid-2">
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase' }}>Devis en attente de signature</div>
-                  {devisEnvoyes.length === 0 ? <div className="empty-text" style={{ fontSize: 12 }}>Aucun devis en attente.</div> : devisEnvoyes.map(d => (
-                    <div key={d.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
-                      <div style={{ fontWeight: 600 }}>{d.client_nom}</div>
-                      <div style={{ color: 'var(--text2)' }}>{d.numero} — {Number(d.total_ht).toLocaleString()}€</div>
+               {tachesUrgentes.map(t => (
+                 <div key={t.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ flex: 1 }}>
+                       <div style={{ fontSize: 13, fontWeight: 500 }}>{t.titre}</div>
+                       <div style={{ fontSize: 11, color: 'var(--text2)' }}>{t.client_detecte || t.client_nom}</div>
                     </div>
-                  ))}
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase' }}>Factures en attente de paiement</div>
-                  {facturesEnvoyees.length === 0 ? <div className="empty-text" style={{ fontSize: 12 }}>Aucune facture en attente.</div> : facturesEnvoyees.map(f => (
-                    <div key={f.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
-                      <div style={{ fontWeight: 600 }}>{f.client_nom}</div>
-                      <div style={{ color: 'var(--text2)' }}>{f.numero} — {Number(f.total_ht).toLocaleString()}€</div>
-                      <div style={{ color: 'var(--warn)', fontSize: 10 }}>Échéance : {f.date_echeance}</div>
+                    <div style={{ textAlign: 'right' }}>
+                       {t.priorite === 'URGENT' && <span style={{ background: 'var(--danger)', color: 'white', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>URGENT</span>}
+                       {t.deadline && <div style={{ fontSize: 10, color: 'var(--danger)', marginTop: 4 }}>{diffLabel(t.deadline)?.txt}</div>}
                     </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
+                 </div>
+               ))}
+
+               {facturesEnRetard.map(f => (
+                 <div key={f.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                     <div style={{ flex: 1 }}>
+                       <div style={{ fontSize: 13, fontWeight: 500 }}>Facture impayée : {f.numero}</div>
+                       <div style={{ fontSize: 11, color: 'var(--danger)' }}>{f.client_nom}</div>
+                     </div>
+                     <div style={{ textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>
+                       {Number(f.total_ht).toLocaleString('fr-FR')} €
+                     </div>
+                 </div>
+               ))}
+             </div>
+
+             {/* AUJOURD'HUI & DEMAIN */}
+             <div className="card" style={{ borderTop: '4px solid var(--warn)' }}>
+                <div className="card-header"><div className="card-title">📅 AUJOURD'HUI & DEMAIN</div></div>
+                {tachesAujourdhuiDemain.length === 0 ? (
+                  <div className="empty" style={{ padding: '12px 0' }}><div className="empty-text">Rien de prévu pour ces 48h.</div></div>
+                ) : tachesAujourdhuiDemain.map(t => (
+                  <div key={t.id} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ flex: 1 }}>
+                       <div style={{ fontSize: 13, fontWeight: 500 }}>{t.titre}</div>
+                       <div style={{ fontSize: 11, color: 'var(--text2)' }}>{t.client_detecte || t.client_nom}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--warn)' }}>
+                       {diffLabel(t.deadline)?.txt}
+                    </div>
+                  </div>
+                ))}
+             </div>
+
+             {/* EN ATTENTE */}
+             <div className="card" style={{ gridColumn: '1 / -1', borderTop: '4px solid var(--pk-blue)' }}>
+               <div className="card-header"><div className="card-title">⏳ SUIVI (Devis & Factures envoyés)</div></div>
+               
+               <div className="grid-2">
+                 <div>
+                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase' }}>Devis en attente de signature</div>
+                   {devisEnvoyes.length === 0 ? <div className="empty-text" style={{ fontSize: 12 }}>Aucun devis en attente.</div> : devisEnvoyes.map(d => (
+                     <div key={d.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                        <div style={{ fontWeight: 600 }}>{d.client_nom}</div>
+                        <div style={{ color: 'var(--text2)' }}>{d.numero} — {Number(d.total_ht).toLocaleString()}€</div>
+                     </div>
+                   ))}
+                 </div>
+                 <div>
+                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase' }}>Factures en attente de paiement</div>
+                   {facturesEnvoyees.length === 0 ? <div className="empty-text" style={{ fontSize: 12 }}>Aucune facture en attente.</div> : facturesEnvoyees.map(f => (
+                     <div key={f.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                        <div style={{ fontWeight: 600 }}>{f.client_nom}</div>
+                        <div style={{ color: 'var(--text2)' }}>{f.numero} — {Number(f.total_ht).toLocaleString()}€</div>
+                        <div style={{ color: 'var(--warn)', fontSize: 10 }}>Échéance : {f.date_echeance}</div>
+                     </div>
+                   ))}
+                 </div>
+               </div>
+             </div>
+           </div>
         </div>
       );
     }
 
 
     // ── Client detail view ────────────────────────────────────────────────────────
+
+    // ── Documents client catégorisés ─────────────────────────────────────────
+
+    function DocumentsClientView({ detail, slug, onRefresh }) {
+      const [catActive, setCatActive] = useState('admin');
+      const [uploadMsg, setUploadMsg] = useState('');
+      const [docs, setDocs] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(`pk_docs_${slug}`) || '{}'); } catch { return {}; }
+      });
+
+      const CATEGORIES = [
+        {
+          id: 'admin',
+          label: 'Admin générale structure',
+          icon: '🏛',
+          color: '#2834B7',
+          bg: 'var(--pk-blue-light)',
+          desc: 'Statuts, RNA, SIRET, récépissé préfecture, JO, assurances, comptes certifiés, bilan N-1',
+          exemples: ['Statuts', 'Récépissé préfecture', 'Extrait JO', 'SIRET / SIREN', 'RIB', 'Compte certifié N-1', 'Rapport AG', 'Assurance'],
+        },
+        {
+          id: 'social',
+          label: 'Gestion sociale',
+          icon: '👥',
+          color: '#6A1B9A',
+          bg: '#F3E5F5',
+          desc: 'GUSO, DPAE, contrats artistes, fiche ETPT, bulletins de salaire, déclarations Urssaf',
+          exemples: ['Contrats artistes', 'Bulletins GUSO', 'DPAE', 'Fiches ETPT', 'Déclarations Urssaf', 'Congés spectacles'],
+        },
+        {
+          id: 'projet',
+          label: 'Gestion de projet',
+          icon: '📋',
+          color: '#E65100',
+          bg: '#FFF3E0',
+          desc: 'Budgets prévisionnels, dossiers subventions, conventions partenariales, comptes-rendus',
+          exemples: ['Budget prévisionnel', 'Dossier subvention', 'Convention partenariale', 'Compte-rendu projet', 'Plan de diffusion', 'Fiche technique'],
+        },
+      ];
+
+      function saveDocs(newDocs) {
+        setDocs(newDocs);
+        try { localStorage.setItem(`pk_docs_${slug}`, JSON.stringify(newDocs)); } catch {}
+      }
+
+      function addDoc(catId, doc) {
+        const updated = { ...docs, [catId]: [...(docs[catId] || []), doc] };
+        saveDocs(updated);
+      }
+
+      function removeDoc(catId, idx) {
+        const updated = { ...docs, [catId]: (docs[catId] || []).filter((_, i) => i !== idx) };
+        saveDocs(updated);
+      }
+
+      function handleFileUpload(catId, file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          addDoc(catId, {
+            nom: file.name,
+            type: file.name.split('.').pop().toUpperCase(),
+            size: Math.round(file.size / 1024) + ' ko',
+            date: new Date().toLocaleDateString('fr-FR'),
+            data: e.target.result, // base64 pour petits docs
+            source: 'local',
+          });
+          setUploadMsg(`✅ ${file.name} ajouté dans ${CATEGORIES.find(c=>c.id===catId)?.label}`);
+          setTimeout(() => setUploadMsg(''), 3000);
+        };
+        reader.readAsDataURL(file);
+      }
+
+      function addLinkDoc(catId, nom, url) {
+        if (!nom || !url) return;
+        addDoc(catId, { nom, url, type: 'LIEN', date: new Date().toLocaleDateString('fr-FR'), source: 'drive' });
+      }
+
+      const catCurrent = CATEGORIES.find(c => c.id === catActive);
+      const docsCurrentCat = docs[catActive] || [];
+
+      return (
+        <div>
+          {/* Liens Drive principaux */}
+          {(detail.drive_folder_id || detail.drive_asso_id) && (
+            <div className="card" style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              {detail.drive_asso_id && (
+                <a href={`https://docs.google.com/spreadsheets/d/${detail.drive_asso_id}/edit`} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 12, color: 'var(--success)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  📊 Fiche Association / Structure →
+                </a>
+              )}
+              {detail.drive_folder_id && (
+                <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 12, color: 'var(--pk-blue)', fontWeight: 500 }}>
+                  📁 Dossier Drive complet →
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Tabs catégories */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            {CATEGORIES.map(cat => (
+              <button key={cat.id}
+                onClick={() => setCatActive(cat.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+                  borderRadius: 8, border: `1.5px solid ${catActive === cat.id ? cat.color : 'var(--border2)'}`,
+                  background: catActive === cat.id ? cat.bg : 'var(--surface)',
+                  color: catActive === cat.id ? cat.color : 'var(--text2)',
+                  fontWeight: catActive === cat.id ? 600 : 400, fontSize: 13, cursor: 'pointer',
+                }}>
+                {cat.icon} {cat.label}
+                {(docs[cat.id] || []).length > 0 && (
+                  <span style={{ background: cat.color, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, marginLeft: 2 }}>
+                    {(docs[cat.id] || []).length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Contenu catégorie active */}
+          {catCurrent && (
+            <div className="card">
+              <div style={{ marginBottom: 12, padding: '10px 12px', background: catCurrent.bg, borderRadius: 8, borderLeft: `3px solid ${catCurrent.color}` }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: catCurrent.color, marginBottom: 3 }}>{catCurrent.icon} {catCurrent.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>{catCurrent.desc}</div>
+              </div>
+
+              {/* Docs existants */}
+              {docsCurrentCat.length === 0 ? (
+                <div className="empty" style={{ padding: '16px 0' }}>
+                  <div className="empty-text">Aucun document dans cette catégorie.</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                    Exemples : {catCurrent.exemples.join(' · ')}
+                  </div>
+                </div>
+              ) : docsCurrentCat.map((doc, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 6, background: catCurrent.bg, color: catCurrent.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                    {doc.type}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    {doc.url
+                      ? <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 500, color: 'var(--pk-blue)' }}>{doc.nom}</a>
+                      : doc.data
+                        ? <a href={doc.data} download={doc.nom} style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{doc.nom}</a>
+                        : <span style={{ fontSize: 13, fontWeight: 500 }}>{doc.nom}</span>
+                    }
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>{doc.size && `${doc.size} · `}{doc.date}</div>
+                  </div>
+                  <button onClick={() => removeDoc(catActive, i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14, padding: '2px 6px' }}>✕</button>
+                </div>
+              ))}
+
+              {/* Actions */}
+              {uploadMsg && <div style={{ fontSize: 12, color: 'var(--success)', padding: '6px 0', marginTop: 8 }}>{uploadMsg}</div>}
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                <label className="btn" style={{ fontSize: 12, cursor: 'pointer' }}>
+                  📁 Ajouter un fichier
+                  <input type="file" style={{ display: 'none' }}
+                    onChange={e => e.target.files[0] && handleFileUpload(catActive, e.target.files[0])} />
+                </label>
+                <button className="btn" style={{ fontSize: 12 }} onClick={() => {
+                  const nom = window.prompt('Nom du document :');
+                  const url = window.prompt('URL (Drive, Dropbox, etc.) :');
+                  if (nom && url) addLinkDoc(catActive, nom, url);
+                }}>🔗 Ajouter un lien Drive</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
 
     // ── Logo & Signature client ───────────────────────────────────────────────────
 
@@ -1893,85 +2075,7 @@
 
           {/* Documents */}
           {tab === 'documents' && (
-            <div className="card">
-              <div className="card-header">
-                <div className="card-title">Fichiers Google Drive</div>
-                <div className="card-subtitle">Cliquez pour ouvrir et éditer directement</div>
-              </div>
-
-              {/* Fichier association */}
-              {detail.drive_asso_id && (
-                <a
-                  href={`https://docs.google.com/spreadsheets/d/${detail.drive_asso_id}/edit`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ textDecoration: 'none' }}
-                >
-                  <div className="client-row" style={{ cursor: 'pointer' }}>
-                    <div className="client-avatar" style={{ background: '#E8F5E9', color: '#2E7D32', borderRadius: 8, fontSize: 12 }}>XLS</div>
-                    <div className="client-info">
-                      <div className="client-name">Fiche Association / Structure</div>
-                      <div className="client-meta">Identité, caisses, finances, RH, dashboard alertes</div>
-                    </div>
-                    <span style={{ fontSize: 12, color: 'var(--accent)' }}>Ouvrir dans Sheets →</span>
-                  </div>
-                </a>
-              )}
-
-              {/* Budgets projets */}
-              {(detail.projets || []).map((p, i) => (
-                <div key={i}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '10px 0 6px', borderTop: i > 0 ? '1px solid var(--border)' : 'none' }}>
-                    📋 {p.nom}
-                  </div>
-                  <a href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                    <div className="client-row" style={{ cursor: 'pointer', paddingLeft: 8 }}>
-                      <div className="client-avatar" style={{ background: '#FEF3C7', color: '#92400E', borderRadius: 8, fontSize: 11 }}>PRO</div>
-                      <div className="client-info">
-                        <div className="client-name">Fiche prospect — {p.nom}</div>
-                        <div className="client-meta">Collecte infos · Artistes · Faisabilité</div>
-                      </div>
-                      <span style={{ fontSize: 12, color: 'var(--accent)' }}>Sheets →</span>
-                    </div>
-                  </a>
-                  <a href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                    <div className="client-row" style={{ cursor: 'pointer', paddingLeft: 8 }}>
-                      <div className="client-avatar" style={{ background: 'var(--info-light)', color: 'var(--info)', borderRadius: 8, fontSize: 11 }}>SUB</div>
-                      <div className="client-info">
-                        <div className="client-name">Dossier subvention — {p.nom}</div>
-                        <div className="client-meta">Budget maître · Salaires · ETPT · Mairie · Partenaires</div>
-                      </div>
-                      <span style={{ fontSize: 12, color: 'var(--accent)' }}>Sheets →</span>
-                    </div>
-                  </a>
-                </div>
-              ))}
-
-              {!detail.drive_asso_id && !detail.drive_projets_folder_id && (
-                <div className="empty">
-                  <div className="empty-text">Fichiers non encore synchronisés sur Drive.</div>
-                  {detail.drive_folder_id && (
-                    <div style={{ marginTop: 8 }}>
-                      <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
-                        Ouvrir le dossier Drive →
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Lien dossier Drive complet */}
-              {detail.drive_folder_id && (
-                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" style={{ fontSize: 12, color: 'var(--text3)' }}>
-                    Voir le dossier Drive complet →
-                  </a>
-                  <a href={`${API}/templates/doc-synchronisation`} target="_blank" style={{ fontSize: 12, color: 'var(--accent)' }}>
-                    📖 Télécharger la documentation de synchronisation
-                  </a>
-                </div>
-              )}
-            </div>
+            <DocumentsClientView detail={detail} slug={slug} onRefresh={load} />
           )}
           {/* Facturation */}
           {tab === 'facturation' && (
@@ -4475,9 +4579,8 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [filterAnnee, setFilterAnnee] = useState('tous');
       const [filterMois, setFilterMois] = useState('tous');
 
-      const MOIS_LABELS = ['Tous les mois', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+      const MOIS_LABELS = ['Tous les mois','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
-      const anneesDispos = ['tous', ...Array.from(new Set((data?.liste_devis || []).map(d => d.annee).filter(Boolean))).sort((a, b) => b - a)];
       const [data, setData] = useState(null);
       const [loading, setLoading] = useState(true);
       const [showNewDevis, setShowNewDevis] = useState(false);
@@ -4489,50 +4592,22 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         if (newDevisTrigger > 0) setShowNewDevis(true);
       }, [newDevisTrigger]);
 
-      function exportComptaExcel() {
-        // Génère un CSV structuré (compatible Excel) style Compta_Pro
-        const devisList = data?.liste_devis || [];
-        const facturesList = data?.liste_factures || [];
-
-        // Feuille Devis
-        const devisHeader = ['#', 'ANNÉE', 'N° DEVIS', 'CLIENT', 'ÉTAT', 'DÉTAIL PRESTATION', 'PÉRIODE', 'DATE ENVOI', 'MONTANT DEVIS (€)', 'ACOMPTE (€)', 'RETOUR SIGNÉ', 'N° FACTURE LIÉ', 'MONTANT FACTURÉ (€)', 'NOTES'];
-        const devisRows = devisList.map((d, i) => [
-          i + 1, d.annee || '', d.numero || '', d.client_nom || '', d.statut || '',
-          d.prestations?.[0]?.description || '', d.periode || '', d.date_envoi || '',
-          d.total_ht || 0, d.acompte_montant || 0, d.date_signature || '',
-          d.factures_liees?.[0] || '', d.montant_facture || '',
-          d.notes || ''
-        ]);
-
-        // Feuille Factures
-        const factHeader = ['#', 'ANNÉE', 'N° FACTURE', 'CLIENT', 'ÉTAT', 'PRESTATION', 'PÉRIODE', 'DEVIS LIÉ', 'MONTANT (€)', 'DATE ENVOI', 'DATE PAIEMENT', 'SOLDE DÛ (€)', 'NOTES'];
-        const factRows = facturesList.map((f, i) => [
-          i + 1, f.annee || '', f.numero || '', f.client_nom || '', f.statut || '',
-          f.prestations?.[0]?.description || '', f.periode || '', f.devis_numero || '',
-          f.total_ht || 0, f.date_envoi || '', f.date_paiement || '',
-          f.solde_a_payer || 0, f.notes || ''
-        ]);
-
-        // Export CSV (2 sections séparées)
-        const rows = [
-          ['PAUSE KRÉYOL — SUIVI DES DEVIS'],
-          devisHeader,
-          ...devisRows,
-          [],
-          ['PAUSE KRÉYOL — SUIVI DES FACTURES'],
-          factHeader,
-          ...factRows,
-          [],
-          ['TOTAL FACTURÉ', '', '', '', '', '', '', '', facturesList.reduce((s, f) => s + (f.total_ht || 0), 0), '', '', facturesList.filter(f => f.statut === 'payée').reduce((s, f) => s + (f.total_ht || 0), 0)],
-        ];
-
-        const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
-        const bom = '\uFEFF'; // BOM UTF-8 pour Excel français
-        const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `PauseKreyol_Comptabilite_${new Date().toISOString().slice(0, 10)}.csv`;
-        a.click();
+      async function exportComptaExcel() {
+        // Télécharge le vrai xlsx via l'API (sauvegardé aussi sur Drive)
+        try {
+          setImportMsg('⏳ Génération du fichier Excel...');
+          const res = await fetch(`${API}/export/compta-xlsx`);
+          if (!res.ok) throw new Error('Erreur serveur');
+          const blob = await res.blob();
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `Pause_Kreyol_Comptabilite_Pro.xlsx`;
+          a.click();
+          setImportMsg('✅ Fichier Excel exporté et sauvegardé sur Drive');
+          setTimeout(() => setImportMsg(''), 4000);
+        } catch(e) {
+          setImportMsg('❌ Erreur export : ' + e.message);
+        }
       }
 
       async function deleteDevis(id) {
@@ -4555,7 +4630,9 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           const res = await fetch(`${API}/import/compta-historique`, { method: 'POST', body: form });
           const d = await res.json();
           if (res.ok) {
-            setImportMsg(`✅ ${d.devis_importes} devis + ${d.factures_importees} factures importés (${d.devis_ignores + d.factures_ignorees} ignorés car déjà présents)`);
+            const majD = d.devis_mis_a_jour || 0;
+            const majF = d.factures_mises_a_jour || 0;
+            setImportMsg(`✅ ${d.devis_importes} devis + ${d.factures_importees} factures importés${majD+majF>0 ? `, ${majD+majF} mis à jour` : ''} — ${d.clients_crees} client(s) créé(s)`);
             load();
           } else {
             setImportMsg('❌ Erreur : ' + (d.detail || 'inconnue'));
@@ -4610,6 +4687,11 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         load();
       }
 
+      // Années disponibles : calculé depuis les données réelles (devis + factures)
+      const anneesDevis = (data?.liste_devis || []).map(d => d.annee).filter(Boolean);
+      const anneesFact = (data?.liste_factures || []).map(f => f.annee).filter(Boolean);
+      const anneesDispos = ['tous', ...Array.from(new Set([...anneesDevis, ...anneesFact])).sort((a, b) => Number(b) - Number(a))];
+
       // Helper : extrait le mois depuis date_envoi ou created_at (format DD/MM/YYYY ou ISO)
       function extractMois(item) {
         const d = item.date_envoi || item.date_emission || item.created_at || '';
@@ -4626,7 +4708,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       const listeFactures = (data?.liste_factures || []).filter(f =>
         (filterAnnee === 'tous' || String(f.annee) === String(filterAnnee)) &&
-        (filterMois === 'tous' || extractMois(fac) === parseInt(filterMois, 10)) &&
+        (filterMois === 'tous' || extractMois(f) === parseInt(filterMois, 10)) &&
         (filterArchive ? ['annulée', 'en_retard'].includes(f.statut) && f.archived : !f.archived)
       ).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
@@ -4634,9 +4716,9 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const facturesStats = data?.factures || {};
 
       // Métriques filtrées selon l'année/mois sélectionné
-      const caDevisFiltres = listeDevis.filter(x => ['validé', 'facturé', 'signé'].includes(x.statut)).reduce((s, x) => s + (x.total_ht || 0), 0);
-      const caFacturesFiltres = listeFactures.filter(x => x.statut === 'payée').reduce((s, x) => s + (x.total_ht || 0), 0);
-      const enAttenteFiltres = listeFactures.filter(x => ['envoyée', 'à_faire'].includes(x.statut)).reduce((s, x) => s + (x.solde_a_payer || 0), 0);
+      const caDevisFiltres = listeDevis.filter(x => ['validé','facturé','signé'].includes(x.statut)).reduce((s,x) => s+(x.total_ht||0), 0);
+      const caFacturesFiltres = listeFactures.filter(x => x.statut === 'payée').reduce((s,x) => s+(x.total_ht||0), 0);
+      const enAttenteFiltres = listeFactures.filter(x => ['envoyée','à_faire'].includes(x.statut)).reduce((s,x) => s+(x.solde_a_payer||0), 0);
       const isFiltered = filterAnnee !== 'tous' || filterMois !== 'tous';
 
       return (
@@ -4645,23 +4727,23 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           <div className="metrics-grid" style={{ marginBottom: 12 }}>
             <div className="metric-card accent-green">
               <div className="metric-label">CA devis validés{isFiltered ? ' (filtre)' : ''}</div>
-              <div className="metric-value">{(isFiltered ? caDevisFiltres : (devisStats.ca_devis_valides || 0)).toLocaleString('fr-FR')} €</div>
-              <div className="metric-sub">{isFiltered ? listeDevis.filter(x => ['validé', 'facturé'].includes(x.statut)).length : (devisStats.valides || 0)} devis</div>
+              <div className="metric-value">{(isFiltered ? caDevisFiltres : (devisStats.ca_devis_valides||0)).toLocaleString('fr-FR')} €</div>
+              <div className="metric-sub">{isFiltered ? listeDevis.filter(x=>['validé','facturé'].includes(x.statut)).length : (devisStats.valides||0)} devis</div>
             </div>
             <div className="metric-card accent-info">
               <div className="metric-label">CA encaissé{isFiltered ? ' (filtre)' : ''}</div>
-              <div className="metric-value">{(isFiltered ? caFacturesFiltres : (facturesStats.ca_encaisse || 0)).toLocaleString('fr-FR')} €</div>
-              <div className="metric-sub">{isFiltered ? listeFactures.filter(x => x.statut === 'payée').length : (facturesStats.payees || 0)} factures payées</div>
+              <div className="metric-value">{(isFiltered ? caFacturesFiltres : (facturesStats.ca_encaisse||0)).toLocaleString('fr-FR')} €</div>
+              <div className="metric-sub">{isFiltered ? listeFactures.filter(x=>x.statut==='payée').length : (facturesStats.payees||0)} factures payées</div>
             </div>
             <div className="metric-card accent-warn">
               <div className="metric-label">En attente{isFiltered ? ' (filtre)' : ''}</div>
-              <div className="metric-value">{(isFiltered ? enAttenteFiltres : (facturesStats.en_attente || 0)).toLocaleString('fr-FR')} €</div>
-              <div className="metric-sub">{isFiltered ? listeFactures.filter(x => ['envoyée', 'à_faire'].includes(x.statut)).length : (facturesStats.envoyees || 0)} facture(s)</div>
+              <div className="metric-value">{(isFiltered ? enAttenteFiltres : (facturesStats.en_attente||0)).toLocaleString('fr-FR')} €</div>
+              <div className="metric-sub">{isFiltered ? listeFactures.filter(x=>['envoyée','à_faire'].includes(x.statut)).length : (facturesStats.envoyees||0)} facture(s)</div>
             </div>
             <div className="metric-card">
               <div className="metric-label">Devis en cours</div>
-              <div className="metric-value">{isFiltered ? listeDevis.filter(x => !x.archived).length : (devisStats.en_cours || 0)}</div>
-              <div className="metric-sub">{isFiltered ? listeDevis.filter(x => x.archived).length : (devisStats.annules || 0)} annulés</div>
+              <div className="metric-value">{isFiltered ? listeDevis.filter(x=>!x.archived).length : (devisStats.en_cours||0)}</div>
+              <div className="metric-sub">{isFiltered ? listeDevis.filter(x=>x.archived).length : (devisStats.annules||0)} annulés</div>
             </div>
           </div>
 
@@ -5527,7 +5609,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         nom: "FDVA — Fonds de Développement de la Vie Associative",
         organisme: "Préfecture de région",
         type: "fonctionnement / formation",
-        deadline_indicative: "mars (varie par région)",
+        deadline_indicative: "juin (AAP annuel — varie par région)",
         montant_max: 10000,
         description: "Subvention nationale pour les associations : formation des bénévoles et fonctionnement.",
         champs: ["RNA", "Projet associatif", "Budget prévisionnel", "Effectif bénévoles", "Formations prévues"],
@@ -5578,22 +5660,18 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [showNewModele, setShowNewModele] = useState(false);
       const [selectedModele, setSelectedModele] = useState(null); // pour la fiche détail
       const [editModele, setEditModele] = useState(null); // pour éditer un modèle perso
-      const EMPTY_SUB = {
-        modele_id: '', client_slug: '', projet_nom: '', montant_sollicite: '',
-        statut: 'À préparer', notes: '', deadline: '', date_retour_prevue: '', organisme: ''
-      };
-      const EMPTY_MODELE = {
-        nom: '', organisme: '', type: '', deadline_indicative: '',
+      const EMPTY_SUB = { modele_id: '', client_slug: '', projet_nom: '', montant_sollicite: '',
+        statut: 'À préparer', notes: '', deadline: '', date_retour_prevue: '', organisme: '' };
+      const EMPTY_MODELE = { nom: '', organisme: '', type: '', deadline_indicative: '',
         montant_max: '', description: '', couleur: '#2834B7', icone: '🏛',
-        champs: '', pieces: '', url: ''
-      };
+        champs: '', pieces: '', url: '' };
       const [newSub, setNewSub] = useState(EMPTY_SUB);
       const [newModele, setNewModele] = useState(EMPTY_MODELE);
 
       useEffect(() => {
-        fetch(`${API}/subventions`).then(r => r.json()).then(setSubventions).catch(() => { });
+        fetch(`${API}/subventions`).then(r => r.json()).then(setSubventions).catch(() => {});
         // Modèles perso depuis localStorage (pas besoin d'API)
-        try { setModeles(JSON.parse(localStorage.getItem('pk_modeles_sub') || '[]')); } catch { }
+        try { setModeles(JSON.parse(localStorage.getItem('pk_modeles_sub') || '[]')); } catch {}
         Promise.all(clients.map(c =>
           fetch(`${API}/clients/${c.slug}`).then(r => r.ok ? r.json() : null).catch(() => null)
         )).then(d => setClientsDetails(d.filter(Boolean)));
@@ -5601,7 +5679,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       function saveModeles(list) {
         setModeles(list);
-        try { localStorage.setItem('pk_modeles_sub', JSON.stringify(list)); } catch { }
+        try { localStorage.setItem('pk_modeles_sub', JSON.stringify(list)); } catch {}
       }
 
       // ── Tous les modèles : prédéfinis + perso ─────────────────────────────
@@ -5613,20 +5691,20 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       // ── STATUTS & couleurs ─────────────────────────────────────────────────
       const STATUTS = ['À préparer', 'En cours', 'Déposée', 'En instruction', 'Accordée', 'Refusée', 'Versée'];
       const STATUT_COLORS = {
-        'À préparer': { bg: 'var(--surface2)', c: 'var(--text3)' },
-        'En cours': { bg: 'var(--pk-blue-light)', c: 'var(--pk-blue)' },
-        'Déposée': { bg: '#FFF3E0', c: '#E65100' },
-        'En instruction': { bg: 'var(--warn-light)', c: 'var(--warn)' },
-        'Accordée': { bg: 'var(--success-light)', c: 'var(--success)' },
-        'Versée': { bg: 'var(--success-light)', c: 'var(--success)' },
-        'Refusée': { bg: 'var(--danger-light)', c: 'var(--danger)' },
+        'À préparer':    { bg: 'var(--surface2)',       c: 'var(--text3)' },
+        'En cours':      { bg: 'var(--pk-blue-light)',  c: 'var(--pk-blue)' },
+        'Déposée':       { bg: '#FFF3E0',               c: '#E65100' },
+        'En instruction':{ bg: 'var(--warn-light)',     c: 'var(--warn)' },
+        'Accordée':      { bg: 'var(--success-light)',  c: 'var(--success)' },
+        'Versée':        { bg: 'var(--success-light)',  c: 'var(--success)' },
+        'Refusée':       { bg: 'var(--danger-light)',   c: 'var(--danger)' },
       };
 
       // ── Métriques dashboard ─────────────────────────────────────────────
       const actives = subventions.filter(s => !s.archived);
-      const caTotal = actives.reduce((sum, s) => sum + (Number(s.montant_sollicite) || 0), 0);
-      const caObtenu = actives.filter(s => ['Accordée', 'Versée'].includes(s.statut)).reduce((sum, s) => sum + (Number(s.montant_sollicite) || 0), 0);
-      const enAttente = actives.filter(s => ['Déposée', 'En instruction'].includes(s.statut)).reduce((sum, s) => sum + (Number(s.montant_sollicite) || 0), 0);
+      const caTotal  = actives.reduce((sum, s) => sum + (Number(s.montant_sollicite) || 0), 0);
+      const caObtenu = actives.filter(s => ['Accordée','Versée'].includes(s.statut)).reduce((sum, s) => sum + (Number(s.montant_sollicite) || 0), 0);
+      const enAttente = actives.filter(s => ['Déposée','En instruction'].includes(s.statut)).reduce((sum, s) => sum + (Number(s.montant_sollicite) || 0), 0);
       const nbRefus = actives.filter(s => s.statut === 'Refusée').length;
 
       // Subventions à afficher (filtre archive)
@@ -5635,10 +5713,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         : subventions.filter(s => !s.archived);
 
       // Prochaines deadlines
-      const today = new Date().toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0,10);
       const prochaines = actives
-        .filter(s => s.deadline && s.deadline >= today && !['Accordée', 'Versée', 'Refusée'].includes(s.statut))
-        .sort((a, b) => a.deadline.localeCompare(b.deadline))
+        .filter(s => s.deadline && s.deadline >= today && !['Accordée','Versée','Refusée'].includes(s.statut))
+        .sort((a,b) => a.deadline.localeCompare(b.deadline))
         .slice(0, 5);
 
       function diffLabel(date) {
@@ -5657,35 +5735,32 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         const payload = { ...newSub, modele_nom: m?.nom || '', client_nom: c?.nom || '' };
         try {
           const res = await fetch(`${API}/subventions`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
           });
-          if (res.ok) {
-            const data = await res.clone().json();
-            setSubventions(p => [data, ...p]);
-          }
-        } catch { }
+          if (res.ok) setSubventions(p => [await res.clone().json(), ...p]);
+        } catch {}
         setShowNew(false);
         setNewSub(EMPTY_SUB);
       }
 
       async function updateStatut(id, statut) {
-        setSubventions(p => p.map(s => s.id === id ? { ...s, statut } : s));
+        setSubventions(p => p.map(s => s.id === id ? {...s, statut} : s));
         await fetch(`${API}/subventions/${id}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ statut })
-        }).catch(() => { });
+          method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ statut })
+        }).catch(() => {});
       }
 
       async function toggleArchiveSub(id, archived) {
-        setSubventions(p => p.map(s => s.id === id ? { ...s, archived: !archived } : s));
+        setSubventions(p => p.map(s => s.id === id ? {...s, archived: !archived} : s));
         await fetch(`${API}/subventions/${id}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: !archived })
-        }).catch(() => { });
+          method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ archived: !archived })
+        }).catch(() => {});
       }
 
       async function deleteSub(id) {
         if (!window.confirm('Supprimer cette demande de subvention ?')) return;
         setSubventions(p => p.filter(s => s.id !== id));
-        await fetch(`${API}/subventions/${id}`, { method: 'DELETE' }).catch(() => { });
+        await fetch(`${API}/subventions/${id}`, { method: 'DELETE' }).catch(() => {});
       }
 
       // ── CRUD modèles perso ─────────────────────────────────────────────────
@@ -5710,7 +5785,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       }
 
       function archiveModele(id) {
-        saveModeles(modeles.map(m => m.id === id ? { ...m, archived: !m.archived } : m));
+        saveModeles(modeles.map(m => m.id === id ? {...m, archived: !m.archived} : m));
       }
 
       const selectedClient = clientsDetails.find(c => c.slug === newSub.client_slug);
@@ -5724,10 +5799,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             <div className="tabs" style={{ marginBottom: 0 }}>
               {[
                 ['dashboard', '📊 Tableau de bord'],
-                ['suivi', `📋 Suivi (${actives.length})`],
+                ['suivi',     `📋 Suivi (${actives.length})`],
                 ['catalogue', '📚 Catalogue'],
-              ].map(([k, l]) => (
-                <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
+              ].map(([k,l]) => (
+                <button key={k} className={`tab ${tab===k?'active':''}`} onClick={() => setTab(k)}>{l}</button>
               ))}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -5735,7 +5810,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 <>
                   <button className="btn" style={{ fontSize: 11, background: showArchived ? 'var(--pk-blue-light)' : '', color: showArchived ? 'var(--pk-blue)' : 'var(--text3)' }}
                     onClick={() => setShowArchived(p => !p)}>
-                    {showArchived ? '👁 Actives' : `📦 Archives (${subventions.filter(s => s.archived).length})`}
+                    {showArchived ? '👁 Actives' : `📦 Archives (${subventions.filter(s=>s.archived).length})`}
                   </button>
                   <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Nouvelle demande</button>
                 </>
@@ -5759,17 +5834,17 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 <div className="metric-card accent-info">
                   <div className="metric-label">Obtenu / Versé</div>
                   <div className="metric-value" style={{ fontSize: 22 }}>{caObtenu.toLocaleString('fr-FR')} €</div>
-                  <div className="metric-sub">{actives.filter(s => ['Accordée', 'Versée'].includes(s.statut)).length} accordée(s)</div>
+                  <div className="metric-sub">{actives.filter(s=>['Accordée','Versée'].includes(s.statut)).length} accordée(s)</div>
                 </div>
                 <div className="metric-card accent-warn">
                   <div className="metric-label">En instruction</div>
                   <div className="metric-value" style={{ fontSize: 22 }}>{enAttente.toLocaleString('fr-FR')} €</div>
-                  <div className="metric-sub">{actives.filter(s => ['Déposée', 'En instruction'].includes(s.statut)).length} en cours</div>
+                  <div className="metric-sub">{actives.filter(s=>['Déposée','En instruction'].includes(s.statut)).length} en cours</div>
                 </div>
                 <div className="metric-card">
                   <div className="metric-label">Refusées</div>
                   <div className="metric-value" style={{ fontSize: 22 }}>{nbRefus}</div>
-                  <div className="metric-sub">{actives.filter(s => s.statut === 'À préparer').length} à préparer</div>
+                  <div className="metric-sub">{actives.filter(s=>s.statut==='À préparer').length} à préparer</div>
                 </div>
               </div>
 
@@ -5781,7 +5856,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                     const items = actives.filter(s => s.statut === st);
                     if (!items.length) return null;
                     const sc = STATUT_COLORS[st];
-                    const total = items.reduce((sum, s) => sum + (Number(s.montant_sollicite) || 0), 0);
+                    const total = items.reduce((sum,s) => sum + (Number(s.montant_sollicite)||0), 0);
                     return (
                       <div key={st} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -5825,11 +5900,11 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                       const k = s.client_nom || '— Sans client —';
                       if (!acc[k]) acc[k] = { total: 0, obtenu: 0, nb: 0 };
                       acc[k].total += Number(s.montant_sollicite) || 0;
-                      if (['Accordée', 'Versée'].includes(s.statut)) acc[k].obtenu += Number(s.montant_sollicite) || 0;
+                      if (['Accordée','Versée'].includes(s.statut)) acc[k].obtenu += Number(s.montant_sollicite) || 0;
                       acc[k].nb++;
                       return acc;
                     }, {})
-                  ).sort((a, b) => b[1].total - a[1].total).map(([nom, data]) => (
+                  ).sort((a,b) => b[1].total - a[1].total).map(([nom, data]) => (
                     <div key={nom} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
                       <div>
                         <span style={{ fontWeight: 500 }}>{nom}</span>
@@ -5965,7 +6040,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
-                          <span style={{ background: m.couleur + '15', color: m.couleur, padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>≤ {Number(m.montant_max).toLocaleString('fr-FR')} €</span>
+                          <span style={{ background: m.couleur+'15', color: m.couleur, padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>≤ {Number(m.montant_max).toLocaleString('fr-FR')} €</span>
                           <span style={{ color: 'var(--text3)' }}>⏰ {m.deadline_indicative}</span>
                         </div>
                       </div>
@@ -5994,7 +6069,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                               </div>
                             </div>
                             {m.montant_max > 0 && (
-                              <span style={{ background: (m.couleur || '#2834B7') + '15', color: m.couleur || 'var(--pk-blue)', padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600 }}>≤ {Number(m.montant_max).toLocaleString('fr-FR')} €</span>
+                              <span style={{ background: (m.couleur||'#2834B7')+'15', color: m.couleur||'var(--pk-blue)', padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600 }}>≤ {Number(m.montant_max).toLocaleString('fr-FR')} €</span>
                             )}
                           </div>
                         ))}
@@ -6015,7 +6090,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
           {/* ══ MODAL NOUVELLE DEMANDE ══ */}
           {showNew && (
-            <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowNew(false)}>
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNew(false)}>
               <div className="modal" style={{ maxWidth: 520 }}>
                 <div className="modal-title">🏛 Nouvelle demande de subvention</div>
                 <div className="form-group">
@@ -6028,9 +6103,9 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                     <optgroup label="Modèles prédéfinis">
                       {MODELES_SUBVENTIONS.map(m => <option key={m.id} value={m.id}>{m.icone} {m.nom}</option>)}
                     </optgroup>
-                    {modeles.filter(m => !m.archived).length > 0 && (
+                    {modeles.filter(m=>!m.archived).length > 0 && (
                       <optgroup label="Mes modèles">
-                        {modeles.filter(m => !m.archived).map(m => <option key={m.id} value={m.id}>{m.icone || '🏛'} {m.nom}</option>)}
+                        {modeles.filter(m=>!m.archived).map(m => <option key={m.id} value={m.id}>{m.icone||'🏛'} {m.nom}</option>)}
                       </optgroup>
                     )}
                   </select>
@@ -6038,14 +6113,14 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 {!newSub.modele_id && (
                   <div className="form-group">
                     <label className="form-label">Ou saisir l'organisme manuellement</label>
-                    <input className="form-input" value={newSub.organisme} onChange={e => setNewSub(p => ({ ...p, organisme: e.target.value }))} placeholder="Nom de l'organisme..." />
+                    <input className="form-input" value={newSub.organisme} onChange={e => setNewSub(p=>({...p, organisme: e.target.value}))} placeholder="Nom de l'organisme..." />
                   </div>
                 )}
                 <div className="form-group">
                   <label className="form-label">Client bénéficiaire</label>
                   <select className="form-input" value={newSub.client_slug} onChange={e => setNewSub(p => ({ ...p, client_slug: e.target.value, projet_nom: '' }))}>
                     <option value="">— Aucun client —</option>
-                    {clients.filter(c => !c.archived).map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
+                    {clients.filter(c=>!c.archived).map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
                   </select>
                 </div>
                 {projetsClient.length > 0 && (
@@ -6086,59 +6161,59 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
           {/* ══ MODAL NOUVEAU MODÈLE ══ */}
           {showNewModele && (
-            <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowNewModele(false)}>
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNewModele(false)}>
               <div className="modal" style={{ maxWidth: 560 }}>
                 <div className="modal-title">📚 Nouveau modèle de subvention</div>
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Nom du modèle *</label>
-                    <input className="form-input" value={newModele.nom} onChange={e => setNewModele(p => ({ ...p, nom: e.target.value }))} placeholder="Ex: Aide à la résidence DAC" />
+                    <input className="form-input" value={newModele.nom} onChange={e => setNewModele(p=>({...p,nom:e.target.value}))} placeholder="Ex: Aide à la résidence DAC" />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Organisme *</label>
-                    <input className="form-input" value={newModele.organisme} onChange={e => setNewModele(p => ({ ...p, organisme: e.target.value }))} placeholder="Ex: DAC Martinique" />
+                    <input className="form-input" value={newModele.organisme} onChange={e => setNewModele(p=>({...p,organisme:e.target.value}))} placeholder="Ex: DAC Martinique" />
                   </div>
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Type</label>
-                    <input className="form-input" value={newModele.type} onChange={e => setNewModele(p => ({ ...p, type: e.target.value }))} placeholder="résidence, création, diffusion..." />
+                    <input className="form-input" value={newModele.type} onChange={e => setNewModele(p=>({...p,type:e.target.value}))} placeholder="résidence, création, diffusion..." />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Deadline indicative</label>
-                    <input className="form-input" value={newModele.deadline_indicative} onChange={e => setNewModele(p => ({ ...p, deadline_indicative: e.target.value }))} placeholder="Ex: mars (AAP annuel)" />
+                    <input className="form-input" value={newModele.deadline_indicative} onChange={e => setNewModele(p=>({...p,deadline_indicative:e.target.value}))} placeholder="Ex: mars (AAP annuel)" />
                   </div>
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Montant max (€)</label>
-                    <input className="form-input" type="number" value={newModele.montant_max} onChange={e => setNewModele(p => ({ ...p, montant_max: e.target.value }))} placeholder="5000" />
+                    <input className="form-input" type="number" value={newModele.montant_max} onChange={e => setNewModele(p=>({...p,montant_max:e.target.value}))} placeholder="5000" />
                   </div>
                   <div className="form-group">
                     <label className="form-label">URL formulaire</label>
-                    <input className="form-input" value={newModele.url} onChange={e => setNewModele(p => ({ ...p, url: e.target.value }))} placeholder="https://..." />
+                    <input className="form-input" value={newModele.url} onChange={e => setNewModele(p=>({...p,url:e.target.value}))} placeholder="https://..." />
                   </div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Description</label>
-                  <textarea className="form-input" rows={2} value={newModele.description} onChange={e => setNewModele(p => ({ ...p, description: e.target.value }))} style={{ resize: 'vertical' }} />
+                  <textarea className="form-input" rows={2} value={newModele.description} onChange={e => setNewModele(p=>({...p,description:e.target.value}))} style={{ resize: 'vertical' }} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Pièces justificatives (séparées par virgule)</label>
-                  <input className="form-input" value={newModele.pieces} onChange={e => setNewModele(p => ({ ...p, pieces: e.target.value }))} placeholder="RIB, Statuts, Budget prévisionnel, ..." />
+                  <input className="form-input" value={newModele.pieces} onChange={e => setNewModele(p=>({...p,pieces:e.target.value}))} placeholder="RIB, Statuts, Budget prévisionnel, ..." />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Champs du formulaire (séparés par virgule)</label>
-                  <input className="form-input" value={newModele.champs} onChange={e => setNewModele(p => ({ ...p, champs: e.target.value }))} placeholder="Titre du projet, Budget total, ..." />
+                  <input className="form-input" value={newModele.champs} onChange={e => setNewModele(p=>({...p,champs:e.target.value}))} placeholder="Titre du projet, Budget total, ..." />
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Couleur</label>
-                    <input type="color" value={newModele.couleur} onChange={e => setNewModele(p => ({ ...p, couleur: e.target.value }))} style={{ height: 36, width: '100%', borderRadius: 6, border: '1px solid var(--border2)', cursor: 'pointer' }} />
+                    <input type="color" value={newModele.couleur} onChange={e => setNewModele(p=>({...p,couleur:e.target.value}))} style={{ height: 36, width: '100%', borderRadius: 6, border: '1px solid var(--border2)', cursor: 'pointer' }} />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Icône (emoji)</label>
-                    <input className="form-input" value={newModele.icone} onChange={e => setNewModele(p => ({ ...p, icone: e.target.value }))} placeholder="🏛" style={{ fontSize: 20, textAlign: 'center' }} maxLength={2} />
+                    <input className="form-input" value={newModele.icone} onChange={e => setNewModele(p=>({...p,icone:e.target.value}))} placeholder="🏛" style={{ fontSize: 20, textAlign: 'center' }} maxLength={2} />
                   </div>
                 </div>
                 <div className="modal-footer">
@@ -6152,7 +6227,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       );
     }
 
-    // ── Annuaire ──────────────────────────────────────────────────────────────────
+        // ── Annuaire ──────────────────────────────────────────────────────────────────
 
     function AnnuaireView() {
       const [tab, setTab] = useState('interne');
@@ -6201,7 +6276,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       function addContact() {
         if (!newContact.email) return;
         const c = { ...newContact, created_at: new Date().toISOString(), source: 'manuel' };
-        fetch(`${API}/annuaire`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
+        fetch(`${API}/annuaire`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(c) })
           .then(r => r.ok ? r.json() : null)
           .then(saved => { if (saved) setAllContacts(prev => [saved, ...prev]); })
           .catch(console.error);
@@ -6211,7 +6286,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       function addDiffusion() {
         if (!newDiff.email) return;
         const c = { ...newDiff, created_at: new Date().toISOString() };
-        fetch(`${API}/annuaire`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
+        fetch(`${API}/annuaire`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(c) })
           .then(r => r.ok ? r.json() : null)
           .then(saved => { if (saved) setAllContacts(prev => [saved, ...prev]); })
           .catch(console.error);
@@ -6272,7 +6347,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                         <div style={{ fontSize: 11, color: 'var(--pk-blue)' }}>{c.email}</div>
                       </div>
                       {c.telephone && <div style={{ fontSize: 12, color: 'var(--text3)' }}>{c.telephone}</div>}
-                      <button onClick={() => deleteContact(c.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
+                  <button onClick={() => deleteContact(c.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>✕</button>
                     </div>
                   ))}
                 </div>
@@ -6384,135 +6459,135 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // MODULE EMAILING & NEWSLETTER
-    // ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODULE EMAILING & NEWSLETTER
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    function EmailingView() {
-      const [campaigns, setCampaigns] = useState([]);
-      const [tab, setTab] = useState('config'); // 'config', 'calendar', 'stats'
-      const [showForm, setShowForm] = useState(false);
+function EmailingView() {
+  const [campaigns, setCampaigns] = useState([]);
+  const [tab, setTab] = useState('config'); // 'config', 'calendar', 'stats'
+  const [showForm, setShowForm] = useState(false);
+  
+  // Nouveaux champs pour la campagne
+  const [draft, setDraft] = useState({ 
+    sujet: '', cible: '', contenu: '', 
+    date_envoi: '', statut: 'brouillon',
+    stats: { ouvertures: 0, clics: 0, reponses: 0 }
+  });
 
-      // Nouveaux champs pour la campagne
-      const [draft, setDraft] = useState({
-        sujet: '', cible: '', contenu: '',
-        date_envoi: '', statut: 'brouillon',
-        stats: { ouvertures: 0, clics: 0, reponses: 0 }
-      });
+  useEffect(() => { loadCampaigns(); }, []);
+  function loadCampaigns() { fetch(`${API}/campaigns`).then(r=>r.json()).then(setCampaigns); }
+  
+  function saveCampaign() {
+    fetch(`${API}/campaigns`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(draft) })
+    .then(()=> { loadCampaigns(); setShowForm(false); setDraft({ sujet: '', cible: '', contenu: '', date_envoi: '', statut: 'brouillon', stats: {ouvertures:0, clics:0, reponses:0} }); });
+  }
 
-      useEffect(() => { loadCampaigns(); }, []);
-      function loadCampaigns() { fetch(`${API}/campaigns`).then(r => r.json()).then(setCampaigns); }
+  function updateStatus(cmp, stat) {
+    fetch(`${API}/campaigns/${cmp.id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({statut: stat}) }).then(loadCampaigns);
+  }
+  function updateStats(cmp, st) {
+    fetch(`${API}/campaigns/${cmp.id}`, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({stats: st}) }).then(loadCampaigns);
+  }
 
-      function saveCampaign() {
-        fetch(`${API}/campaigns`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) })
-          .then(() => { loadCampaigns(); setShowForm(false); setDraft({ sujet: '', cible: '', contenu: '', date_envoi: '', statut: 'brouillon', stats: { ouvertures: 0, clics: 0, reponses: 0 } }); });
-      }
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h2>Campagnes Emailing & Newsletter</h2>
+        {!showForm && <button className="btn btn-primary" onClick={() => setShowForm(true)}>+ Nouvelle Campagne</button>}
+      </div>
 
-      function updateStatus(cmp, stat) {
-        fetch(`${API}/campaigns/${cmp.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ statut: stat }) }).then(loadCampaigns);
-      }
-      function updateStats(cmp, st) {
-        fetch(`${API}/campaigns/${cmp.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stats: st }) }).then(loadCampaigns);
-      }
-
-      return (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <h2>Campagnes Emailing & Newsletter</h2>
-            {!showForm && <button className="btn btn-primary" onClick={() => setShowForm(true)}>+ Nouvelle Campagne</button>}
+      <div style={{ display: 'flex', gap: 16, borderBottom: '1px solid var(--border)', marginBottom: 24, paddingBottom: 8 }}>
+        <button className={`btn ${tab === 'config' ? 'btn-primary' : ''}`} onClick={() => setTab('config')}>Configuration</button>
+        <button className={`btn ${tab === 'calendar' ? 'btn-primary' : ''}`} onClick={() => setTab('calendar')}>Calendrier d'Envoi</button>
+        <button className={`btn ${tab === 'stats' ? 'btn-primary' : ''}`} onClick={() => setTab('stats')}>Suivi des retours</button>
+      </div>
+      
+      {showForm && (
+        <div className="card" style={{ marginBottom: 20, borderTop: '4px solid #FF795A' }}>
+          <div className="card-header"><div className="card-title">📝 Édition de Campagne</div></div>
+          <div className="form-group"><label className="form-label">Sujet de l'email</label><input className="form-input" value={draft.sujet} onChange={e=>setDraft({...draft, sujet: e.target.value})} placeholder="Ex: Voeux 2027" /></div>
+          <div className="form-group"><label className="form-label">Audience Ciblée</label><input className="form-input" value={draft.cible} onChange={e=>setDraft({...draft, cible: e.target.value})} placeholder="Ex: Clients 2025" /></div>
+          <div className="form-group"><label className="form-label">Date d'envoi prévue</label><input type="date" className="form-input" value={draft.date_envoi} onChange={e=>setDraft({...draft, date_envoi: e.target.value})} /></div>
+          
+          <div className="form-group">
+            <label className="form-label">Contenu de l'email</label>
+            <textarea className="form-input" style={{ height: 300, fontFamily: 'sans-serif' }} value={draft.contenu} onChange={e=>setDraft({...draft, contenu: e.target.value})}></textarea>
           </div>
 
-          <div style={{ display: 'flex', gap: 16, borderBottom: '1px solid var(--border)', marginBottom: 24, paddingBottom: 8 }}>
-            <button className={`btn ${tab === 'config' ? 'btn-primary' : ''}`} onClick={() => setTab('config')}>Configuration</button>
-            <button className={`btn ${tab === 'calendar' ? 'btn-primary' : ''}`} onClick={() => setTab('calendar')}>Calendrier d'Envoi</button>
-            <button className={`btn ${tab === 'stats' ? 'btn-primary' : ''}`} onClick={() => setTab('stats')}>Suivi des retours</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn" onClick={() => setShowForm(false)}>Annuler</button>
+            <button className="btn btn-primary" onClick={saveCampaign} disabled={!draft.sujet}>Enregistrer la campagne</button>
           </div>
-
-          {showForm && (
-            <div className="card" style={{ marginBottom: 20, borderTop: '4px solid #FF795A' }}>
-              <div className="card-header"><div className="card-title">📝 Édition de Campagne</div></div>
-              <div className="form-group"><label className="form-label">Sujet de l'email</label><input className="form-input" value={draft.sujet} onChange={e => setDraft({ ...draft, sujet: e.target.value })} placeholder="Ex: Voeux 2027" /></div>
-              <div className="form-group"><label className="form-label">Audience Ciblée</label><input className="form-input" value={draft.cible} onChange={e => setDraft({ ...draft, cible: e.target.value })} placeholder="Ex: Clients 2025" /></div>
-              <div className="form-group"><label className="form-label">Date d'envoi prévue</label><input type="date" className="form-input" value={draft.date_envoi} onChange={e => setDraft({ ...draft, date_envoi: e.target.value })} /></div>
-
-              <div className="form-group">
-                <label className="form-label">Contenu de l'email</label>
-                <textarea className="form-input" style={{ height: 300, fontFamily: 'sans-serif' }} value={draft.contenu} onChange={e => setDraft({ ...draft, contenu: e.target.value })}></textarea>
-              </div>
-
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn" onClick={() => setShowForm(false)}>Annuler</button>
-                <button className="btn btn-primary" onClick={saveCampaign} disabled={!draft.sujet}>Enregistrer la campagne</button>
-              </div>
-            </div>
-          )}
-
-          {!showForm && tab === 'config' && (
-            <div className="card">
-              {campaigns.length === 0 ? <div className="empty"><div className="empty-text">Aucune campagne configurée.</div></div> :
-                campaigns.map(c => (
-                  <div key={c.id} style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 16 }}>{c.sujet}</div>
-                      <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>Cible : {c.cible}</div>
-                      <div style={{ fontSize: 13, color: 'var(--text2)' }}>Prévu le : {c.date_envoi ? new Date(c.date_envoi).toLocaleDateString('fr-FR') : 'Non défini'}</div>
-                    </div>
-                    <div>
-                      <span style={{ padding: '4px 8px', borderRadius: 12, fontSize: 11, background: c.statut === 'envoyé' ? '#E0F2FE' : c.statut === 'planifié' ? '#FEF3C7' : '#F3F4F6', color: c.statut === 'envoyé' ? '#0369A1' : c.statut === 'planifié' ? '#D97706' : '#374151', textTransform: 'uppercase', fontWeight: 600 }}>{c.statut}</span>
-                      {c.statut !== 'envoyé' && (
-                        <div style={{ marginTop: 12, display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                          <button className="btn" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => updateStatus(c, 'planifié')}>Planifier</button>
-                          <button className="btn" style={{ padding: '4px 8px', fontSize: 12, borderColor: '#0369A1', color: '#0369A1' }} onClick={() => updateStatus(c, 'envoyé')}>Marquer Envoyé</button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          )}
-
-          {tab === 'calendar' && (
-            <div className="card" style={{ minHeight: 300, background: '#fafafa' }}>
-              <h3 style={{ marginBottom: 16 }}>Prochains Envois</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {campaigns.filter(c => c.statut === 'planifié').sort((a, b) => new Date(a.date_envoi) - new Date(b.date_envoi)).map(c => (
-                  <div key={c.id} style={{ background: 'white', padding: 16, borderRadius: 6, borderLeft: '4px solid #D97706', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                    <div style={{ fontSize: 12, color: '#D97706', fontWeight: 600, marginBottom: 4 }}>{c.date_envoi ? new Date(c.date_envoi).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Date inconnue'}</div>
-                    <div style={{ fontWeight: 600 }}>{c.sujet}</div>
-                  </div>
-                ))}
-                {campaigns.filter(c => c.statut === 'planifié').length === 0 && <div className="empty-text">Aucun envoi planifié.</div>}
-              </div>
-            </div>
-          )}
-
-          {tab === 'stats' && (
-            <div className="grid-2">
-              {campaigns.filter(c => c.statut === 'envoyé').map(c => (
-                <div key={c.id} className="card">
-                  <div className="card-header"><div className="card-title">{c.sujet} <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 12 }}>({new Date(c.date_envoi).toLocaleDateString('fr-FR')})</span></div></div>
-                  <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-                    <div style={{ flex: 1 }}>
-                      <label className="form-label" style={{ fontSize: 11 }}>Ouvertures</label>
-                      <input type="number" className="form-input" value={c.stats?.ouvertures || 0} onChange={e => updateStats(c, { ...c.stats, ouvertures: e.target.value })} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label className="form-label" style={{ fontSize: 11 }}>Clics</label>
-                      <input type="number" className="form-input" value={c.stats?.clics || 0} onChange={e => updateStats(c, { ...c.stats, clics: e.target.value })} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label className="form-label" style={{ fontSize: 11 }}>Réponses</label>
-                      <input type="number" className="form-input" value={c.stats?.reponses || 0} onChange={e => updateStats(c, { ...c.stats, reponses: e.target.value })} />
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {campaigns.filter(c => c.statut === 'envoyé').length === 0 && <div className="empty-text">Aucune campagne envoyée pour le moment.</div>}
-            </div>
-          )}
         </div>
-      );
-    }
+      )}
+
+      {!showForm && tab === 'config' && (
+        <div className="card">
+          {campaigns.length === 0 ? <div className="empty"><div className="empty-text">Aucune campagne configurée.</div></div> : 
+           campaigns.map(c => (
+            <div key={c.id} style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
+               <div>
+                 <div style={{ fontWeight: 600, fontSize: 16 }}>{c.sujet}</div>
+                 <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>Cible : {c.cible}</div>
+                 <div style={{ fontSize: 13, color: 'var(--text2)' }}>Prévu le : {c.date_envoi ? new Date(c.date_envoi).toLocaleDateString('fr-FR') : 'Non défini'}</div>
+               </div>
+               <div>
+                 <span style={{ padding: '4px 8px', borderRadius: 12, fontSize: 11, background: c.statut==='envoyé'?'#E0F2FE': c.statut==='planifié'?'#FEF3C7':'#F3F4F6', color: c.statut==='envoyé'?'#0369A1': c.statut==='planifié'?'#D97706':'#374151', textTransform: 'uppercase', fontWeight: 600 }}>{c.statut}</span>
+                 {c.statut !== 'envoyé' && (
+                   <div style={{ marginTop: 12, display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                     <button className="btn" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => updateStatus(c, 'planifié')}>Planifier</button>
+                     <button className="btn" style={{ padding: '4px 8px', fontSize: 12, borderColor: '#0369A1', color: '#0369A1' }} onClick={() => updateStatus(c, 'envoyé')}>Marquer Envoyé</button>
+                   </div>
+                 )}
+               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'calendar' && (
+        <div className="card" style={{ minHeight: 300, background: '#fafafa' }}>
+           <h3 style={{ marginBottom: 16 }}>Prochains Envois</h3>
+           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+             {campaigns.filter(c => c.statut === 'planifié').sort((a,b)=> new Date(a.date_envoi) - new Date(b.date_envoi)).map(c => (
+               <div key={c.id} style={{ background: 'white', padding: 16, borderRadius: 6, borderLeft: '4px solid #D97706', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <div style={{ fontSize: 12, color: '#D97706', fontWeight: 600, marginBottom: 4 }}>{c.date_envoi ? new Date(c.date_envoi).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Date inconnue'}</div>
+                  <div style={{ fontWeight: 600 }}>{c.sujet}</div>
+               </div>
+             ))}
+             {campaigns.filter(c => c.statut === 'planifié').length === 0 && <div className="empty-text">Aucun envoi planifié.</div>}
+           </div>
+        </div>
+      )}
+
+      {tab === 'stats' && (
+        <div className="grid-2">
+          {campaigns.filter(c => c.statut === 'envoyé').map(c => (
+            <div key={c.id} className="card">
+               <div className="card-header"><div className="card-title">{c.sujet} <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 12 }}>({new Date(c.date_envoi).toLocaleDateString('fr-FR')})</span></div></div>
+               <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+                 <div style={{ flex: 1 }}>
+                    <label className="form-label" style={{ fontSize: 11 }}>Ouvertures</label>
+                    <input type="number" className="form-input" value={c.stats?.ouvertures || 0} onChange={e => updateStats(c, {...c.stats, ouvertures: e.target.value})} />
+                 </div>
+                 <div style={{ flex: 1 }}>
+                    <label className="form-label" style={{ fontSize: 11 }}>Clics</label>
+                    <input type="number" className="form-input" value={c.stats?.clics || 0} onChange={e => updateStats(c, {...c.stats, clics: e.target.value})} />
+                 </div>
+                 <div style={{ flex: 1 }}>
+                    <label className="form-label" style={{ fontSize: 11 }}>Réponses</label>
+                    <input type="number" className="form-input" value={c.stats?.reponses || 0} onChange={e => updateStats(c, {...c.stats, reponses: e.target.value})} />
+                 </div>
+               </div>
+            </div>
+          ))}
+          {campaigns.filter(c => c.statut === 'envoyé').length === 0 && <div className="empty-text">Aucune campagne envoyée pour le moment.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
 
     function App() {
       // ── Auth ────────────────────────────────────────────────────────────────
@@ -6533,13 +6608,15 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       async function fetchFinance() {
         try {
-          const [dashRes, devisRes] = await Promise.all([
+          const [dashRes, devisRes, subvRes] = await Promise.all([
             fetch(`${API}/devis-factures/dashboard`),
             fetch(`${API}/devis`),
+            fetch(`${API}/subventions`),
           ]);
           const dashData = dashRes.ok ? await dashRes.json() : {};
           const devisData = devisRes.ok ? await devisRes.json() : [];
-          setFinance({ ...dashData, liste_devis: devisData });
+          const subvData = subvRes.ok ? await subvRes.json() : [];
+          setFinance({ ...dashData, liste_devis: devisData, subventions: subvData });
         } catch { }
       }
       const [showModal, setShowModal] = useState(false);
@@ -6597,7 +6674,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 <span style={{ color: '#FF795A', fontWeight: 700, fontSize: 14, textTransform: 'uppercase' }}>PAUSE</span>
                 <span style={{ color: '#FFD2AD', fontWeight: 700, fontSize: 14, textTransform: 'uppercase' }}> KRÉYOL</span>
               </div>
-              <p>Administration culturelle</p>
+              <p>Ingénierie culturelle</p>
             </div>
             <nav className="sidebar-nav">
               <div className="nav-section">

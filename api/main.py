@@ -2966,9 +2966,9 @@ async def import_compta_historique(file: UploadFile = File(...)):
                 if not row[2] or str(row[2]).startswith("TOTAL"):
                     continue
                 numero = str(row[2]).strip()
-                if numero in numeros_devis:
-                    stats["devis_ignores"] += 1
-                    continue
+                is_update = numero in numeros_devis
+                if is_update:
+                    stats.setdefault("devis_mis_a_jour", 0)
 
                 client_nom = str(row[3]).strip() if row[3] else ""
                 client_slug = find_slug(client_nom)
@@ -3012,9 +3012,14 @@ async def import_compta_historique(file: UploadFile = File(...)):
                     "historique": [{"statut": statut, "date": datetime.now().isoformat(), "source": "import_compta"}],
                     "source_import": "Pause_Kreyol_Comptabilite_Pro.xlsx",
                 }
-                nouveaux_devis.append(devis)
-                numeros_devis.add(numero)
-                stats["devis_importes"] += 1
+                if is_update:
+                    # MAJ : remplace l'existant en gardant son ID original
+                    devis_existants = [d if d.get("numero") != numero else {**d, **devis, "id": d["id"]} for d in devis_existants]
+                    stats["devis_mis_a_jour"] = stats.get("devis_mis_a_jour", 0) + 1
+                else:
+                    nouveaux_devis.append(devis)
+                    numeros_devis.add(numero)
+                    stats["devis_importes"] += 1
 
         # ── 3. Import Factures ────────────────────────────────────────────────
         if "🧾 Factures" in wb.sheetnames:
@@ -3023,9 +3028,9 @@ async def import_compta_historique(file: UploadFile = File(...)):
                 if not row[2] or str(row[2]).startswith("TOTAL"):
                     continue
                 numero = str(row[2]).strip()
-                if numero in numeros_factures:
-                    stats["factures_ignorees"] += 1
-                    continue
+                is_update_f = numero in numeros_factures
+                if is_update_f:
+                    stats.setdefault("factures_mises_a_jour", 0)
 
                 client_nom = str(row[3]).strip() if row[3] else ""
                 client_slug = find_slug(client_nom)
@@ -3067,9 +3072,13 @@ async def import_compta_historique(file: UploadFile = File(...)):
                     "historique": [{"statut": statut, "date": datetime.now().isoformat(), "source": "import_compta"}],
                     "source_import": "Pause_Kreyol_Comptabilite_Pro.xlsx",
                 }
-                nouvelles_factures.append(facture)
-                numeros_factures.add(numero)
-                stats["factures_importees"] += 1
+                if is_update_f:
+                    factures_existantes = [f if f.get("numero") != numero else {**f, **facture, "id": f["id"]} for f in factures_existantes]
+                    stats["factures_mises_a_jour"] = stats.get("factures_mises_a_jour", 0) + 1
+                else:
+                    nouvelles_factures.append(facture)
+                    numeros_factures.add(numero)
+                    stats["factures_importees"] += 1
 
         # ── 4. Sauvegarde + sync Drive ────────────────────────────────────────
         all_devis = devis_existants + nouveaux_devis
@@ -3108,6 +3117,99 @@ async def import_compta_historique(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Import compta historique : {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/export/compta-xlsx")
+def export_compta_xlsx():
+    """Génère le fichier Pause_Kreyol_Comptabilite_Pro.xlsx et le sauvegarde sur Drive."""
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import io
+
+    devis_list = _load_devis()
+    factures_list = _load_factures()
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    def hdr(ws, headers, row=1):
+        ws.append(["PAUSE KRÉYOL"])
+        ws.append([])
+        ws.append([])
+        ws.append([""] + headers)
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        for col in range(1, len(headers) + 2):
+            c = ws.cell(4, col)
+            c.font = Font(bold=True, color="FFFFFF", size=10)
+            c.fill = PatternFill("solid", fgColor="FF795A")
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[4].height = 26
+        ws.freeze_panes = "B5"
+
+    # ── Devis ──
+    ws_d = wb.create_sheet("\U0001f4dd Devis")
+    dh = ["ANNÉE","N° DEVIS","CLIENT","ÉTAT","PRESTATION","PÉRIODE",
+          "DATE ENVOI","MONTANT (€)","ACOMPTE (€)","RETOUR SIGNÉ","N° FACTURE LIÉ","MONTANT FACTURÉ","NOTES"]
+    hdr(ws_d, dh)
+    for d in sorted(devis_list, key=lambda x: str(x.get("annee","")), reverse=True):
+        prest = (d.get("prestations") or [{}])[0].get("description","")
+        ws_d.append(["",
+            d.get("annee",""), d.get("numero",""), d.get("client_nom",""),
+            d.get("statut","").upper(), prest, d.get("periode",""), d.get("date_envoi",""),
+            d.get("total_ht",0), d.get("acompte_montant",0), d.get("date_signature",""),
+            (d.get("factures_liees") or [""])[0], "", d.get("notes","")
+        ])
+
+    # ── Factures ──
+    ws_f = wb.create_sheet("\U0001f9fe Factures")
+    fh = ["ANNÉE","N° FACTURE","CLIENT","ÉTAT","PRESTATION","PÉRIODE","DEVIS LIÉ",
+          "MONTANT (€)","DATE ENVOI","DATE PAIEMENT","SOLDE DÛ (€)","NOTES"]
+    hdr(ws_f, fh)
+    for f in sorted(factures_list, key=lambda x: str(x.get("annee","")), reverse=True):
+        prest = (f.get("prestations") or [{}])[0].get("description","")
+        ws_f.append(["",
+            f.get("annee",""), f.get("numero",""), f.get("client_nom",""),
+            f.get("statut","").upper(), prest, f.get("periode",""), f.get("devis_numero",""),
+            f.get("total_ht",0), f.get("date_envoi",""), f.get("date_paiement",""),
+            f.get("solde_a_payer",0), f.get("notes","")
+        ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    xlsx_bytes = buf.read()
+
+    # Sync Drive
+    try:
+        if os.getenv("ENV") == "production":
+            from engine.drive_storage import drive_find_file, drive_upload_bytes, get_root_folder_id
+            root_id = get_root_folder_id()
+            fname = "Pause_Kreyol_Comptabilite_Pro.xlsx"
+            fid = drive_find_file(fname, root_id)
+            if not fid:
+                drive_upload_bytes(xlsx_bytes, fname, root_id)
+                logger.info("Compta xlsx créé sur Drive")
+            else:
+                # Mise à jour du fichier existant
+                from googleapiclient.http import MediaIoBaseUpload
+                from engine.drive_storage import _get_service
+                svc = _get_service()
+                svc.files().update(
+                    fileId=fid,
+                    media_body=MediaIoBaseUpload(io.BytesIO(xlsx_bytes),
+                        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                ).execute()
+                logger.info("Compta xlsx mis à jour sur Drive")
+    except Exception as e:
+        logger.warning(f"Drive sync compta xlsx : {e}")
+
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Pause_Kreyol_Comptabilite_Pro.xlsx"}
+    )
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODULE SUBVENTIONS
