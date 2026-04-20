@@ -3347,4 +3347,67 @@ def post_comm_config(data: dict):
     _save_comm(data)
     return {"status": "ok"}
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE RESSOURCES HUMAINES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+RH_FILE = CLIENTS_DIR / "rh_data.json"
+
+def _load_rh() -> dict:
+    if RH_FILE.exists():
+        try: return json.loads(RH_FILE.read_text())
+        except: return {}
+    return {}
+
+def _save_rh(data: dict):
+    RH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RH_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("rh_data.json", root_id)
+            if fid: drive_update_json(fid, data)
+            else: drive_upload_json(data, "rh_data.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync rh_data.json : {e}")
+
+
+@app.get("/rh/structures")
+def get_rh_structures():
+    """Retourne toutes les données RH des structures."""
+    return _load_rh()
+
+
+@app.get("/rh/structures/{slug}")
+def get_rh_structure(slug: str):
+    """Retourne les données RH d'une structure."""
+    return _load_rh().get(slug, {})
+
+
+@app.put("/rh/structures/{slug}")
+def put_rh_structure(slug: str, data: dict):
+    """Sauvegarde les données RH d'une structure (info gestion sociale et paie)."""
+    rh = _load_rh()
+    rh[slug] = {**rh.get(slug, {}), **data, "updated_at": datetime.now().isoformat()}
+    _save_rh(rh)
+    # Sync aussi vers le dossier Drive du client
+    try:
+        matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+        if matches:
+            meta_path = matches[0] / "client.json"
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text())
+                meta["rh_info"] = rh[slug]
+                meta["statut_employeur"] = len([v for v in data.values() if v and str(v).strip()]) == 16
+                meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+                from engine.drive_storage import drive_find_file, drive_update_json
+                folder_id = meta.get("drive_folder_id")
+                if folder_id and os.getenv("ENV") == "production":
+                    fid = drive_find_file("client.json", folder_id)
+                    if fid: drive_update_json(fid, meta)
+    except Exception as e:
+        logger.warning(f"RH sync client.json : {e}")
+    return rh[slug]
+
 
