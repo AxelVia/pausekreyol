@@ -266,6 +266,17 @@ def _restore_devis_factures_drive():
                 drive_update_json(fid, comm_data)
             else:
                 drive_upload_json(comm_data, "comm.json", root_id)
+        # Backup RH
+        if RH_FILE.exists():
+            rh_data = json.loads(RH_FILE.read_text())
+            fid = drive_find_file("rh_data.json", root_id)
+            if fid: drive_update_json(fid, rh_data)
+            else: drive_upload_json(rh_data, "rh_data.json", root_id)
+        if ARTISTES_FILE.exists():
+            art_data = json.loads(ARTISTES_FILE.read_text())
+            fid = drive_find_file("rh_artistes.json", root_id)
+            if fid: drive_update_json(fid, art_data)
+            else: drive_upload_json(art_data, "rh_artistes.json", root_id)
         logger.info("Sync nightly globale ↔ Drive OK")
     except Exception as e:
         logger.warning(f"Sync Drive nightly : {e}")
@@ -370,6 +381,29 @@ async def lifespan(app: FastAPI):
                 logger.info("processed_emails.json restauré depuis Drive")
         except Exception as e:
             logger.warning(f"processed_emails.json non restauré : {e}")
+
+        # Restaure rh_data.json + rh_artistes.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            rh_data_drive = drive_download_json("rh_data.json", root_id)
+            if rh_data_drive:
+                RH_FILE.parent.mkdir(parents=True, exist_ok=True)
+                RH_FILE.write_text(json.dumps(rh_data_drive, ensure_ascii=False, indent=2))
+                logger.info(f"rh_data.json restauré depuis Drive ({len(rh_data_drive)} structures)")
+        except Exception as e:
+            logger.warning(f"rh_data.json non restauré : {e}")
+
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            rh_artistes_drive = drive_download_json("rh_artistes.json", root_id)
+            if rh_artistes_drive:
+                ARTISTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                ARTISTES_FILE.write_text(json.dumps(rh_artistes_drive, ensure_ascii=False, indent=2))
+                logger.info(f"rh_artistes.json restauré depuis Drive ({len(rh_artistes_drive)} artistes)")
+        except Exception as e:
+            logger.warning(f"rh_artistes.json non restauré : {e}")
 
     scheduler = None
     if env == "production" and gmail_token:
@@ -3387,27 +3421,180 @@ def get_rh_structure(slug: str):
 
 @app.put("/rh/structures/{slug}")
 def put_rh_structure(slug: str, data: dict):
-    """Sauvegarde les données RH d'une structure (info gestion sociale et paie)."""
+    """Sauvegarde les données RH d'une structure et propage vers client.json."""
     rh = _load_rh()
     rh[slug] = {**rh.get(slug, {}), **data, "updated_at": datetime.now().isoformat()}
     _save_rh(rh)
-    # Sync aussi vers le dossier Drive du client
+
+    # Compte les 16 champs requis remplis
+    CHAMPS_REQUIS = [
+        "licence_spectacle", "agrement_aem", "dernier_ordre_conges", "dernier_ordre_aem",
+        "numero_objet", "identifiant_net_entreprise", "numero_conges_spectacle",
+        "identifiant_audiens", "affiliation_diffuseur", "centre_recouvrement",
+        "adhesion_pole_emploi", "thalie_sante", "afdas", "ccnsvp", "fcap_svp", "droits_auteur",
+    ]
+    nb_remplis = sum(1 for c in CHAMPS_REQUIS if rh[slug].get(c) and str(rh[slug][c]).strip())
+    statut_employeur = (nb_remplis == 16)
+
+    # Propage vers client.json local
     try:
         matches = list(CLIENTS_DIR.glob(f"{slug}*"))
         if matches:
             meta_path = matches[0] / "client.json"
             if meta_path.exists():
                 meta = json.loads(meta_path.read_text())
-                meta["rh_info"] = rh[slug]
-                meta["statut_employeur"] = len([v for v in data.values() if v and str(v).strip()]) == 16
+                meta["rh_info"] = {k: v for k, v in rh[slug].items() if not k.startswith("_")}
+                meta["statut_employeur"] = statut_employeur
+                meta["rh_champs_remplis"] = nb_remplis
                 meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
-                from engine.drive_storage import drive_find_file, drive_update_json
-                folder_id = meta.get("drive_folder_id")
-                if folder_id and os.getenv("ENV") == "production":
-                    fid = drive_find_file("client.json", folder_id)
-                    if fid: drive_update_json(fid, meta)
+                # Sync Drive
+                if os.getenv("ENV") == "production":
+                    from engine.drive_storage import drive_find_file, drive_update_json
+                    folder_id = meta.get("drive_folder_id")
+                    if folder_id:
+                        fid = drive_find_file("client.json", folder_id)
+                        if fid:
+                            drive_update_json(fid, meta)
+                logger.info(f"RH structure {slug} : {nb_remplis}/16 champs — employeur={statut_employeur}")
     except Exception as e:
-        logger.warning(f"RH sync client.json : {e}")
-    return rh[slug]
+        logger.warning(f"RH sync client.json {slug} : {e}")
+
+    return {"slug": slug, "statut_employeur": statut_employeur, "champs_remplis": nb_remplis, **rh[slug]}
+
+
+# ── Artistes RH ───────────────────────────────────────────────────────────────
+
+ARTISTES_FILE = CLIENTS_DIR / "rh_artistes.json"
+
+def _load_artistes_rh() -> list:
+    if ARTISTES_FILE.exists():
+        try: return json.loads(ARTISTES_FILE.read_text())
+        except: return []
+    return []
+
+def _save_artistes_rh(artistes: list):
+    ARTISTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # On ne sauvegarde PAS les base64 des documents (trop lourds) — seulement les métadonnées
+    artistes_meta = []
+    for a in artistes:
+        a_clean = {k: v for k, v in a.items() if k != 'docs'}
+        docs_meta = {k: {mk: mv for mk, mv in v.items() if mk != 'data'} for k, v in (a.get('docs') or {}).items()}
+        a_clean['docs_meta'] = docs_meta
+        artistes_meta.append(a_clean)
+    ARTISTES_FILE.write_text(json.dumps(artistes_meta, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("rh_artistes.json", root_id)
+            if fid: drive_update_json(fid, artistes_meta)
+            else: drive_upload_json(artistes_meta, "rh_artistes.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync rh_artistes.json : {e}")
+
+
+@app.get("/rh/artistes")
+def get_artistes_rh():
+    return _load_artistes_rh()
+
+
+@app.post("/rh/artistes")
+def create_artiste_rh(data: dict):
+    artistes = _load_artistes_rh()
+    data["id"] = data.get("id") or f"art_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    data["created_at"] = datetime.now().isoformat()
+    artistes.append(data)
+    _save_artistes_rh(artistes)
+    return data
+
+
+@app.put("/rh/artistes/{artiste_id}")
+def update_artiste_rh(artiste_id: str, data: dict):
+    artistes = _load_artistes_rh()
+    updated = None
+    for i, a in enumerate(artistes):
+        if a.get("id") == artiste_id:
+            artistes[i] = {**a, **data, "id": artiste_id, "updated_at": datetime.now().isoformat()}
+            updated = artistes[i]
+            break
+    if not updated:
+        data["id"] = artiste_id
+        data["updated_at"] = datetime.now().isoformat()
+        artistes.append(data)
+        updated = data
+    _save_artistes_rh(artistes)
+    return updated
+
+
+@app.delete("/rh/artistes/{artiste_id}")
+def delete_artiste_rh(artiste_id: str):
+    artistes = _load_artistes_rh()
+    artistes = [a for a in artistes if a.get("id") != artiste_id]
+    _save_artistes_rh(artistes)
+    return {"status": "deleted"}
+
+
+@app.post("/rh/artistes/{artiste_id}/documents/{doc_id}")
+async def upload_doc_artiste(artiste_id: str, doc_id: str, file: UploadFile = File(...)):
+    """
+    Upload un document PDF/image pour un artiste vers le dossier Drive de la structure.
+    Stocke l'URL Drive dans les métadonnées de l'artiste.
+    """
+    artistes = _load_artistes_rh()
+    artiste = next((a for a in artistes if a.get("id") == artiste_id), None)
+    if not artiste:
+        raise HTTPException(status_code=404, detail="Artiste non trouvé")
+
+    with tempfile.NamedTemporaryFile(suffix=Path(file.filename).suffix, delete=False) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        drive_url = None
+        drive_file_id = None
+
+        if os.getenv("ENV") == "production":
+            from engine.drive_storage import (
+                drive_get_or_create_folder, drive_upload_bytes, get_root_folder_id
+            )
+            root_id = get_root_folder_id()
+            # Dossier artistes dans Drive
+            artistes_folder = drive_get_or_create_folder("RH_Artistes", root_id)
+            artiste_folder = drive_get_or_create_folder(
+                f"{artiste.get('prenom','')}_{artiste.get('nom','')}_{artiste_id[:8]}",
+                artistes_folder
+            )
+            file_bytes = tmp_path.read_bytes()
+            file_id = drive_upload_bytes(file_bytes, file.filename, artiste_folder)
+            drive_url = f"https://drive.google.com/file/d/{file_id}/view"
+            drive_file_id = file_id
+            logger.info(f"Doc {doc_id} uploadé Drive pour artiste {artiste_id}")
+
+        tmp_path.unlink(missing_ok=True)
+
+        # Met à jour les métadonnées de l'artiste
+        doc_meta = {
+            "nom": file.filename,
+            "date": datetime.now().strftime("%d/%m/%Y"),
+            "drive_url": drive_url,
+            "drive_file_id": drive_file_id,
+            "uploaded_at": datetime.now().isoformat(),
+        }
+        for i, a in enumerate(artistes):
+            if a.get("id") == artiste_id:
+                if "docs_meta" not in artistes[i]:
+                    artistes[i]["docs_meta"] = {}
+                artistes[i]["docs_meta"][doc_id] = doc_meta
+                break
+        _save_artistes_rh(artistes)
+        return {"status": "ok", "doc_id": doc_id, "drive_url": drive_url, "nom": file.filename}
+
+    except Exception as e:
+        tmp_path.unlink(missing_ok=True)
+        logger.error(f"Upload doc artiste {artiste_id}/{doc_id} : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 

@@ -2129,6 +2129,7 @@
       const [factures, setFactures] = useState([]);
       const [taches, setTaches] = useState([]);
       const [loading, setLoading] = useState(true);
+      const [rhInfo, setRhInfo] = useState(null);
 
       const cd = detail?.client_data || {};
       const projets = detail?.projets || [];
@@ -2140,21 +2141,20 @@
           fetch(`${API}/devis`).then(r => r.ok ? r.json() : []),
           fetch(`${API}/factures`).then(r => r.ok ? r.json() : []),
           fetch(`${API}/taches`).then(r => r.ok ? r.json() : []),
-        ]).then(([d, f, t]) => {
+          fetch(`${API}/rh/structures/${slug}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        ]).then(([d, f, t, rh]) => {
           setDevis((d || []).filter(x => x.client_slug === slug || x.client_nom?.toLowerCase() === (cd.nom_officiel || '').toLowerCase() || x.client_nom?.toLowerCase() === (cd.nom_usuel || '').toLowerCase()));
           setFactures((f || []).filter(x => x.client_slug === slug || x.client_nom?.toLowerCase() === (cd.nom_officiel || '').toLowerCase()));
           const nomClient = (cd.nom_usuel || cd.nom_officiel || '').toLowerCase();
           setTaches((t || []).filter(x => {
             if (x.done) return false;
-            // Match prioritaire par slug
             if (x.client_slug && x.client_slug === slug) return true;
-            // Match par nom complet (pas partiel sur 8 chars)
             if (x.client_detecte && nomClient && x.client_detecte.toLowerCase() === nomClient) return true;
-            // Match par nom usuel ou officiel
             const cdNomOfficiel = (cd.nom_officiel || '').toLowerCase();
             if (x.client_detecte && cdNomOfficiel && x.client_detecte.toLowerCase() === cdNomOfficiel) return true;
             return false;
           }));
+          if (rh && Object.keys(rh).length > 0) setRhInfo(rh);
           setLoading(false);
         }).catch(() => setLoading(false));
       }, [slug]);
@@ -2180,6 +2180,23 @@
 
       return (
         <div>
+          {/* Badge RH statut employeur */}
+          {rhInfo && (
+            <div style={{ marginBottom: 12, padding: '8px 14px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10,
+              background: rhInfo.statut_employeur ? 'var(--success-light)' : 'var(--warn-light)',
+              border: `1px solid ${rhInfo.statut_employeur ? 'var(--success)' : 'var(--warn)'}30`,
+            }}>
+              <span style={{ fontSize: 16 }}>{rhInfo.statut_employeur ? '✅' : '⏳'}</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: rhInfo.statut_employeur ? 'var(--success)' : 'var(--warn)' }}>
+                  {rhInfo.statut_employeur ? 'Statut Employeur actif' : `Statut Employeur incomplet — ${rhInfo.rh_champs_remplis || 0}/16 champs`}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  {rhInfo.statut_employeur ? 'Peut générer des fiches de paie via le module RH' : 'Compléter la fiche dans le module 👥 Ressources Humaines'}
+                </div>
+              </div>
+            </div>
+          )}
           {/* Métriques globales client */}
           <div className="metrics-grid" style={{ marginBottom: 16 }}>
             <div className="metric-card accent-green">
@@ -6688,6 +6705,32 @@ function EmailingView() {
       const structuresActives = clients.filter(c => !c.archived);
       const structuresEmployeurs = structuresActives.filter(c => statutEmployeur(c.slug).ok);
 
+      // ── Filtres artistes ────────────────────────────────────────────────────
+      const [filterStructArt, setFilterStructArt] = useState('tous');
+      const [filterProjetArt, setFilterProjetArt] = useState('tous');
+      const [searchArt, setSearchArt] = useState('');
+
+      // Charge artistes + données RH depuis l'API au montage
+      useEffect(() => {
+        fetch(`${API}/rh/artistes`).then(r => r.ok ? r.json() : []).then(d => {
+          if (Array.isArray(d) && d.length > 0) saveArtistes(d);
+        }).catch(() => {});
+        fetch(`${API}/rh/structures`).then(r => r.ok ? r.json() : {}).then(d => {
+          if (d && Object.keys(d).length > 0) saveRhData(d);
+        }).catch(() => {});
+      }, []);
+
+      const projetsDispos = filterStructArt === 'tous'
+        ? [...new Set(artistes.map(a => a.projet_nom).filter(Boolean))]
+        : [...new Set(artistes.filter(a => a.structure_slug === filterStructArt).map(a => a.projet_nom).filter(Boolean))];
+
+      const artistesFiltres = artistes.filter(a => {
+        const matchStruct = filterStructArt === 'tous' || a.structure_slug === filterStructArt;
+        const matchProjet = filterProjetArt === 'tous' || a.projet_nom === filterProjetArt;
+        const matchSearch = !searchArt || [a.nom, a.prenom, a.email, a.role].some(v => v?.toLowerCase().includes(searchArt.toLowerCase()));
+        return matchStruct && matchProjet && matchSearch;
+      });
+
       return (
         <div>
           {/* Header + tabs */}
@@ -6769,10 +6812,31 @@ function EmailingView() {
           {/* ══ ARTISTES ══ */}
           {tab === 'artistes' && !selectedArtiste && (
             <div>
+              {/* Filtres */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input className="form-input" value={searchArt} onChange={e => setSearchArt(e.target.value)}
+                  placeholder="🔍 Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 160 }} />
+                <select className="form-input" style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
+                  value={filterStructArt} onChange={e => { setFilterStructArt(e.target.value); setFilterProjetArt('tous'); }}>
+                  <option value="tous">Toutes structures</option>
+                  {structuresActives.map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
+                </select>
+                {projetsDispos.length > 0 && (
+                  <select className="form-input" style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
+                    value={filterProjetArt} onChange={e => setFilterProjetArt(e.target.value)}>
+                    <option value="tous">Tous projets</option>
+                    {projetsDispos.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
+                {(filterStructArt !== 'tous' || filterProjetArt !== 'tous' || searchArt) && (
+                  <button className="btn" style={{ fontSize: 11 }} onClick={() => { setFilterStructArt('tous'); setFilterProjetArt('tous'); setSearchArt(''); }}>✕ Réinitialiser</button>
+                )}
+                <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 'auto' }}>{artistesFiltres.length} artiste(s)</span>
+              </div>
               <div className="card">
-                {artistes.length === 0
-                  ? <div className="empty"><div className="empty-icon">🎭</div><div className="empty-text">Aucun artiste. Cliquez "+ Nouvel artiste" pour en créer un.</div></div>
-                  : artistes.map((a, i) => {
+                {artistesFiltres.length === 0
+                  ? <div className="empty"><div className="empty-icon">🎭</div><div className="empty-text">{artistes.length === 0 ? 'Aucun artiste. Cliquez "+ Nouvel artiste".' : 'Aucun résultat pour ces filtres.'}</div></div>
+                  : artistesFiltres.map((a, i) => {
                     const st = statutEmployable(a);
                     const structure = clients.find(c => c.slug === a.structure_slug);
                     return (
@@ -6813,18 +6877,31 @@ function EmailingView() {
               clients={structuresEmployeurs}
               clientsDetails={clientsDetails}
               onBack={() => setSelectedArtiste(null)}
-              onSave={artiste => {
+              onSave={async artiste => {
+                let saved;
                 if (artiste._new) {
-                  const newA = { ...artiste, id: `art_${Date.now()}`, _new: undefined, created_at: new Date().toISOString() };
-                  saveArtistes([...artistes, newA]);
-                  setSelectedArtiste(newA);
+                  const newA = { ...artiste, _new: undefined, created_at: new Date().toISOString() };
+                  try {
+                    const res = await fetch(`${API}/rh/artistes`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(newA) });
+                    saved = res.ok ? await res.json() : { ...newA, id: `art_${Date.now()}` };
+                  } catch { saved = { ...newA, id: `art_${Date.now()}` }; }
+                  saveArtistes([...artistes, saved]);
+                  setSelectedArtiste(saved);
                 } else {
-                  const updated = artistes.map(a => a.id === artiste.id ? artiste : a);
-                  saveArtistes(updated);
-                  setSelectedArtiste(artiste);
+                  try {
+                    const res = await fetch(`${API}/rh/artistes/${artiste.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(artiste) });
+                    saved = res.ok ? await res.json() : artiste;
+                  } catch { saved = artiste; }
+                  saveArtistes(artistes.map(a => a.id === artiste.id ? saved : a));
+                  setSelectedArtiste(saved);
                 }
+                return saved;
               }}
-              onDelete={id => { saveArtistes(artistes.filter(a => a.id !== id)); setSelectedArtiste(null); }}
+              onDelete={async id => {
+                try { await fetch(`${API}/rh/artistes/${id}`, { method: 'DELETE' }); } catch {}
+                saveArtistes(artistes.filter(a => a.id !== id));
+                setSelectedArtiste(null);
+              }}
             />
           )}
 
@@ -6848,16 +6925,29 @@ function EmailingView() {
       const [form, setForm] = useState(data || {});
       const [saved, setSaved] = useState(false);
 
-      function handleSave() {
-        onSave(form);
+      async function handleSave() {
+        try {
+          const res = await fetch(`${API}/rh/structures/${slug}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(form)
+          });
+          if (res.ok) {
+            const result = await res.json();
+            // Met à jour le statut employeur depuis la réponse serveur
+            if (result.statut_employeur !== undefined) {
+              onSave({ ...form, _statut_employeur: result.statut_employeur, _champs_remplis: result.champs_remplis });
+            } else {
+              onSave(form);
+            }
+          } else {
+            onSave(form);
+          }
+        } catch {
+          onSave(form); // Fallback local
+        }
         setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-        // Sync Drive via API
-        fetch(`${API}/rh/structures/${slug}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(form)
-        }).catch(() => {});
+        setTimeout(() => setSaved(false), 2500);
       }
 
       function exportFicheStructure() {
@@ -7001,20 +7091,56 @@ function EmailingView() {
         return { ok: infosOk && docsOk, infosOk, docsOk };
       })();
 
-      function handleSave() {
-        onSave(form);
+      async function handleSave() {
+        const saved = await onSave(form);
         setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
+        setTimeout(() => setSaved(false), 2500);
       }
 
-      function handleDoc(docId, file) {
-        const reader = new FileReader();
-        reader.onload = e => {
-          setForm(p => ({ ...p, docs: { ...p.docs, [docId]: { nom: file.name, data: e.target.result, date: new Date().toLocaleDateString('fr-FR') } } }));
-          setUploadMsg(`✅ ${file.name} ajouté`);
-          setTimeout(() => setUploadMsg(''), 2500);
-        };
-        reader.readAsDataURL(file);
+      const [uploadingDoc, setUploadingDoc] = useState(null); // id du doc en cours d'upload
+
+      async function handleDoc(docId, file) {
+        setUploadingDoc(docId);
+        try {
+          if (form.id && !form._new) {
+            // Upload vers Drive via API
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(`${API}/rh/artistes/${form.id}/documents/${docId}`, {
+              method: 'POST', body: fd
+            });
+            if (res.ok) {
+              const result = await res.json();
+              setForm(p => ({
+                ...p,
+                docs: { ...p.docs, [docId]: { nom: file.name, date: new Date().toLocaleDateString('fr-FR'), drive_url: result.drive_url } },
+                docs_meta: { ...p.docs_meta, [docId]: { nom: file.name, date: new Date().toLocaleDateString('fr-FR'), drive_url: result.drive_url } }
+              }));
+              setUploadMsg(`✅ ${file.name} uploadé${result.drive_url ? ' sur Drive' : ''}`);
+            } else {
+              // Fallback base64 si pas encore sauvegardé ou erreur API
+              throw new Error('API error');
+            }
+          } else {
+            // Artiste pas encore sauvegardé → base64 temporaire
+            const reader = new FileReader();
+            reader.onload = e => {
+              setForm(p => ({ ...p, docs: { ...p.docs, [docId]: { nom: file.name, data: e.target.result, date: new Date().toLocaleDateString('fr-FR'), source: 'local' } } }));
+              setUploadMsg(`✅ ${file.name} ajouté (sauvegardez pour uploader sur Drive)`);
+            };
+            reader.readAsDataURL(file);
+          }
+        } catch {
+          // Fallback base64
+          const reader = new FileReader();
+          reader.onload = e => {
+            setForm(p => ({ ...p, docs: { ...p.docs, [docId]: { nom: file.name, data: e.target.result, date: new Date().toLocaleDateString('fr-FR'), source: 'local' } } }));
+            setUploadMsg(`⚠️ ${file.name} stocké localement (Drive non disponible)`);
+          };
+          reader.readAsDataURL(file);
+        }
+        setUploadingDoc(null);
+        setTimeout(() => setUploadMsg(''), 4000);
       }
 
       function exportFicheSalarie() {
@@ -7125,11 +7251,19 @@ function EmailingView() {
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 500 }}>{doc.label}</div>
-                      {existing && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{existing.nom} — {existing.date}</div>}
+                      {existing && (
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                          {existing.drive_url
+                            ? <a href={existing.drive_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--pk-blue)' }}>☁️ {existing.nom} — Voir sur Drive</a>
+                            : <span>{existing.nom} — {existing.date}{existing.source === 'local' ? ' (local)' : ''}</span>
+                          }
+                        </div>
+                      )}
                     </div>
                     <label className="btn" style={{ fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>
-                      {existing ? '🔄' : '📁'}
-                      <input type="file" style={{ display: 'none' }} onChange={e => e.target.files[0] && handleDoc(doc.id, e.target.files[0])} />
+                      {uploadingDoc === doc.id ? '⏳' : existing ? '🔄' : '📁'}
+                      <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} disabled={uploadingDoc === doc.id}
+                        onChange={e => e.target.files[0] && handleDoc(doc.id, e.target.files[0])} />
                     </label>
                     {existing && (
                       <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 13 }}
@@ -7387,7 +7521,7 @@ function EmailingView() {
         { key: 'taches', label: 'Tâches', icon: icons.taches, section: 'gestion', badge: urgentCount || null },
         { key: 'devis', label: 'Devis & Factures', icon: icons.devis, section: 'gestion' },
         { key: 'subventions', label: 'Subventions', icon: icons.subventions, section: 'gestion' },
-        { key: 'rh', label: 'Ressources Humaines', icon: icons.rh, section: 'gestion' },
+        { key: 'rh', label: '👥 Ressources Humaines', icon: icons.rh, section: 'gestion' },
         { key: 'calendrier', label: 'Calendriers', icon: icons.calendrier, section: 'outils' },
         { key: 'annuaire', label: 'Annuaire', icon: icons.annuaire, section: 'outils' },
         { key: 'emailing', label: 'Emailing', icon: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M2.5 3.5L8 7.5L13.5 3.5" /><rect x="1" y="2" width="14" height="12" rx="1" /></svg>, section: 'outils' },
