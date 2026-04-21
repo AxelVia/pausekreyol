@@ -6561,6 +6561,314 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       },
     ];
 
+    // ── Fiche détaillée d'une subvention ─────────────────────────────────────
+
+    const PIECES_STANDARD_SUB = [
+        { id: "rib", label: "RIB de la structure", required: true },
+        { id: "statuts", label: "Statuts de l'association", required: true },
+        { id: "pv_ag", label: "PV d'Assemblée Générale", required: true },
+        { id: "joafe", label: "Extrait JOAFE / JO", required: true },
+        { id: "insee", label: "Attestation INSEE / SIRET", required: true },
+        { id: "compte_certifie", label: "Compte certifié N-1", required: true },
+        { id: "recepisse", label: "Récépissé préfecture", required: true },
+        { id: "budget_prev", label: "Budget prévisionnel du projet", required: true },
+        { id: "budget_asso", label: "Budget annuel de l'association N-1", required: true },
+        { id: "attestation_honneur", label: "Attestation sur l'honneur", required: true },
+        { id: "dossier_artistique", label: "Dossier artistique", required: false },
+        { id: "cv_intervenants", label: "CV des intervenants principaux", required: false },
+        { id: "decla_cofinancement", label: "Déclaration de co-financement", required: false },
+      ];
+
+    const INFOS_CLIENT_SUB = [
+      { id: "nom_officiel",  label: "Nom officiel",          path: ["client_data","nom_officiel"] },
+      { id: "siret",         label: "N° SIRET",              path: ["client_data","siret"] },
+      { id: "numero_rna",    label: "N° RNA",                path: ["client_data","numero_rna"] },
+      { id: "adresse_siege", label: "Adresse siège social",  path: ["client_data","adresse_siege"] },
+      { id: "president",     label: "Président(e)",          path: ["client_data","president"] },
+      { id: "email_contact", label: "Email de contact",      path: ["client_data","email_contact"] },
+      { id: "telephone",     label: "Téléphone",             path: ["client_data","telephone"] },
+      { id: "licence_type1", label: "N° Licence spectacle",  path: ["client_data","licence_type1"] },
+    ];
+
+    function SubventionFicheView({ sub, clients, clientsDetails, allModeles, onBack, onUpdate }) {
+      const [uploading, setUploading] = useState(null);
+      const [msg, setMsg] = useState('');
+      const [localSub, setLocalSub] = useState(sub);
+
+      // Récupère les détails du client depuis clientsDetails
+      const clientDetail = clientsDetails.find(c => c.slug === sub.client_slug);
+      const cd = clientDetail?.client_data || {};
+
+      // Infos client auto-remplies
+      const infosClient = INFOS_CLIENT_SUB.map(info => {
+        const val = info.path.reduce((obj, k) => obj?.[k], clientDetail) || '';
+        return { ...info, valeur: val };
+      });
+
+      // Modèle associé pour les pièces spécifiques
+      const modele = allModeles.find(m => m.id === localSub.modele_id);
+      const piecesModele = (modele?.pieces || []).map((p, i) => ({
+        id: `modele_${i}`, label: p, required: true, source: 'modele'
+      }));
+
+      // Toutes les pièces = standards + spécifiques au modèle
+      const toutesLesPieces = [
+        ...PIECES_STANDARD_SUB,
+        ...piecesModele.filter(pm => !PIECES_STANDARD_SUB.find(ps => ps.label.toLowerCase() === pm.label.toLowerCase())),
+      ];
+
+      const piecesFournies = localSub.pieces_fournies || {};
+      const nbFournies = toutesLesPieces.filter(p => piecesFournies[p.id]).length;
+      const nbRequises = toutesLesPieces.filter(p => p.required).length;
+      const nbFourniesRequises = toutesLesPieces.filter(p => p.required && piecesFournies[p.id]).length;
+      const dossierComplet = nbFourniesRequises === nbRequises;
+
+      const sc = {
+        'À préparer':    { bg: 'var(--surface2)',       c: 'var(--text3)' },
+        'En cours':      { bg: 'var(--pk-blue-light)',  c: 'var(--pk-blue)' },
+        'Déposée':       { bg: '#FFF3E0',               c: '#E65100' },
+        'En instruction':{ bg: 'var(--warn-light)',     c: 'var(--warn)' },
+        'Accordée':      { bg: 'var(--success-light)',  c: 'var(--success)' },
+        'Versée':        { bg: 'var(--success-light)',  c: 'var(--success)' },
+        'Refusée':       { bg: 'var(--danger-light)',   c: 'var(--danger)' },
+      }[localSub.statut] || { bg: 'var(--surface2)', c: 'var(--text3)' };
+
+      async function uploadPiece(pieceId, file) {
+        setUploading(pieceId);
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await fetch(`${API}/subventions/${localSub.id}/pieces/${pieceId}`, {
+            method: 'POST', body: fd
+          });
+          if (res.ok) {
+            const result = await res.json();
+            const updated = {
+              ...localSub,
+              pieces_fournies: {
+                ...(localSub.pieces_fournies || {}),
+                [pieceId]: { nom: file.name, date: new Date().toLocaleDateString('fr-FR'), drive_url: result.drive_url }
+              }
+            };
+            setLocalSub(updated);
+            onUpdate(updated);
+            setMsg(`✅ ${file.name} ${result.drive_url ? 'uploadé sur Drive' : 'ajouté'}`);
+          } else throw new Error();
+        } catch {
+          // Fallback local si API échoue
+          const updated = {
+            ...localSub,
+            pieces_fournies: {
+              ...(localSub.pieces_fournies || {}),
+              [pieceId]: { nom: file.name, date: new Date().toLocaleDateString('fr-FR') }
+            }
+          };
+          setLocalSub(updated);
+          onUpdate(updated);
+          setMsg(`⚠️ ${file.name} enregistré localement`);
+        }
+        setUploading(null);
+        setTimeout(() => setMsg(''), 4000);
+      }
+
+      function removePiece(pieceId) {
+        const pf = { ...(localSub.pieces_fournies || {}) };
+        delete pf[pieceId];
+        const updated = { ...localSub, pieces_fournies: pf };
+        setLocalSub(updated);
+        onUpdate(updated);
+      }
+
+      async function exportFormulaire() {
+        const a = document.createElement('a');
+        a.href = `${API}/export/formulaire-subvention/${localSub.id}`;
+        a.download = `Formulaire_${localSub.client_nom}_${localSub.modele_nom || localSub.organisme}.xlsx`;
+        a.click();
+      }
+
+      async function saveStatut(statut) {
+        const updated = { ...localSub, statut };
+        setLocalSub(updated);
+        onUpdate(updated);
+        await fetch(`${API}/subventions/${localSub.id}`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ statut })
+        }).catch(() => {});
+      }
+
+      return (
+        <div>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <button className="btn" onClick={onBack}>← Retour</button>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{localSub.modele_nom || localSub.organisme}</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                {localSub.client_nom}{localSub.projet_nom ? ` › ${localSub.projet_nom}` : ''}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <span style={{ background: sc.bg, color: sc.c, padding: '4px 12px', borderRadius: 10, fontSize: 12, fontWeight: 700, alignSelf: 'center' }}>
+                {localSub.statut}
+              </span>
+              <button className="btn" style={{ fontSize: 12 }} onClick={exportFormulaire}>📥 Export formulaire xlsx</button>
+            </div>
+          </div>
+
+          <div className="grid-2" style={{ gap: 14 }}>
+            {/* Colonne gauche : infos + client */}
+            <div>
+              {/* Infos demande */}
+              <div className="card" style={{ marginBottom: 12 }}>
+                <div className="card-header"><div className="card-title">📋 Informations de la demande</div></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  {[
+                    ['Organisme', localSub.organisme || localSub.modele_nom],
+                    ['Montant sollicité', localSub.montant_sollicite ? Number(localSub.montant_sollicite).toLocaleString('fr-FR') + ' €' : '—'],
+                    ['Deadline dépôt', localSub.deadline ? localSub.deadline.split('-').reverse().join('/') : '—'],
+                    ['Retour prévu', localSub.date_retour_prevue ? localSub.date_retour_prevue.split('-').reverse().join('/') : '—'],
+                  ].map(([label, val]) => (
+                    <div key={label} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{label}</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, marginTop: 2 }}>{val || '—'}</div>
+                    </div>
+                  ))}
+                </div>
+                {localSub.notes && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text2)', fontStyle: 'italic', padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+                    {localSub.notes}
+                  </div>
+                )}
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>Modifier le statut :</div>
+                  <select style={{ fontSize: 12, padding: '5px 10px', border: `1px solid ${sc.c}40`, borderRadius: 6, background: sc.bg, color: sc.c, fontWeight: 600, cursor: 'pointer' }}
+                    value={localSub.statut} onChange={e => saveStatut(e.target.value)}>
+                    {['À préparer','En cours','Déposée','En instruction','Accordée','Refusée','Versée'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Infos client auto-remplies */}
+              <div className="card">
+                <div className="card-header">
+                  <div><div className="card-title">🏛 Informations de la structure</div>
+                    <div className="card-subtitle">Récupérées depuis le dossier client</div>
+                  </div>
+                </div>
+                {infosClient.map(info => (
+                  <div key={info.id} style={{ display: 'flex', padding: '7px 0', borderBottom: '1px solid var(--border)', gap: 10, alignItems: 'flex-start' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', width: 140, flexShrink: 0 }}>{info.label}</div>
+                    <div style={{ fontSize: 13, fontWeight: info.valeur ? 500 : 400, color: info.valeur ? 'var(--text)' : 'var(--text3)', flex: 1 }}>
+                      {info.valeur || <span style={{ fontStyle: 'italic', fontSize: 11 }}>Non renseigné dans le dossier client</span>}
+                    </div>
+                  </div>
+                ))}
+                {!clientDetail && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--warn)', padding: '6px 10px', background: 'var(--warn-light)', borderRadius: 6 }}>
+                    ⚠️ Aucun client rattaché à cette demande — les infos ne peuvent pas être récupérées automatiquement.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Colonne droite : pièces justificatives */}
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <div className="card-title">📄 Pièces justificatives</div>
+                  <div className="card-subtitle">
+                    <span style={{ color: dossierComplet ? 'var(--success)' : 'var(--warn)', fontWeight: 600 }}>
+                      {dossierComplet ? '✅ Dossier complet' : `${nbFourniesRequises}/${nbRequises} pièces requises`}
+                    </span>
+                    {` — ${nbFournies}/${toutesLesPieces.length} au total`}
+                  </div>
+                </div>
+              </div>
+
+              {/* Barre de progression */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ height: 6, background: 'var(--border)', borderRadius: 3 }}>
+                  <div style={{ height: '100%', background: dossierComplet ? 'var(--success)' : 'var(--pk-orange)', borderRadius: 3,
+                    width: `${Math.round((nbFourniesRequises/Math.max(nbRequises,1))*100)}%`, transition: 'width 0.3s' }} />
+                </div>
+              </div>
+
+              {msg && <div style={{ fontSize: 12, padding: '6px 8px', background: 'var(--success-light)', borderRadius: 6, marginBottom: 8, color: 'var(--success)' }}>{msg}</div>}
+
+              {/* Liste pièces standards */}
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Documents standards</div>
+              {PIECES_STANDARD_SUB.map(piece => {
+                const fournie = piecesFournies[piece.id];
+                return (
+                  <div key={piece.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>
+                      {fournie ? '✅' : piece.required ? '⚠️' : '○'}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 500 }}>
+                        {piece.label}{piece.required && <span style={{ color: 'var(--danger)', marginLeft: 2 }}>*</span>}
+                      </div>
+                      {fournie && (
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 1 }}>
+                          {fournie.drive_url
+                            ? <a href={fournie.drive_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--pk-blue)' }}>☁️ {fournie.nom} — Drive</a>
+                            : `📄 ${fournie.nom} — ${fournie.date}`
+                          }
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      {fournie && (
+                        <button onClick={() => removePiece(piece.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 12 }}>✕</button>
+                      )}
+                      <label style={{ cursor: 'pointer', fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border2)', background: 'var(--surface)' }}>
+                        {uploading === piece.id ? '⏳' : fournie ? '🔄' : '📁'}
+                        <input type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.docx" style={{ display: 'none' }} disabled={uploading === piece.id}
+                          onChange={e => e.target.files[0] && uploadPiece(piece.id, e.target.files[0])} />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Pièces spécifiques au modèle */}
+              {piecesModele.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
+                    Pièces spécifiques — {modele?.nom || localSub.organisme}
+                  </div>
+                  {piecesModele.map(piece => {
+                    const fournie = piecesFournies[piece.id];
+                    return (
+                      <div key={piece.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{fournie ? '✅' : '⚠️'}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 12, fontWeight: 500 }}>{piece.label}<span style={{ color: 'var(--danger)', marginLeft: 2 }}>*</span></div>
+                          {fournie && <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                            {fournie.drive_url
+                              ? <a href={fournie.drive_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--pk-blue)' }}>☁️ {fournie.nom}</a>
+                              : `📄 ${fournie.nom}`}
+                          </div>}
+                        </div>
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          {fournie && <button onClick={() => removePiece(piece.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 12 }}>✕</button>}
+                          <label style={{ cursor: 'pointer', fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border2)', background: 'var(--surface)' }}>
+                            {uploading === piece.id ? '⏳' : fournie ? '🔄' : '📁'}
+                            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.docx" style={{ display: 'none' }} disabled={uploading === piece.id}
+                              onChange={e => e.target.files[0] && uploadPiece(piece.id, e.target.files[0])} />
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+
     function SubventionsView({ clients }) {
       // ─────────────────────────────────────────────────────────────────────
       // État principal
@@ -6568,6 +6876,8 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [subventions, setSubventions] = useState([]);
       const [modeles, setModeles] = useState([]); // modèles personnalisés
       const [showArchived, setShowArchived] = useState(false);
+      const [selectedSub, setSelectedSub] = useState(null); // fiche subvention ouverte
+      const [clientsData, setClientsData] = useState({}); // données enrichies par slug
       const [clientsDetails, setClientsDetails] = useState([]);
       const [showNew, setShowNew] = useState(false);
       const [showNewModele, setShowNewModele] = useState(false);
@@ -6722,7 +7032,20 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
               ))}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              {tab === 'suivi' && (
+              {tab === 'suivi' && selectedSub && (
+                <SubventionFicheView
+                  sub={selectedSub}
+                  clients={clients}
+                  clientsDetails={clientsDetails}
+                  allModeles={allModeles}
+                  onBack={() => setSelectedSub(null)}
+                  onUpdate={updated => {
+                    setSubventions(p => p.map(s => s.id === updated.id ? updated : s));
+                    setSelectedSub(updated);
+                  }}
+                />
+              )}
+              {tab === 'suivi' && !selectedSub && (
                 <>
                   <button className="btn" style={{ fontSize: 11, background: showArchived ? 'var(--pk-blue-light)' : '', color: showArchived ? 'var(--pk-blue)' : 'var(--text3)' }}
                     onClick={() => setShowArchived(p => !p)}>
@@ -6847,7 +7170,8 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                   const dl = s.deadline ? diffLabel(s.deadline) : null;
                   const dlRetour = s.date_retour_prevue ? diffLabel(s.date_retour_prevue) : null;
                   return (
-                    <div key={s.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'flex-start', opacity: s.archived ? 0.6 : 1 }}>
+                    <div key={s.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'flex-start', opacity: s.archived ? 0.6 : 1, cursor: 'pointer' }}
+                      onClick={e => { if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'BUTTON') setSelectedSub(s); }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{s.modele_nom || s.organisme}</div>
                         <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>
@@ -6876,6 +7200,9 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                             style={{ fontSize: 10, padding: '2px 6px', background: 'none', border: '1px solid var(--danger)40', borderRadius: 4, cursor: 'pointer', color: 'var(--danger)' }}
                             title="Supprimer">🗑</button>
                         </div>
+                        <button onClick={() => setSelectedSub(s)} style={{ marginTop: 4, fontSize: 11, color: 'var(--pk-blue)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                          Voir la fiche →
+                        </button>
                       </div>
                     </div>
                   );

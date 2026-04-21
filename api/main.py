@@ -3814,3 +3814,215 @@ def export_planning_residence(res_id: str):
         headers={"Content-Disposition": f"attachment; filename={fname}"}
     )
 
+# ── Upload pièce justificative subvention → Drive ────────────────────────────
+
+@app.post("/subventions/{sub_id}/pieces/{piece_id}")
+async def upload_piece_subvention(sub_id: str, piece_id: str, file: UploadFile = File(...)):
+    """Upload une pièce justificative pour une subvention vers Drive."""
+    subs = _load_subventions()
+    sub = next((s for s in subs if s.get("id") == sub_id), None)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subvention non trouvée")
+
+    with tempfile.NamedTemporaryFile(suffix=Path(file.filename).suffix or ".pdf", delete=False) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        drive_url = None
+        drive_file_id = None
+
+        if os.getenv("ENV") == "production":
+            from engine.drive_storage import (
+                drive_get_or_create_folder, drive_upload_bytes,
+                drive_find_file, get_root_folder_id
+            )
+            root_id = get_root_folder_id()
+            # Dossier Subventions dans Drive
+            sub_folder = drive_get_or_create_folder("Subventions", root_id)
+            # Sous-dossier par demande
+            nom_dossier = f"{sub.get('modele_nom','Subvention')[:30]}_{sub_id[:8]}"
+            dem_folder = drive_get_or_create_folder(nom_dossier, sub_folder)
+            file_bytes = tmp_path.read_bytes()
+            file_id = drive_upload_bytes(file_bytes, file.filename, dem_folder)
+            drive_url = f"https://drive.google.com/file/d/{file_id}/view"
+            drive_file_id = file_id
+
+        tmp_path.unlink(missing_ok=True)
+
+        # Met à jour les métadonnées de la pièce dans la subvention
+        doc_meta = {
+            "nom": file.filename,
+            "date": datetime.now().strftime("%d/%m/%Y"),
+            "drive_url": drive_url,
+            "drive_file_id": drive_file_id,
+            "uploaded_at": datetime.now().isoformat(),
+        }
+        for i, s in enumerate(subs):
+            if s.get("id") == sub_id:
+                if "pieces_fournies" not in subs[i]:
+                    subs[i]["pieces_fournies"] = {}
+                subs[i]["pieces_fournies"][piece_id] = doc_meta
+                break
+        _save_subventions(subs)
+        return {"status": "ok", "piece_id": piece_id, "drive_url": drive_url, "nom": file.filename}
+
+    except Exception as e:
+        tmp_path.unlink(missing_ok=True)
+        logger.error(f"Upload pièce subvention {sub_id}/{piece_id} : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/export/formulaire-subvention/{sub_id}")
+def export_formulaire_subvention(sub_id: str):
+    """Génère un formulaire xlsx récapitulatif de la demande de subvention."""
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import io as io_mod
+
+    subs = _load_subventions()
+    sub = next((s for s in subs if s.get("id") == sub_id), None)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subvention non trouvée")
+
+    # Récupère les données client si disponible
+    client_data = {}
+    if sub.get("client_slug"):
+        matches = list(CLIENTS_DIR.glob(f"{sub['client_slug']}*"))
+        if matches:
+            mp = matches[0] / "client.json"
+            if mp.exists():
+                meta = json.loads(mp.read_text())
+                client_data = meta.get("client_data", {})
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Dossier Subvention"
+
+    ORANGE = "FF795A"; BLUE = "2834B7"; PEACH = "FFD2AD"; LIGHT = "F7F8FF"
+    thin = Side(style="thin", color="CCCCCC")
+    def bdr(): return Border(left=thin, right=thin, top=thin, bottom=thin)
+    def hdr(bold=True, size=11, color="FFFFFF"): return Font(bold=bold, size=size, color=color, name="DM Sans")
+    def body(bold=False, size=10): return Font(bold=bold, size=size, name="DM Sans")
+
+    # ── Entête ──
+    ws.merge_cells("A1:D1")
+    ws["A1"] = "DOSSIER DE DEMANDE DE SUBVENTION"
+    ws["A1"].font = Font(bold=True, size=16, color=BLUE, name="Josefin Sans")
+    ws["A1"].fill = PatternFill("solid", fgColor=PEACH)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 36
+
+    ws.merge_cells("A2:D2")
+    ws["A2"] = f"Organisme : {sub.get('modele_nom', sub.get('organisme', '—'))}   |   Généré le {datetime.now().strftime('%d/%m/%Y')}"
+    ws["A2"].font = body(size=9)
+    ws["A2"].fill = PatternFill("solid", fgColor=LIGHT)
+    ws.append([])
+
+    def section_header(ws, titre, color=ORANGE):
+        ws.append([titre])
+        r = ws.max_row
+        ws.merge_cells(f"A{r}:D{r}")
+        ws.cell(r, 1).font = hdr()
+        ws.cell(r, 1).fill = PatternFill("solid", fgColor=color)
+        ws.cell(r, 1).alignment = Alignment(vertical="center")
+        ws.row_dimensions[r].height = 22
+
+    def field_row(ws, label, value="", required=False):
+        ws.append([label + (" *" if required else ""), value or "", "", ""])
+        r = ws.max_row
+        ws.cell(r, 1).font = body(bold=True)
+        ws.cell(r, 1).fill = PatternFill("solid", fgColor=LIGHT)
+        ws.cell(r, 2).font = body()
+        ws.cell(r, 2).fill = PatternFill("solid", fgColor="FFFFFF")
+        ws.merge_cells(f"B{r}:D{r}")
+        for col in range(1, 5):
+            ws.cell(r, col).border = bdr()
+        ws.row_dimensions[r].height = 18
+
+    # ── Section 1 : Structure ──
+    section_header(ws, "1. INFORMATIONS DE LA STRUCTURE DEMANDEUSE")
+    field_row(ws, "Nom officiel", client_data.get("nom_officiel", sub.get("client_nom", "")), True)
+    field_row(ws, "Nom usuel / Sigle", client_data.get("nom_usuel", ""))
+    field_row(ws, "Numéro SIRET", client_data.get("siret", ""), True)
+    field_row(ws, "Numéro RNA", client_data.get("numero_rna", ""))
+    field_row(ws, "Adresse du siège social", client_data.get("adresse_siege", ""), True)
+    field_row(ws, "Président(e)", client_data.get("president", ""), True)
+    field_row(ws, "Email de contact", client_data.get("email_contact", ""))
+    field_row(ws, "Téléphone", client_data.get("telephone", ""))
+    field_row(ws, "N° Licence spectacle", client_data.get("licence_type1", ""))
+    ws.append([])
+
+    # ── Section 2 : Projet ──
+    section_header(ws, "2. INFORMATIONS SUR LE PROJET / L'ACTION")
+    field_row(ws, "Intitulé du projet", sub.get("projet_nom", ""), True)
+    field_row(ws, "Organisme sollicité", sub.get("organisme", ""), True)
+    field_row(ws, "Montant sollicité (€)", str(sub.get("montant_sollicite", "")), True)
+    field_row(ws, "Deadline de dépôt", sub.get("deadline", ""))
+    field_row(ws, "Date de retour prévue", sub.get("date_retour_prevue", ""))
+    field_row(ws, "Statut actuel", sub.get("statut", "À préparer"))
+    field_row(ws, "Notes / contexte", sub.get("notes", ""))
+    ws.append([])
+
+    # ── Section 3 : Pièces justificatives ──
+    section_header(ws, "3. PIÈCES JUSTIFICATIVES", BLUE)
+    ws.append(["Document", "Requis", "Fourni", "Observations"])
+    hdr_r = ws.max_row
+    for col, h in enumerate(["Document", "Requis", "Fourni", "Observations"], 1):
+        c = ws.cell(hdr_r, col)
+        c.font = hdr(size=10)
+        c.fill = PatternFill("solid", fgColor="444444")
+        c.alignment = Alignment(horizontal="center")
+        c.border = bdr()
+
+    PIECES_STANDARDS = [
+        ("RIB", True), ("Statuts de l'association", True),
+        ("Récépissé préfecture", True), ("Extrait JO (JOAFE)", True),
+        ("Attestation INSEE / SIRET", True), ("Compte certifié N-1", True),
+        ("PV d'Assemblée Générale", True), ("Budget prévisionnel du projet", True),
+        ("Budget de l'association N-1", True), ("Dossier artistique", False),
+        ("CV des intervenants", False), ("Attestation sur l'honneur", True),
+        ("Déclaration co-financement", True), ("RIB de la structure", True),
+    ]
+    pieces_fournies = sub.get("pieces_fournies", {})
+    for i, (piece, required) in enumerate(PIECES_STANDARDS):
+        pid = piece.lower().replace(" ", "_").replace("(","").replace(")","").replace("'","")[:20]
+        fournie = pid in pieces_fournies or piece in pieces_fournies
+        ws.append([piece, "Oui" if required else "Non", "✅" if fournie else "☐", ""])
+        r = ws.max_row
+        bg = "F0FFF4" if fournie else ("FFFFFF" if i%2==0 else LIGHT)
+        for col in range(1, 5):
+            ws.cell(r, col).fill = PatternFill("solid", fgColor=bg)
+            ws.cell(r, col).border = bdr()
+            ws.cell(r, col).font = body()
+            ws.cell(r, col).alignment = Alignment(horizontal="center" if col in [2,3] else "left")
+    ws.append([])
+
+    # ── Section 4 : Historique / Observations ──
+    section_header(ws, "4. SUIVI ET OBSERVATIONS")
+    field_row(ws, "Date de dépôt effective", "")
+    field_row(ws, "N° de dossier", "")
+    field_row(ws, "Contact instructeur", "")
+    field_row(ws, "Résultat / Décision", "")
+    field_row(ws, "Montant accordé (€)", "")
+    field_row(ws, "Date de versement", "")
+
+    # Largeurs colonnes
+    ws.column_dimensions["A"].width = 35
+    ws.column_dimensions["B"].width = 25
+    ws.column_dimensions["C"].width = 10
+    ws.column_dimensions["D"].width = 25
+
+    buf = io_mod.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    nom = f"Dossier_Subvention_{sub.get('client_nom','')[:20]}_{sub.get('modele_nom','')[:20]}.xlsx".replace(" ","_")
+    return StreamingResponse(
+        io_mod.BytesIO(buf.read()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={nom}"}
+    )
+
