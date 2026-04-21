@@ -405,6 +405,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"rh_artistes.json non restauré : {e}")
 
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            rh_res_drive = drive_download_json("rh_residences.json", root_id)
+            if rh_res_drive:
+                RESIDENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                RESIDENCES_FILE.write_text(json.dumps(rh_res_drive, ensure_ascii=False, indent=2))
+                logger.info(f"rh_residences.json restauré depuis Drive ({len(rh_res_drive)} résidences)")
+        except Exception as e:
+            logger.warning(f"rh_residences.json non restauré : {e}")
+
     scheduler = None
     if env == "production" and gmail_token:
         scheduler = BackgroundScheduler()
@@ -3594,7 +3605,212 @@ async def upload_doc_artiste(artiste_id: str, doc_id: str, file: UploadFile = Fi
         logger.error(f"Upload doc artiste {artiste_id}/{doc_id} : {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ── Drive listing fichiers client ────────────────────────────────────────────
+
+@app.get("/clients/{slug}/drive-files")
+def list_client_drive_files(slug: str):
+    """Liste tous les fichiers Drive du dossier client."""
+    matches = list(CLIENTS_DIR.glob(f"{slug}*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    meta_path = matches[0] / "client.json"
+    meta = json.loads(meta_path.read_text())
+    folder_id = meta.get("drive_folder_id")
+    if not folder_id:
+        return {"files": [], "folder_id": None, "message": "Dossier Drive non configuré"}
+    if os.getenv("ENV") != "production":
+        return {"files": [], "folder_id": folder_id, "message": "Listing Drive disponible en production"}
+    try:
+        from engine.drive_storage import _get_service
+        svc = _get_service()
+        q = f"'{folder_id}' in parents and trashed=false"
+        results = svc.files().list(
+            q=q,
+            fields="files(id,name,mimeType,modifiedTime,size,webViewLink)",
+            orderBy="modifiedTime desc",
+            pageSize=50
+        ).execute()
+        files = results.get("files", [])
+        def cat(mime):
+            if "spreadsheet" in mime or "xlsx" in mime: return "xlsx"
+            if "document" in mime or "docx" in mime: return "docx"
+            if "pdf" in mime: return "pdf"
+            if "folder" in mime: return "folder"
+            if "image" in mime: return "image"
+            return "other"
+        return {
+            "folder_id": folder_id,
+            "folder_url": f"https://drive.google.com/drive/folders/{folder_id}",
+            "files": [{"id": f["id"], "nom": f["name"], "type": cat(f["mimeType"]),
+                       "modifie": f.get("modifiedTime","")[:10],
+                       "url": f.get("webViewLink",""),
+                      } for f in files]
+        }
+    except Exception as e:
+        logger.warning(f"Drive listing {slug} : {e}")
+        return {"files": [], "folder_id": folder_id, "error": str(e)}
 
 
+# ── Planning résidence ────────────────────────────────────────────────────────
 
+RESIDENCES_FILE = CLIENTS_DIR / "rh_residences.json"
+
+def _load_residences() -> list:
+    if RESIDENCES_FILE.exists():
+        try: return json.loads(RESIDENCES_FILE.read_text())
+        except: return []
+    return []
+
+def _save_residences(data: list):
+    RESIDENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RESIDENCES_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("rh_residences.json", root_id)
+            if fid: drive_update_json(fid, data)
+            else: drive_upload_json(data, "rh_residences.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync rh_residences.json : {e}")
+
+
+@app.get("/rh/residences")
+def get_residences():
+    return _load_residences()
+
+@app.post("/rh/residences")
+def create_residence(data: dict):
+    residences = _load_residences()
+    data["id"] = data.get("id") or f"res_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    data["created_at"] = datetime.now().isoformat()
+    residences.append(data)
+    _save_residences(residences)
+    return data
+
+@app.put("/rh/residences/{res_id}")
+def update_residence(res_id: str, data: dict):
+    residences = _load_residences()
+    for i, r in enumerate(residences):
+        if r.get("id") == res_id:
+            residences[i] = {**r, **data, "id": res_id, "updated_at": datetime.now().isoformat()}
+            _save_residences(residences)
+            return residences[i]
+    raise HTTPException(status_code=404, detail="Residence non trouvee")
+
+@app.delete("/rh/residences/{res_id}")
+def delete_residence(res_id: str):
+    residences = _load_residences()
+    residences = [r for r in residences if r.get("id") != res_id]
+    _save_residences(residences)
+    return {"status": "deleted"}
+
+@app.get("/export/planning-residence/{res_id}")
+def export_planning_residence(res_id: str):
+    """Exporte le planning de residence au format xlsx."""
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import io as io_mod
+
+    residences = _load_residences()
+    res = next((r for r in residences if r.get("id") == res_id), None)
+    if not res:
+        raise HTTPException(status_code=404, detail="Residence non trouvee")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Planning Residence"
+
+    ORANGE = "FF795A"; BLUE = "2834B7"; PEACH = "FFD2AD"
+    thin = Side(style="thin", color="DDDDDD")
+    def bdr(): return Border(left=thin, right=thin, top=thin, bottom=thin)
+    def hdr_font(): return Font(bold=True, color="FFFFFF", size=10, name="DM Sans")
+    def body_font(bold=False): return Font(bold=bold, size=10, name="DM Sans")
+
+    titre = f"PLANNING DE RESIDENCE — {res.get('titre','')}"
+    ws.merge_cells("A1:Z1")
+    ws["A1"] = titre
+    ws["A1"].font = Font(bold=True, size=14, color=BLUE, name="Josefin Sans")
+    info = f"Structure : {res.get('structure_nom','')} | Projet : {res.get('projet_nom','')} | Du {res.get('date_debut','')} au {res.get('date_fin','')}"
+    ws["A2"] = info
+    ws["A2"].font = Font(size=9, name="DM Sans")
+    ws.append([])
+
+    artistes = res.get("artistes", [])
+    jours = res.get("jours", [])
+
+    # En-tetes
+    headers = ["Date", "Jour de la semaine"]
+    for a in artistes:
+        headers.append(a.get("prenom","") + " " + a.get("nom",""))
+    headers += ["Total heures", "Notes"]
+    ws.append(headers)
+    hdr_row = ws.max_row
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(hdr_row, col)
+        c.font = hdr_font()
+        c.fill = PatternFill("solid", fgColor=ORANGE)
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = bdr()
+    ws.row_dimensions[hdr_row].height = 32
+
+    # Donnees jours
+    for i, jour in enumerate(jours):
+        row_vals = [jour.get("date",""), jour.get("label","")]
+        heures_list = []
+        for a in artistes:
+            aid = a.get("id","")
+            h = jour.get("heures",{}).get(aid, 0) if jour.get("heures") else 0
+            heures_list.append(h)
+            row_vals.append(h if h else "")
+        total = sum(float(h) for h in heures_list if h)
+        row_vals.append(round(total,1) if total else "")
+        row_vals.append(jour.get("notes",""))
+        ws.append(row_vals)
+        row = ws.max_row
+        bg = "FFFFFF" if i % 2 == 0 else "F9F9F9"
+        for col in range(1, len(row_vals)+1):
+            c = ws.cell(row, col)
+            c.font = body_font()
+            c.fill = PatternFill("solid", fgColor=bg)
+            c.border = bdr()
+            c.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Totaux par artiste
+    ws.append([])
+    total_row_vals = ["TOTAUX", ""]
+    for a in artistes:
+        aid = a.get("id","")
+        tot = sum(float(j.get("heures",{}).get(aid, 0) or 0) for j in jours)
+        total_row_vals.append(round(tot,1) if tot else 0)
+    grand_total = sum(float(v) for v in total_row_vals[2:] if isinstance(v, (int,float)))
+    total_row_vals.append(round(grand_total,1))
+    total_row_vals.append("")
+    ws.append(total_row_vals)
+    for col in range(1, len(total_row_vals)+1):
+        c = ws.cell(ws.max_row, col)
+        c.font = Font(bold=True, color=BLUE, size=10, name="DM Sans")
+        c.fill = PatternFill("solid", fgColor=PEACH)
+        c.border = bdr()
+        c.alignment = Alignment(horizontal="center")
+
+    # Largeurs colonnes
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 16
+    for col_idx in range(3, len(headers)+1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 14
+    ws.freeze_panes = "C5"
+
+    buf = io_mod.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    fname = f"Planning_Residence_{res.get('titre','').replace(' ','_')[:30]}.xlsx"
+    return StreamingResponse(
+        io_mod.BytesIO(buf.read()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"}
+    )
 

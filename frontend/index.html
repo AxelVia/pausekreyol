@@ -1384,40 +1384,21 @@
     // ── Documents client catégorisés ─────────────────────────────────────────
 
     function DocumentsClientView({ detail, slug, onRefresh }) {
-      const [catActive, setCatActive] = useState('admin');
+      const [catActive, setCatActive] = useState('drive');
       const [uploadMsg, setUploadMsg] = useState('');
+      const [driveFiles, setDriveFiles] = useState(null); // null = pas encore chargé
+      const [driveLoading, setDriveLoading] = useState(false);
       const [docs, setDocs] = useState(() => {
         try { return JSON.parse(localStorage.getItem(`pk_docs_${slug}`) || '{}'); } catch { return {}; }
       });
 
       const CATEGORIES = [
-        {
-          id: 'admin',
-          label: 'Admin générale structure',
-          icon: '🏛',
-          color: '#2834B7',
-          bg: 'var(--pk-blue-light)',
-          desc: 'Statuts, RNA, SIRET, récépissé préfecture, JO, assurances, comptes certifiés, bilan N-1',
-          exemples: ['Statuts', 'Récépissé préfecture', 'Extrait JO', 'SIRET / SIREN', 'RIB', 'Compte certifié N-1', 'Rapport AG', 'Assurance'],
-        },
-        {
-          id: 'social',
-          label: 'Gestion sociale',
-          icon: '👥',
-          color: '#6A1B9A',
-          bg: '#F3E5F5',
-          desc: 'GUSO, DPAE, contrats artistes, fiche ETPT, bulletins de salaire, déclarations Urssaf',
-          exemples: ['Contrats artistes', 'Bulletins GUSO', 'DPAE', 'Fiches ETPT', 'Déclarations Urssaf', 'Congés spectacles'],
-        },
-        {
-          id: 'projet',
-          label: 'Gestion de projet',
-          icon: '📋',
-          color: '#E65100',
-          bg: '#FFF3E0',
-          desc: 'Budgets prévisionnels, dossiers subventions, conventions partenariales, comptes-rendus',
-          exemples: ['Budget prévisionnel', 'Dossier subvention', 'Convention partenariale', 'Compte-rendu projet', 'Plan de diffusion', 'Fiche technique'],
-        },
+        { id: 'admin',  label: 'Admin structure', icon: '\u{1F3DB}', color: '#2834B7', bg: 'var(--pk-blue-light)',
+          exemples: ['Statuts', 'RNA', 'SIRET', 'RIB', 'R\u00e9c\u00e9piss\u00e9 pr\u00e9fecture', 'JO', 'Assurance', 'Compte certifi\u00e9'] },
+        { id: 'social', label: 'Gestion sociale', icon: '\u{1F465}', color: '#6A1B9A', bg: '#F3E5F5',
+          exemples: ['Contrats artistes', 'GUSO', 'DPAE', 'Bulletins de salaire', 'D\u00e9clarations Urssaf'] },
+        { id: 'projet', label: 'Gestion de projet', icon: '\u{1F4CB}', color: '#E65100', bg: '#FFF3E0',
+          exemples: ['Budget pr\u00e9visionnel', 'Dossier subvention', 'Convention', 'Compte-rendu projet'] },
       ];
 
       function saveDocs(newDocs) {
@@ -1425,76 +1406,97 @@
         try { localStorage.setItem(`pk_docs_${slug}`, JSON.stringify(newDocs)); } catch {}
       }
 
+      async function loadDriveFiles() {
+        setDriveLoading(true);
+        try {
+          const res = await fetch(`${API}/clients/${slug}/drive-files`);
+          const d = await res.json();
+          setDriveFiles(d);
+        } catch { setDriveFiles({ files: [], error: 'Erreur de connexion' }); }
+        setDriveLoading(false);
+      }
+
+      useEffect(() => { if (catActive === 'drive') loadDriveFiles(); }, [catActive]);
+
       function addDoc(catId, doc) {
         const updated = { ...docs, [catId]: [...(docs[catId] || []), doc] };
         saveDocs(updated);
       }
-
       function removeDoc(catId, idx) {
         const updated = { ...docs, [catId]: (docs[catId] || []).filter((_, i) => i !== idx) };
         saveDocs(updated);
       }
-
       function handleFileUpload(catId, file) {
         const reader = new FileReader();
         reader.onload = e => {
-          addDoc(catId, {
-            nom: file.name,
-            type: file.name.split('.').pop().toUpperCase(),
-            size: Math.round(file.size / 1024) + ' ko',
-            date: new Date().toLocaleDateString('fr-FR'),
-            data: e.target.result, // base64 pour petits docs
-            source: 'local',
-          });
-          setUploadMsg(`✅ ${file.name} ajouté dans ${CATEGORIES.find(c=>c.id===catId)?.label}`);
+          addDoc(catId, { nom: file.name, type: file.name.split('.').pop().toUpperCase(),
+            date: new Date().toLocaleDateString('fr-FR'), data: e.target.result, source: 'local' });
+          setUploadMsg(`\u2705 ${file.name} ajout\u00e9`);
           setTimeout(() => setUploadMsg(''), 3000);
         };
         reader.readAsDataURL(file);
       }
-
-      function addLinkDoc(catId, nom, url) {
-        if (!nom || !url) return;
-        addDoc(catId, { nom, url, type: 'LIEN', date: new Date().toLocaleDateString('fr-FR'), source: 'drive' });
+      function addLinkDoc(catId) {
+        const nom = window.prompt('Nom du document :');
+        const url = window.prompt('URL (Drive, lien...) :');
+        if (nom && url) {
+          addDoc(catId, { nom, url, type: 'LIEN', date: new Date().toLocaleDateString('fr-FR') });
+        }
       }
 
-      const catCurrent = CATEGORIES.find(c => c.id === catActive);
-      const docsCurrentCat = docs[catActive] || [];
+      const FILE_ICONS = { xlsx: '\u{1F4CA}', docx: '\u{1F4C4}', pdf: '\u{1F4D5}', folder: '\u{1F4C1}', image: '\u{1F5BC}', other: '\u{1F4CE}' };
 
       return (
         <div>
           {/* Liens Drive principaux */}
           {(detail.drive_folder_id || detail.drive_asso_id) && (
-            <div className="card" style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12, padding: '10px 14px', background: 'var(--pk-blue-light)', borderRadius: 8, alignItems: 'center' }}>
               {detail.drive_asso_id && (
                 <a href={`https://docs.google.com/spreadsheets/d/${detail.drive_asso_id}/edit`} target="_blank" rel="noopener noreferrer"
-                  style={{ fontSize: 12, color: 'var(--success)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 5 }}>
-                  📊 Fiche Association / Structure →
+                  style={{ fontSize: 12, color: 'var(--success)', fontWeight: 600 }}>
+                  \u{1F4CA} Fiche Association →
+                </a>
+              )}
+              {detail.drive_projets_folder_id && (
+                <a href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 12, color: 'var(--pk-orange)', fontWeight: 600 }}>
+                  \u{1F4C1} Dossier Projets →
                 </a>
               )}
               {detail.drive_folder_id && (
                 <a href={`https://drive.google.com/drive/folders/${detail.drive_folder_id}`} target="_blank" rel="noopener noreferrer"
-                  style={{ fontSize: 12, color: 'var(--pk-blue)', fontWeight: 500 }}>
-                  📁 Dossier Drive complet →
+                  style={{ fontSize: 12, color: 'var(--pk-blue)', fontWeight: 600 }}>
+                  \u2601\uFE0F Dossier Drive complet →
                 </a>
               )}
             </div>
           )}
 
           {/* Tabs catégories */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+            <button onClick={() => setCatActive('drive')}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8,
+                border: `1.5px solid ${catActive === 'drive' ? 'var(--pk-blue)' : 'var(--border2)'}`,
+                background: catActive === 'drive' ? 'var(--pk-blue-light)' : 'var(--surface)',
+                color: catActive === 'drive' ? 'var(--pk-blue)' : 'var(--text2)',
+                fontWeight: catActive === 'drive' ? 600 : 400, fontSize: 13, cursor: 'pointer' }}>
+              \u2601\uFE0F Drive
+              {driveFiles?.files?.length > 0 && (
+                <span style={{ background: 'var(--pk-blue)', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10 }}>
+                  {driveFiles.files.length}
+                </span>
+              )}
+            </button>
             {CATEGORIES.map(cat => (
-              <button key={cat.id}
-                onClick={() => setCatActive(cat.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
-                  borderRadius: 8, border: `1.5px solid ${catActive === cat.id ? cat.color : 'var(--border2)'}`,
+              <button key={cat.id} onClick={() => setCatActive(cat.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8,
+                  border: `1.5px solid ${catActive === cat.id ? cat.color : 'var(--border2)'}`,
                   background: catActive === cat.id ? cat.bg : 'var(--surface)',
                   color: catActive === cat.id ? cat.color : 'var(--text2)',
-                  fontWeight: catActive === cat.id ? 600 : 400, fontSize: 13, cursor: 'pointer',
-                }}>
+                  fontWeight: catActive === cat.id ? 600 : 400, fontSize: 13, cursor: 'pointer' }}>
                 {cat.icon} {cat.label}
                 {(docs[cat.id] || []).length > 0 && (
-                  <span style={{ background: cat.color, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, marginLeft: 2 }}>
+                  <span style={{ background: cat.color, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10 }}>
                     {(docs[cat.id] || []).length}
                   </span>
                 )}
@@ -1502,60 +1504,96 @@
             ))}
           </div>
 
-          {/* Contenu catégorie active */}
-          {catCurrent && (
+          {/* ── TAB DRIVE ── */}
+          {catActive === 'drive' && (
             <div className="card">
-              <div style={{ marginBottom: 12, padding: '10px 12px', background: catCurrent.bg, borderRadius: 8, borderLeft: `3px solid ${catCurrent.color}` }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: catCurrent.color, marginBottom: 3 }}>{catCurrent.icon} {catCurrent.label}</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)' }}>{catCurrent.desc}</div>
+              <div className="card-header">
+                <div><div className="card-title">\u2601\uFE0F Fichiers Google Drive</div>
+                  <div className="card-subtitle">Fichiers stock\u00e9s dans le dossier Drive de la structure</div>
+                </div>
+                <button className="btn" style={{ fontSize: 11 }} onClick={loadDriveFiles} disabled={driveLoading}>
+                  {driveLoading ? '\u23F3 Chargement...' : '\u{1F504} Actualiser'}
+                </button>
               </div>
 
-              {/* Docs existants */}
-              {docsCurrentCat.length === 0 ? (
-                <div className="empty" style={{ padding: '16px 0' }}>
-                  <div className="empty-text">Aucun document dans cette catégorie.</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
-                    Exemples : {catCurrent.exemples.join(' · ')}
-                  </div>
+              {!detail.drive_folder_id && (
+                <div className="empty">
+                  <div className="empty-text">Dossier Drive non configur\u00e9 pour ce client. Effectuez une synchro Drive dans Dossiers clients.</div>
                 </div>
-              ) : docsCurrentCat.map((doc, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 6, background: catCurrent.bg, color: catCurrent.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
-                    {doc.type}
-                  </div>
+              )}
+              {detail.drive_folder_id && driveLoading && (
+                <div className="empty"><div className="empty-text">\u23F3 Chargement des fichiers...</div></div>
+              )}
+              {driveFiles?.message && !driveLoading && (
+                <div style={{ padding: '10px 12px', background: 'var(--pk-blue-light)', borderRadius: 8, fontSize: 12, color: 'var(--pk-blue)', marginBottom: 8 }}>
+                  \u2139\uFE0F {driveFiles.message}
+                  {driveFiles.folder_id && (
+                    <a href={`https://drive.google.com/drive/folders/${driveFiles.folder_id}`} target="_blank" rel="noopener noreferrer"
+                      style={{ marginLeft: 8, color: 'var(--pk-blue)', fontWeight: 600 }}>Ouvrir sur Drive \u2192</a>
+                  )}
+                </div>
+              )}
+              {driveFiles?.files?.length === 0 && !driveLoading && detail.drive_folder_id && !driveFiles?.message && (
+                <div className="empty"><div className="empty-text">Aucun fichier dans le dossier Drive.</div></div>
+              )}
+              {(driveFiles?.files || []).map((f, i) => (
+                <a key={f.id || i} href={f.url || `https://drive.google.com/file/d/${f.id}/view`} target="_blank" rel="noopener noreferrer"
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)', textDecoration: 'none', color: 'inherit' }}>
+                  <div style={{ fontSize: 20, flexShrink: 0 }}>{FILE_ICONS[f.type] || FILE_ICONS.other}</div>
                   <div style={{ flex: 1 }}>
-                    {doc.url
-                      ? <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 500, color: 'var(--pk-blue)' }}>{doc.nom}</a>
-                      : doc.data
-                        ? <a href={doc.data} download={doc.nom} style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{doc.nom}</a>
-                        : <span style={{ fontSize: 13, fontWeight: 500 }}>{doc.nom}</span>
-                    }
-                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>{doc.size && `${doc.size} · `}{doc.date}</div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--pk-blue)' }}>{f.nom}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>Modifi\u00e9 le {f.modifie || '—'}</div>
                   </div>
-                  <button onClick={() => removeDoc(catActive, i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14, padding: '2px 6px' }}>✕</button>
-                </div>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3l4 4-4 4" stroke="var(--text3)" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                </a>
               ))}
-
-              {/* Actions */}
-              {uploadMsg && <div style={{ fontSize: 12, color: 'var(--success)', padding: '6px 0', marginTop: 8 }}>{uploadMsg}</div>}
-              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-                <label className="btn" style={{ fontSize: 12, cursor: 'pointer' }}>
-                  📁 Ajouter un fichier
-                  <input type="file" style={{ display: 'none' }}
-                    onChange={e => e.target.files[0] && handleFileUpload(catActive, e.target.files[0])} />
-                </label>
-                <button className="btn" style={{ fontSize: 12 }} onClick={() => {
-                  const nom = window.prompt('Nom du document :');
-                  const url = window.prompt('URL (Drive, Dropbox, etc.) :');
-                  if (nom && url) addLinkDoc(catActive, nom, url);
-                }}>🔗 Ajouter un lien Drive</button>
-              </div>
             </div>
           )}
+
+          {/* ── TABS CATEGORIES LOCALES ── */}
+          {CATEGORIES.filter(c => c.id === catActive).map(cat => {
+            const catDocs = docs[cat.id] || [];
+            return (
+              <div key={cat.id} className="card">
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: cat.bg, borderRadius: 8, borderLeft: `3px solid ${cat.color}` }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: cat.color }}>{cat.icon} {cat.label}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Exemples : {cat.exemples.join(' \u00B7 ')}</div>
+                </div>
+                {catDocs.length === 0 ? (
+                  <div className="empty" style={{ padding: '16px 0' }}><div className="empty-text">Aucun document dans cette cat\u00e9gorie.</div></div>
+                ) : catDocs.map((doc, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 6, background: cat.bg, color: cat.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                      {doc.type}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      {doc.url
+                        ? <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 500, color: 'var(--pk-blue)' }}>{doc.nom}</a>
+                        : doc.data
+                          ? <a href={doc.data} download={doc.nom} style={{ fontSize: 13, fontWeight: 500 }}>{doc.nom}</a>
+                          : <span style={{ fontSize: 13, fontWeight: 500 }}>{doc.nom}</span>
+                      }
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>{doc.date}{doc.source === 'local' ? ' (local)' : ''}</div>
+                    </div>
+                    <button onClick={() => removeDoc(cat.id, i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14 }}>\u2715</button>
+                  </div>
+                ))}
+                {uploadMsg && <div style={{ fontSize: 12, color: 'var(--success)', padding: '6px 0' }}>{uploadMsg}</div>}
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <label className="btn" style={{ fontSize: 12, cursor: 'pointer' }}>
+                    \u{1F4C1} Ajouter un fichier
+                    <input type="file" style={{ display: 'none' }} onChange={e => e.target.files[0] && handleFileUpload(cat.id, e.target.files[0])} />
+                  </label>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => addLinkDoc(cat.id)}>\u{1F517} Ajouter un lien</button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       );
     }
 
+    
     // ── Logo & Signature client ───────────────────────────────────────────────────
 
     function IdentiteVisuelleTab({ slug, nomClient, logoUrl, saveLogo, signatureData, saveSig, onShowSigPad }) {
@@ -2598,6 +2636,452 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
     // ── Vue détail projet ─────────────────────────────────────────────────────────
 
+    // ══════════════════════════════════════════════════════════════════════════════
+    // PROJET RH VIEW — Artistes rattachés à un projet
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    function ProjetRHView({ projet, clientMeta, slug }) {
+      const [artistes, setArtistes] = useState([]);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        fetch(`${API}/rh/artistes`)
+          .then(r => r.ok ? r.json() : [])
+          .then(all => {
+            setArtistes(all.filter(a => a.projet_nom === projet.nom || a.structure_slug === slug));
+            setLoading(false);
+          })
+          .catch(() => setLoading(false));
+      }, [projet.nom, slug]);
+
+      const DOCS_ARTISTE = ['rib','carte_id','attest_secu','attest_mutuelle','contrat'];
+      const DOCS_LABELS = { rib:'RIB', carte_id:"Carte d'identité", attest_secu:"Attestation sécu", attest_mutuelle:"Attestation mutuelle", contrat:"Contrat signé" };
+
+      function statutEmployable(a) {
+        const infosOk = ['nom','prenom','email','telephone','numero_secu','numero_intermittent'].every(f => a[f] && String(a[f]).trim());
+        const docsOk = DOCS_ARTISTE.every(id => a.docs?.[id] || a.docs_meta?.[id]);
+        return { infosOk, docsOk, ok: infosOk && docsOk };
+      }
+
+      if (loading) return <div className="empty"><div className="empty-text">Chargement...</div></div>;
+
+      return (
+        <div>
+          <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--pk-blue-light)', borderRadius: 8, fontSize: 12, color: 'var(--pk-blue)' }}>
+            <strong>Artistes rattachés à ce projet.</strong> Pour ajouter un artiste, utilisez le module 👥 Ressources Humaines et associez-le à ce projet.
+            {artistes.filter(a => statutEmployable(a).ok).length > 0 && (
+              <span style={{ marginLeft: 8, color: 'var(--success)', fontWeight: 600 }}>
+                ✅ {artistes.filter(a => statutEmployable(a).ok).length} employable(s)
+              </span>
+            )}
+          </div>
+
+          {artistes.length === 0 ? (
+            <div className="card">
+              <div className="empty"><div className="empty-icon">🎭</div><div className="empty-text">Aucun artiste rattaché à ce projet. Ajoutez-en depuis le module RH.</div></div>
+            </div>
+          ) : (
+            <div className="card">
+              {artistes.map((a, i) => {
+                const st = statutEmployable(a);
+                return (
+                  <div key={a.id || i} style={{ display: 'flex', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }}>
+                    <div className="client-avatar" style={{ background: '#F3E5F5', color: '#6A1B9A', flexShrink: 0, width: 36, height: 36, fontSize: 12 }}>
+                      {(a.prenom?.[0]||'') + (a.nom?.[0]||'')}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{a.prenom} {a.nom}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>{a.role} {a.email && `· ${a.email}`} {a.telephone && `· ${a.telephone}`}</div>
+                      {/* Infos obligatoires */}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                        {[
+                          { key: 'numero_secu', label: 'N° Sécu', val: a.numero_secu },
+                          { key: 'numero_intermittent', label: 'N° Intermittent', val: a.numero_intermittent },
+                        ].map(({ key, label, val }) => (
+                          <span key={key} style={{ fontSize: 10, padding: '1px 7px', borderRadius: 8,
+                            background: val ? 'var(--success-light)' : 'var(--danger-light)',
+                            color: val ? 'var(--success)' : 'var(--danger)', fontWeight: 500 }}>
+                            {val ? `✅ ${label}` : `❌ ${label} manquant`}
+                          </span>
+                        ))}
+                      </div>
+                      {/* Documents */}
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {DOCS_ARTISTE.map(id => {
+                          const doc = a.docs?.[id] || a.docs_meta?.[id];
+                          return (
+                            <span key={id} style={{ fontSize: 10, padding: '1px 7px', borderRadius: 8,
+                              background: doc ? 'var(--pk-blue-light)' : 'var(--surface2)',
+                              color: doc ? 'var(--pk-blue)' : 'var(--text3)' }}>
+                              {doc ? '📄' : '⬜'} {DOCS_LABELS[id]}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div style={{ flexShrink: 0 }}>
+                      <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 10, fontWeight: 700,
+                        background: st.ok ? 'var(--success-light)' : 'var(--warn-light)',
+                        color: st.ok ? 'var(--success)' : 'var(--warn)' }}>
+                        {st.ok ? '✅ Employable' : st.infosOk ? '📄 Docs manquants' : '⚠️ Infos manquantes'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // PLANNING RÉSIDENCE — Temps de création par jour, heures par artiste
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    function ProjetPlanningView({ projet, clientMeta, slug }) {
+      const [residences, setResidences] = useState([]);
+      const [artistes, setArtistes] = useState([]);
+      const [selectedRes, setSelectedRes] = useState(null);
+      const [showNewRes, setShowNewRes] = useState(false);
+      const [loading, setLoading] = useState(true);
+      const [saving, setSaving] = useState(false);
+      const [newRes, setNewRes] = useState({
+        titre: '', date_debut: '', date_fin: '',
+        structure_slug: slug, structure_nom: clientMeta?.client_data?.nom_usuel || clientMeta?.client_data?.nom_officiel || '',
+        projet_nom: projet.nom, artistes: [], jours: [],
+      });
+
+      useEffect(() => {
+        Promise.all([
+          fetch(`${API}/rh/residences`).then(r => r.ok ? r.json() : []),
+          fetch(`${API}/rh/artistes`).then(r => r.ok ? r.json() : []),
+        ]).then(([res, arts]) => {
+          setResidences(res.filter(r => r.projet_nom === projet.nom || r.structure_slug === slug));
+          setArtistes(arts.filter(a => a.projet_nom === projet.nom || a.structure_slug === slug));
+          setLoading(false);
+        }).catch(() => setLoading(false));
+      }, [projet.nom, slug]);
+
+      // Génère les jours entre date_debut et date_fin
+      function genererJours(debut, fin, artistesIds) {
+        if (!debut || !fin) return [];
+        const jours = [];
+        const d = new Date(debut);
+        const end = new Date(fin);
+        const JOURS_FR = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+        while (d <= end) {
+          const heures = {};
+          artistesIds.forEach(id => { heures[id] = 0; });
+          jours.push({
+            date: d.toISOString().slice(0,10),
+            label: JOURS_FR[d.getDay()] + ' ' + d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}),
+            heures, notes: '',
+          });
+          d.setDate(d.getDate() + 1);
+        }
+        return jours;
+      }
+
+      async function creerResidence() {
+        if (!newRes.titre || !newRes.date_debut || !newRes.date_fin) return;
+        const artistesChoisis = artistes.filter(a => newRes.artistes.includes(a.id));
+        const jours = genererJours(newRes.date_debut, newRes.date_fin, artistesChoisis.map(a => a.id));
+        const payload = { ...newRes, artistes: artistesChoisis, jours };
+        const res = await fetch(`${API}/rh/residences`, {
+          method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          const created = await res.json();
+          setResidences(p => [created, ...p]);
+          setSelectedRes(created);
+          setShowNewRes(false);
+          setNewRes({ titre: '', date_debut: '', date_fin: '', structure_slug: slug,
+            structure_nom: clientMeta?.client_data?.nom_usuel || '',
+            projet_nom: projet.nom, artistes: [], jours: [] });
+        }
+      }
+
+      async function saveJour(resId, jourIdx, updatedJour) {
+        setSaving(true);
+        const updatedRes = { ...selectedRes };
+        updatedRes.jours = [...updatedRes.jours];
+        updatedRes.jours[jourIdx] = updatedJour;
+        setSelectedRes(updatedRes);
+        setResidences(p => p.map(r => r.id === resId ? updatedRes : r));
+        await fetch(`${API}/rh/residences/${resId}`, {
+          method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(updatedRes)
+        }).catch(() => {});
+        setSaving(false);
+      }
+
+      async function supprimerResidence(id) {
+        if (!window.confirm('Supprimer cette résidence ?')) return;
+        await fetch(`${API}/rh/residences/${id}`, { method: 'DELETE' }).catch(() => {});
+        setResidences(p => p.filter(r => r.id !== id));
+        if (selectedRes?.id === id) setSelectedRes(null);
+      }
+
+      // Calcule les totaux heures par artiste
+      function totauxArtiste(res) {
+        const totaux = {};
+        (res.artistes || []).forEach(a => {
+          totaux[a.id] = (res.jours || []).reduce((sum, j) => sum + (parseFloat(j.heures?.[a.id]) || 0), 0);
+        });
+        return totaux;
+      }
+
+      if (loading) return <div className="empty"><div className="empty-text">Chargement...</div></div>;
+
+      // ── VUE DÉTAIL RÉSIDENCE ──────────────────────────────────────────────────
+      if (selectedRes) {
+        const totaux = totauxArtiste(selectedRes);
+        const grandTotal = Object.values(totaux).reduce((s,v) => s+v, 0);
+
+        return (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <button className="btn" onClick={() => setSelectedRes(null)}>← Retour</button>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{selectedRes.titre}</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Du {selectedRes.date_debut?.split('-').reverse().join('/')} au {selectedRes.date_fin?.split('-').reverse().join('/')} · {selectedRes.jours?.length || 0} jours
+                </div>
+              </div>
+              {saving && <span style={{ fontSize: 11, color: 'var(--text3)' }}>💾 Sauvegarde...</span>}
+              <a href={`${API}/export/planning-residence/${selectedRes.id}`} target="_blank" rel="noopener noreferrer"
+                className="btn" style={{ fontSize: 12 }}>
+                📥 Export xlsx
+              </a>
+              <button className="btn" style={{ fontSize: 12, color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                onClick={() => supprimerResidence(selectedRes.id)}>🗑</button>
+            </div>
+
+            {/* Totaux par artiste */}
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 10 }}>Récapitulatif heures</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                {(selectedRes.artistes || []).map(a => (
+                  <div key={a.id} style={{ padding: '8px 14px', background: 'var(--pk-blue-light)', borderRadius: 8, textAlign: 'center' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--pk-blue)' }}>{a.prenom} {a.nom}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--pk-blue)' }}>{(totaux[a.id] || 0).toFixed(1)}h</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>{a.role}</div>
+                  </div>
+                ))}
+                <div style={{ padding: '8px 14px', background: 'var(--pk-orange-light)', borderRadius: 8, textAlign: 'center' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--pk-orange)' }}>TOTAL</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--pk-orange)' }}>{grandTotal.toFixed(1)}h</div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)' }}>toutes présences</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Grille planning jour par jour */}
+            <div className="card" style={{ overflowX: 'auto' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 10 }}>
+                Saisie des heures — cliquez sur une cellule pour saisir
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: '8px 12px', background: '#FF795A', color: 'white', textAlign: 'left', borderRadius: '4px 0 0 0', minWidth: 100 }}>Date</th>
+                    {(selectedRes.artistes || []).map(a => (
+                      <th key={a.id} style={{ padding: '8px 10px', background: '#FF795A', color: 'white', textAlign: 'center', minWidth: 90 }}>
+                        {a.prenom}<br/><span style={{ fontSize: 9, opacity: 0.8 }}>{a.role}</span>
+                      </th>
+                    ))}
+                    <th style={{ padding: '8px 10px', background: '#2834B7', color: 'white', textAlign: 'center', minWidth: 70 }}>Total</th>
+                    <th style={{ padding: '8px 10px', background: 'var(--surface2)', color: 'var(--text2)', textAlign: 'left', minWidth: 120 }}>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(selectedRes.jours || []).map((jour, ji) => {
+                    const jourTotal = Object.values(jour.heures || {}).reduce((s,v) => s + (parseFloat(v)||0), 0);
+                    return (
+                      <tr key={jour.date} style={{ background: ji%2===0 ? 'white' : 'var(--surface2)' }}>
+                        <td style={{ padding: '6px 12px', borderBottom: '1px solid var(--border)', fontWeight: 500 }}>
+                          {jour.label}
+                        </td>
+                        {(selectedRes.artistes || []).map(a => (
+                          <td key={a.id} style={{ padding: '4px 6px', borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
+                            <input
+                              type="number"
+                              min="0" max="24" step="0.5"
+                              value={jour.heures?.[a.id] || ''}
+                              placeholder="0"
+                              style={{ width: 60, textAlign: 'center', border: '1px solid var(--border2)', borderRadius: 4, padding: '3px 4px', fontSize: 12,
+                                background: parseFloat(jour.heures?.[a.id]) > 0 ? 'var(--pk-blue-light)' : 'transparent',
+                                color: parseFloat(jour.heures?.[a.id]) > 0 ? 'var(--pk-blue)' : 'var(--text3)' }}
+                              onChange={e => {
+                                const updated = { ...jour, heures: { ...jour.heures, [a.id]: parseFloat(e.target.value) || 0 } };
+                                saveJour(selectedRes.id, ji, updated);
+                              }}
+                            />
+                          </td>
+                        ))}
+                        <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', textAlign: 'center', fontWeight: 700, color: jourTotal > 0 ? 'var(--pk-blue)' : 'var(--text3)' }}>
+                          {jourTotal > 0 ? jourTotal.toFixed(1) + 'h' : '—'}
+                        </td>
+                        <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--border)' }}>
+                          <input
+                            type="text"
+                            value={jour.notes || ''}
+                            placeholder="Notes..."
+                            style={{ width: '100%', border: 'none', background: 'transparent', fontSize: 11, color: 'var(--text3)', outline: 'none' }}
+                            onChange={e => {
+                              const updated = { ...jour, notes: e.target.value };
+                              saveJour(selectedRes.id, ji, updated);
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background: 'var(--pk-orange-light)' }}>
+                    <td style={{ padding: '8px 12px', fontWeight: 700, color: 'var(--pk-orange)' }}>TOTAUX</td>
+                    {(selectedRes.artistes || []).map(a => (
+                      <td key={a.id} style={{ padding: '8px 6px', textAlign: 'center', fontWeight: 700, color: 'var(--pk-blue)' }}>
+                        {(totaux[a.id] || 0).toFixed(1)}h
+                      </td>
+                    ))}
+                    <td style={{ padding: '8px 6px', textAlign: 'center', fontWeight: 700, color: 'var(--pk-orange)' }}>{grandTotal.toFixed(1)}h</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {/* Lien vers fiches de paie */}
+            <div className="card" style={{ marginTop: 12, padding: '12px 16px', background: 'var(--success-light)', border: '1px solid var(--success)20' }}>
+              <div style={{ fontSize: 12, color: 'var(--success)', fontWeight: 500 }}>
+                💡 Une fois le planning finalisé, rendez-vous dans le module 👥 Ressources Humaines → Fiches de paie pour générer les packages par artiste avec leurs heures.
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ── LISTE DES RÉSIDENCES ──────────────────────────────────────────────────
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, color: 'var(--text3)' }}>Plannings de résidence pour ce projet</div>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNewRes(true)}>
+              + Créer une résidence
+            </button>
+          </div>
+
+          {residences.length === 0 ? (
+            <div className="card">
+              <div className="empty">
+                <div className="empty-icon">📅</div>
+                <div className="empty-text">Aucune résidence artistique créée pour ce projet.</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8, maxWidth: 360, textAlign: 'center' }}>
+                  Créez un planning de résidence pour répertorier les temps de travail par artiste. Les heures saisies servent de base aux fiches de paie.
+                </div>
+              </div>
+            </div>
+          ) : residences.map(res => {
+            const totaux = totauxArtiste(res);
+            const grandTotal = Object.values(totaux).reduce((s,v) => s+v, 0);
+            return (
+              <div key={res.id} className="card" style={{ marginBottom: 10, cursor: 'pointer', borderLeft: '4px solid var(--pk-orange)' }}
+                onClick={() => setSelectedRes(res)}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 3 }}>{res.titre}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      Du {res.date_debut?.split('-').reverse().join('/')} au {res.date_fin?.split('-').reverse().join('/')} · {res.jours?.length || 0} jours · {(res.artistes||[]).length} artiste(s)
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                      {(res.artistes || []).map(a => (
+                        <span key={a.id} style={{ fontSize: 11, background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', padding: '2px 8px', borderRadius: 8 }}>
+                          {a.prenom} {a.nom} — {(totaux[a.id]||0).toFixed(1)}h
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--pk-orange)' }}>{grandTotal.toFixed(1)}h</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>total résidence</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Modal nouvelle résidence */}
+          {showNewRes && (
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNewRes(false)}>
+              <div className="modal" style={{ maxWidth: 500 }}>
+                <div className="modal-title">📅 Nouvelle résidence artistique</div>
+                <div className="form-group">
+                  <label className="form-label">Titre de la résidence *</label>
+                  <input className="form-input" value={newRes.titre} onChange={e => setNewRes(p=>({...p,titre:e.target.value}))}
+                    placeholder="Ex: Résidence création Bastet Festival #5" />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date de début *</label>
+                    <input className="form-input" type="date" value={newRes.date_debut} onChange={e => setNewRes(p=>({...p,date_debut:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date de fin *</label>
+                    <input className="form-input" type="date" value={newRes.date_fin} onChange={e => setNewRes(p=>({...p,date_fin:e.target.value}))} />
+                  </div>
+                </div>
+                {newRes.date_debut && newRes.date_fin && (
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
+                    → {genererJours(newRes.date_debut, newRes.date_fin, []).length} jours de résidence
+                  </div>
+                )}
+                <div className="form-group">
+                  <label className="form-label">Artistes participants</label>
+                  {artistes.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--warn)', padding: '8px 12px', background: 'var(--warn-light)', borderRadius: 6 }}>
+                      ⚠️ Aucun artiste rattaché à ce projet. Ajoutez-en dans le module RH.
+                    </div>
+                  ) : artistes.map(a => {
+                    const checked = newRes.artistes.includes(a.id);
+                    const st = (() => {
+                      const infosOk = ['nom','prenom','email','telephone','numero_secu','numero_intermittent'].every(f => a[f]);
+                      const docsOk = ['rib','carte_id','attest_secu','attest_mutuelle','contrat'].every(id => a.docs?.[id] || a.docs_meta?.[id]);
+                      return infosOk && docsOk;
+                    })();
+                    return (
+                      <label key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={checked}
+                          onChange={e => setNewRes(p => ({ ...p, artistes: e.target.checked ? [...p.artistes, a.id] : p.artistes.filter(id => id !== a.id) }))} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500 }}>{a.prenom} {a.nom}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)' }}>{a.role}</div>
+                        </div>
+                        <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 8, fontWeight: 600,
+                          background: st ? 'var(--success-light)' : 'var(--warn-light)',
+                          color: st ? 'var(--success)' : 'var(--warn)' }}>
+                          {st ? '✅ Employable' : '⚠️'}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => setShowNewRes(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={creerResidence}
+                    disabled={!newRes.titre || !newRes.date_debut || !newRes.date_fin}>
+                    Créer le planning →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
     function ProjetDetailView({ projet, clientMeta, onBack, onRefresh, driveProjetsFolderId }) {
       const [tab, setTab] = useState('infos');
       const [subventions, setSubventions] = useState(projet.subventions || []);
@@ -2724,7 +3208,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           )}
 
           <div className="tabs">
-            {[['infos', 'Informations'], ['subventions', `Subventions (${subventions.length})`], ['fichiers', 'Fichiers Drive'], ['artistes', 'Artistes']].map(([k, l]) => (
+            {[['infos', 'Informations'], ['rh_projet', '👥 RH & Artistes'], ['planning', '📅 Planning résidence'], ['subventions', `Subventions (${subventions.length})`], ['fichiers', 'Fichiers Drive']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
@@ -2887,7 +3371,21 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           )}
 
           {/* Artistes */}
-          {tab === 'artistes' && (
+          {          {tab === 'rh_projet' && (
+            <ProjetRHView
+              projet={projet}
+              clientMeta={clientMeta}
+              slug={clientMeta?.slug}
+            />
+          )}
+
+          {tab === 'planning' && (
+            <ProjetPlanningView
+              projet={projet}
+              clientMeta={clientMeta}
+              slug={clientMeta?.slug}
+            />
+          )} 'artistes' && (
             <div className="card">
               <div className="empty">
                 <div className="empty-text">La liste des artistes est dans la Fiche Prospect sur Drive.</div>
@@ -2906,6 +3404,406 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
     }
 
     // ── Modal synchronisation Excel ───────────────────────────────────────────────
+
+    // ── RH dans un projet ─────────────────────────────────────────────────────
+
+    function ProjetRHView({ projet, clientMeta, slug }) {
+      const [artistes, setArtistes] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('pk_rh_artistes') || '[]'); } catch { return []; }
+      });
+      const [search, setSearch] = useState('');
+
+      // Charge depuis API
+      useEffect(() => {
+        fetch(`${API}/rh/artistes`).then(r => r.ok ? r.json() : []).then(d => {
+          if (Array.isArray(d) && d.length > 0) setArtistes(d);
+        }).catch(() => {});
+      }, []);
+
+      const artistesProjet = artistes.filter(a =>
+        a.projet_nom === projet.nom || a.structure_slug === slug
+      ).filter(a =>
+        !search || [a.nom, a.prenom, a.role, a.email].some(v => v?.toLowerCase().includes(search.toLowerCase()))
+      );
+
+      function statutEmployable(a) {
+        const infosOk = ['nom','prenom','email','telephone','numero_secu','numero_intermittent'].every(f => a[f]);
+        const docsOk = DOCS_ARTISTE.every(d => a.docs?.[d.id] || a.docs_meta?.[d.id]);
+        return { ok: infosOk && docsOk, infosOk, docsOk };
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Artistes rattach\u00e9s au projet</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>G\u00e9rez les artistes complets depuis \U0001f465 Ressources Humaines</div>
+            </div>
+            <input className="form-input" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="\U0001f50d Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 160 }} />
+          </div>
+
+          <div className="card" style={{ marginBottom: 12 }}>
+            {artistesProjet.length === 0 ? (
+              <div className="empty" style={{ padding: '20px 0' }}>
+                <div className="empty-icon">\U0001f3ad</div>
+                <div className="empty-text">Aucun artiste rattach\u00e9 \u00e0 ce projet.</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                  Ajoutez des artistes depuis le module \U0001f465 Ressources Humaines en les rattachant \u00e0 ce projet.
+                </div>
+              </div>
+            ) : artistesProjet.map((a, i) => {
+              const st = statutEmployable(a);
+              return (
+                <div key={a.id || i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div className="client-avatar" style={{ background: '#F3E5F5', color: '#6A1B9A', width: 36, height: 36, fontSize: 12, flexShrink: 0 }}>
+                    {(a.prenom?.[0]||'')+(a.nom?.[0]||'')}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{a.prenom} {a.nom}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>{a.role}{a.email ? ` \u00B7 ${a.email}` : ''}</div>
+                    {a.numero_intermittent && <div style={{ fontSize: 11, color: 'var(--text3)' }}>N\u00B0 intermittent : {a.numero_intermittent}</div>}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end' }}>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, fontWeight: 600,
+                      background: st.ok ? 'var(--success-light)' : 'var(--warn-light)',
+                      color: st.ok ? 'var(--success)' : 'var(--warn)' }}>
+                      {st.ok ? '\u2705 Employable' : '\u26A0\uFE0F ' + (!st.infosOk ? 'Infos manquantes' : 'Docs manquants')}
+                    </span>
+                    {/* Docs status */}
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {DOCS_ARTISTE.map(doc => {
+                        const has = a.docs?.[doc.id] || a.docs_meta?.[doc.id];
+                        return (
+                          <span key={doc.id} title={doc.label} style={{ fontSize: 9, width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            background: has ? 'var(--success-light)' : 'var(--danger-light)', color: has ? 'var(--success)' : 'var(--danger)' }}>
+                            {has ? '\u2713' : '!'}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* R\u00e9sum\u00e9 employabilit\u00e9 */}
+          {artistesProjet.length > 0 && (
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ padding: '8px 14px', background: 'var(--success-light)', borderRadius: 8, fontSize: 12, color: 'var(--success)' }}>
+                \u2705 {artistesProjet.filter(a => statutEmployable(a).ok).length} employable(s)
+              </div>
+              <div style={{ padding: '8px 14px', background: 'var(--warn-light)', borderRadius: 8, fontSize: 12, color: 'var(--warn)' }}>
+                \u26A0\uFE0F {artistesProjet.filter(a => !statutEmployable(a).ok).length} incomplet(s)
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Planning résidence dans un projet ────────────────────────────────────
+
+    function ProjetPlanningView({ projet, clientMeta, slug }) {
+      const [residences, setResidences] = useState([]);
+      const [artistes, setArtistes] = useState([]);
+      const [selectedRes, setSelectedRes] = useState(null);
+      const [showNew, setShowNew] = useState(false);
+      const [saving, setSaving] = useState(false);
+      const JOURS_SEM = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+
+      const EMPTY_RES = {
+        titre: '', structure_nom: clientMeta?.client_data?.nom_usuel || clientMeta?.client_data?.nom_officiel || '',
+        structure_slug: slug || '', projet_nom: projet?.nom || '',
+        date_debut: '', date_fin: '', lieu: '', notes: '',
+        artistes: [], jours: [],
+      };
+      const [newRes, setNewRes] = useState(EMPTY_RES);
+
+      useEffect(() => {
+        fetch(`${API}/rh/residences`).then(r => r.ok ? r.json() : []).then(d => {
+          setResidences(d.filter(r => r.projet_nom === projet?.nom || r.structure_slug === slug));
+        }).catch(() => {});
+        fetch(`${API}/rh/artistes`).then(r => r.ok ? r.json() : []).then(d => {
+          setArtistes(d.filter(a => a.structure_slug === slug || a.projet_nom === projet?.nom));
+        }).catch(() => {});
+      }, []);
+
+      function genererJours(dateDebut, dateFin) {
+        if (!dateDebut || !dateFin) return [];
+        const jours = [];
+        const d = new Date(dateDebut + 'T00:00:00');
+        const fin = new Date(dateFin + 'T00:00:00');
+        while (d <= fin) {
+          jours.push({
+            date: d.toISOString().slice(0,10),
+            label: JOURS_SEM[d.getDay() === 0 ? 6 : d.getDay()-1] + ' ' + d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}),
+            heures: {},
+            notes: '',
+          });
+          d.setDate(d.getDate()+1);
+        }
+        return jours;
+      }
+
+      async function createResidence() {
+        setSaving(true);
+        const jours = genererJours(newRes.date_debut, newRes.date_fin);
+        const payload = { ...newRes, artistes: artistes.slice(0, 20), jours };
+        try {
+          const res = await fetch(`${API}/rh/residences`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          if (res.ok) {
+            const saved = await res.json();
+            setResidences(p => [saved, ...p]);
+            setSelectedRes(saved);
+            setShowNew(false);
+            setNewRes(EMPTY_RES);
+          }
+        } catch {}
+        setSaving(false);
+      }
+
+      async function updateJourHeures(resId, jourIdx, artisteId, heures) {
+        setResidences(prev => prev.map(r => {
+          if (r.id !== resId) return r;
+          const jours = [...(r.jours || [])];
+          jours[jourIdx] = { ...jours[jourIdx], heures: { ...(jours[jourIdx].heures || {}), [artisteId]: heures } };
+          return { ...r, jours };
+        }));
+        if (selectedRes?.id === resId) {
+          setSelectedRes(prev => {
+            const jours = [...(prev.jours || [])];
+            jours[jourIdx] = { ...jours[jourIdx], heures: { ...(jours[jourIdx].heures || {}), [artisteId]: heures } };
+            return { ...prev, jours };
+          });
+        }
+      }
+
+      async function saveResidence(res) {
+        setSaving(true);
+        try {
+          await fetch(`${API}/rh/residences/${res.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(res) });
+        } catch {}
+        setSaving(false);
+      }
+
+      async function exportPlanning(res) {
+        const a = document.createElement('a');
+        a.href = `${API}/export/planning-residence/${res.id}`;
+        a.download = `Planning_${res.titre}.xlsx`;
+        a.click();
+      }
+
+      function totalHeuresArtiste(res, artisteId) {
+        return (res.jours || []).reduce((sum, j) => sum + (parseFloat(j.heures?.[artisteId]) || 0), 0);
+      }
+
+      function totalHeuresJour(jour) {
+        return Object.values(jour.heures || {}).reduce((sum, h) => sum + (parseFloat(h)||0), 0);
+      }
+
+      // Vue liste
+      if (!selectedRes) return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Plannings de r\u00e9sidence — {projet?.nom}</div>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Nouvelle r\u00e9sidence</button>
+          </div>
+
+          {residences.length === 0 ? (
+            <div className="card">
+              <div className="empty">
+                <div className="empty-icon">\U0001f4c5</div>
+                <div className="empty-text">Aucun planning de r\u00e9sidence pour ce projet.</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+              {residences.map(r => {
+                const nbJours = (r.jours || []).length;
+                const nbArtistes = (r.artistes || []).length;
+                const totalH = (r.jours || []).reduce((sum, j) => sum + totalHeuresJour(j), 0);
+                return (
+                  <div key={r.id} className="card" style={{ cursor: 'pointer', borderLeft: '4px solid var(--pk-blue)' }}
+                    onClick={() => setSelectedRes(r)}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{r.titre}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
+                      {r.date_debut} \u2192 {r.date_fin}
+                      {r.lieu && <span> \u00B7 {r.lieu}</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
+                      <span style={{ background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', padding: '2px 8px', borderRadius: 8 }}>{nbJours} jour(s)</span>
+                      <span style={{ background: '#F3E5F5', color: '#6A1B9A', padding: '2px 8px', borderRadius: 8 }}>{nbArtistes} artiste(s)</span>
+                      {totalH > 0 && <span style={{ background: 'var(--success-light)', color: 'var(--success)', padding: '2px 8px', borderRadius: 8 }}>{totalH}h total</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Modal nouvelle r\u00e9sidence */}
+          {showNew && (
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNew(false)}>
+              <div className="modal" style={{ maxWidth: 520 }}>
+                <div className="modal-title">\U0001f4c5 Nouvelle r\u00e9sidence artistique</div>
+                <div className="form-group">
+                  <label className="form-label">Titre de la r\u00e9sidence *</label>
+                  <input className="form-input" value={newRes.titre} onChange={e => setNewRes(p=>({...p,titre:e.target.value}))} placeholder="Ex: R\u00e9sidence Bastet F\u00e9vrier 2026" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Lieu</label>
+                  <input className="form-input" value={newRes.lieu} onChange={e => setNewRes(p=>({...p,lieu:e.target.value}))} placeholder="Studio, salle de r\u00e9p\u00e9tition..." />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date de d\u00e9but *</label>
+                    <input className="form-input" type="date" value={newRes.date_debut} onChange={e => setNewRes(p=>({...p,date_debut:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date de fin *</label>
+                    <input className="form-input" type="date" value={newRes.date_fin} onChange={e => setNewRes(p=>({...p,date_fin:e.target.value}))} />
+                  </div>
+                </div>
+                {newRes.date_debut && newRes.date_fin && (
+                  <div style={{ fontSize: 12, color: 'var(--pk-blue)', padding: '6px 10px', background: 'var(--pk-blue-light)', borderRadius: 6 }}>
+                    \U0001f4c5 {genererJours(newRes.date_debut, newRes.date_fin).length} jour(s) de r\u00e9sidence \u00B7 {artistes.length} artiste(s) disponibles
+                  </div>
+                )}
+                <div className="form-group" style={{ marginTop: 8 }}>
+                  <label className="form-label">Notes</label>
+                  <textarea className="form-input" rows={2} value={newRes.notes} onChange={e => setNewRes(p=>({...p,notes:e.target.value}))} style={{ resize: 'vertical' }} />
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => setShowNew(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={createResidence} disabled={!newRes.titre || !newRes.date_debut || !newRes.date_fin || saving}>
+                    {saving ? '\u23F3 Cr\u00e9ation...' : 'Cr\u00e9er le planning \u2192'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+
+      // Vue d\u00e9tail planning
+      const res = selectedRes;
+      const resArtistes = res.artistes || [];
+
+      return (
+        <div>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <button className="btn" onClick={() => { saveResidence(res); setSelectedRes(null); }}>← Retour</button>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{res.titre}</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>{res.date_debut} \u2192 {res.date_fin}{res.lieu ? ' \u00B7 ' + res.lieu : ''}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn" style={{ fontSize: 12 }} onClick={() => exportPlanning(res)}>\U0001f4e5 Export xlsx</button>
+              <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => saveResidence(res)} disabled={saving}>
+                {saving ? '\u23F3' : '\U0001f4be Sauvegarder'}
+              </button>
+            </div>
+          </div>
+
+          {/* Tableau planning */}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: 'var(--pk-blue)' }}>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', color: 'white', fontWeight: 700, whiteSpace: 'nowrap', minWidth: 100 }}>
+                    Date
+                  </th>
+                  {resArtistes.map(a => (
+                    <th key={a.id} style={{ padding: '10px 8px', textAlign: 'center', color: 'white', fontWeight: 600, minWidth: 90 }}>
+                      {a.prenom} {a.nom}<br />
+                      <span style={{ fontSize: 10, opacity: 0.8 }}>{a.role}</span>
+                    </th>
+                  ))}
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'white', fontWeight: 700, minWidth: 80 }}>Total H</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'white', fontWeight: 600, minWidth: 120 }}>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(res.jours || []).map((jour, jIdx) => {
+                  const total = totalHeuresJour(jour);
+                  const isWeekend = ['Sam','Dim'].some(d => jour.label?.startsWith(d));
+                  return (
+                    <tr key={jIdx} style={{ background: isWeekend ? '#FFF8F0' : jIdx%2===0 ? 'white' : 'var(--surface2)' }}>
+                      <td style={{ padding: '6px 12px', fontWeight: isWeekend ? 600 : 400, color: isWeekend ? 'var(--pk-orange)' : 'inherit', whiteSpace: 'nowrap' }}>
+                        {jour.label}
+                      </td>
+                      {resArtistes.map(a => (
+                        <td key={a.id} style={{ padding: '4px 6px', textAlign: 'center' }}>
+                          <input
+                            type="number" min="0" max="24" step="0.5"
+                            value={jour.heures?.[a.id] || ''}
+                            onChange={e => updateJourHeures(res.id, jIdx, a.id, parseFloat(e.target.value) || 0)}
+                            style={{ width: 60, textAlign: 'center', padding: '4px', borderRadius: 4, border: '1px solid var(--border2)', fontSize: 12,
+                              background: jour.heures?.[a.id] ? 'var(--success-light)' : 'white',
+                              color: jour.heures?.[a.id] ? 'var(--success)' : 'var(--text3)' }}
+                            placeholder="0"
+                          />
+                        </td>
+                      ))}
+                      <td style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 700, color: total > 0 ? 'var(--pk-blue)' : 'var(--text3)' }}>
+                        {total > 0 ? total + 'h' : '—'}
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input value={jour.notes || ''} onChange={e => {
+                          setSelectedRes(prev => {
+                            const jours = [...(prev.jours||[])];
+                            jours[jIdx] = { ...jours[jIdx], notes: e.target.value };
+                            return { ...prev, jours };
+                          });
+                        }} style={{ width: '100%', padding: '3px 6px', border: '1px solid var(--border2)', borderRadius: 4, fontSize: 11 }} placeholder="Note du jour" />
+                      </td>
+                    </tr>
+                  );
+                })}
+                {/* Ligne totaux */}
+                <tr style={{ background: 'var(--pk-blue)', color: 'white' }}>
+                  <td style={{ padding: '8px 12px', fontWeight: 700 }}>TOTAUX</td>
+                  {resArtistes.map(a => {
+                    const tot = totalHeuresArtiste(res, a.id);
+                    return (
+                      <td key={a.id} style={{ padding: '8px 6px', textAlign: 'center', fontWeight: 700 }}>
+                        {tot > 0 ? tot + 'h' : '—'}
+                      </td>
+                    );
+                  })}
+                  <td style={{ padding: '8px', textAlign: 'center', fontWeight: 700 }}>
+                    {(res.jours||[]).reduce((s,j) => s+totalHeuresJour(j), 0)}h
+                  </td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Dispos artistes */}
+          {artistes.filter(a => !resArtistes.find(r => r.id === a.id)).length > 0 && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <div className="card-header"><div className="card-title">Ajouter un artiste au planning</div></div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {artistes.filter(a => !resArtistes.find(r => r.id === a.id)).map(a => (
+                  <button key={a.id} className="btn" style={{ fontSize: 11 }}
+                    onClick={() => {
+                      const newArtistes = [...resArtistes, { id: a.id, nom: a.nom, prenom: a.prenom, role: a.role }];
+                      setSelectedRes(p => ({ ...p, artistes: newArtistes }));
+                    }}>
+                    + {a.prenom} {a.nom}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
 
     function SyncModal({ projet, clientMeta, onClose, onTaskCreated }) {
       const [step, setStep] = useState('confirm'); // confirm | loading | result
