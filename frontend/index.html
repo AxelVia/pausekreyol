@@ -3370,8 +3370,8 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             </div>
           )}
 
-          {/* Artistes */}
-          {          {tab === 'rh_projet' && (
+          {/* RH & Artistes / Planning résidence */}
+          {tab === 'rh_projet' && (
             <ProjetRHView
               projet={projet}
               clientMeta={clientMeta}
@@ -3385,19 +3385,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
               clientMeta={clientMeta}
               slug={clientMeta?.slug}
             />
-          )} 'artistes' && (
-            <div className="card">
-              <div className="empty">
-                <div className="empty-text">La liste des artistes est dans la Fiche Prospect sur Drive.</div>
-                {driveProjetsFolderId && (
-                  <div style={{ marginTop: 8 }}>
-                    <a href={`https://drive.google.com/drive/folders/${driveProjetsFolderId}`} target="_blank" style={{ color: 'var(--accent)', fontSize: 13 }}>
-                      Ouvrir sur Drive →
-                    </a>
-                  </div>
-                )}
-              </div>
-            </div>
+          )}
           )}
         </div>
       );
