@@ -1393,11 +1393,11 @@
       });
 
       const CATEGORIES = [
-        { id: 'admin',  label: 'Admin structure', icon: '\u{1F3DB}', color: '#2834B7', bg: 'var(--pk-blue-light)',
+        { id: 'admin',  label: 'Admin structure', icon: '🏛', color: '#2834B7', bg: 'var(--pk-blue-light)',
           exemples: ['Statuts', 'RNA', 'SIRET', 'RIB', 'R\u00e9c\u00e9piss\u00e9 pr\u00e9fecture', 'JO', 'Assurance', 'Compte certifi\u00e9'] },
-        { id: 'social', label: 'Gestion sociale', icon: '\u{1F465}', color: '#6A1B9A', bg: '#F3E5F5',
+        { id: 'social', label: 'Gestion sociale', icon: '👥', color: '#6A1B9A', bg: '#F3E5F5',
           exemples: ['Contrats artistes', 'GUSO', 'DPAE', 'Bulletins de salaire', 'D\u00e9clarations Urssaf'] },
-        { id: 'projet', label: 'Gestion de projet', icon: '\u{1F4CB}', color: '#E65100', bg: '#FFF3E0',
+        { id: 'projet', label: 'Gestion de projet', icon: '📋', color: '#E65100', bg: '#FFF3E0',
           exemples: ['Budget pr\u00e9visionnel', 'Dossier subvention', 'Convention', 'Compte-rendu projet'] },
       ];
 
@@ -1444,7 +1444,7 @@
         }
       }
 
-      const FILE_ICONS = { xlsx: '\u{1F4CA}', docx: '\u{1F4C4}', pdf: '\u{1F4D5}', folder: '\u{1F4C1}', image: '\u{1F5BC}', other: '\u{1F4CE}' };
+      const FILE_ICONS = { xlsx: '📊', docx: '📄', pdf: '📕', folder: '📁', image: '🖼', other: '📎' };
 
       return (
         <div>
@@ -1454,13 +1454,13 @@
               {detail.drive_asso_id && (
                 <a href={`https://docs.google.com/spreadsheets/d/${detail.drive_asso_id}/edit`} target="_blank" rel="noopener noreferrer"
                   style={{ fontSize: 12, color: 'var(--success)', fontWeight: 600 }}>
-                  \u{1F4CA} Fiche Association →
+                  📊 Fiche Association →
                 </a>
               )}
               {detail.drive_projets_folder_id && (
                 <a href={`https://drive.google.com/drive/folders/${detail.drive_projets_folder_id}`} target="_blank" rel="noopener noreferrer"
                   style={{ fontSize: 12, color: 'var(--pk-orange)', fontWeight: 600 }}>
-                  \u{1F4C1} Dossier Projets →
+                  📁 Dossier Projets →
                 </a>
               )}
               {detail.drive_folder_id && (
@@ -1512,7 +1512,7 @@
                   <div className="card-subtitle">Fichiers stock\u00e9s dans le dossier Drive de la structure</div>
                 </div>
                 <button className="btn" style={{ fontSize: 11 }} onClick={loadDriveFiles} disabled={driveLoading}>
-                  {driveLoading ? '\u23F3 Chargement...' : '\u{1F504} Actualiser'}
+                  {driveLoading ? '\u23F3 Chargement...' : '🔄 Actualiser'}
                 </button>
               </div>
 
@@ -1581,10 +1581,10 @@
                 {uploadMsg && <div style={{ fontSize: 12, color: 'var(--success)', padding: '6px 0' }}>{uploadMsg}</div>}
                 <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                   <label className="btn" style={{ fontSize: 12, cursor: 'pointer' }}>
-                    \u{1F4C1} Ajouter un fichier
+                    📁 Ajouter un fichier
                     <input type="file" style={{ display: 'none' }} onChange={e => e.target.files[0] && handleFileUpload(cat.id, e.target.files[0])} />
                   </label>
-                  <button className="btn" style={{ fontSize: 12 }} onClick={() => addLinkDoc(cat.id)}>\u{1F517} Ajouter un lien</button>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => addLinkDoc(cat.id)}>🔗 Ajouter un lien</button>
                 </div>
               </div>
             );
