@@ -4026,3 +4026,416 @@ def export_formulaire_subvention(sub_id: str):
         headers={"Content-Disposition": f"attachment; filename={nom}"}
     )
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE AUDIT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+AUDITS_FILE = CLIENTS_DIR / "audits.json"
+PLANNING_EVENTS_FILE = CLIENTS_DIR / "planning_events.json"
+
+def _load_audits() -> list:
+    if AUDITS_FILE.exists():
+        try: return json.loads(AUDITS_FILE.read_text())
+        except: return []
+    return []
+
+def _save_audits(data: list):
+    AUDITS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AUDITS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("audits.json", root_id)
+            if fid: drive_update_json(fid, data)
+            else: drive_upload_json(data, "audits.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync audits.json : {e}")
+
+def _load_planning_events() -> list:
+    if PLANNING_EVENTS_FILE.exists():
+        try: return json.loads(PLANNING_EVENTS_FILE.read_text())
+        except: return []
+    return []
+
+def _save_planning_events(data: list):
+    PLANNING_EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PLANNING_EVENTS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_find_file, drive_update_json, drive_upload_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            fid = drive_find_file("planning_events.json", root_id)
+            if fid: drive_update_json(fid, data)
+            else: drive_upload_json(data, "planning_events.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync planning_events.json : {e}")
+
+
+@app.get("/audits")
+def get_audits():
+    return _load_audits()
+
+@app.post("/audits")
+def create_audit(data: dict):
+    audits = _load_audits()
+    data["id"] = data.get("id") or f"audit_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    data["created_at"] = datetime.now().isoformat()
+    data["statut"] = data.get("statut", "en_attente")
+    audits.insert(0, data)
+    _save_audits(audits)
+
+    # Met à jour le statut audite dans client.json
+    if data.get("client_slug"):
+        try:
+            matches = list(CLIENTS_DIR.glob(f"{data['client_slug']}*"))
+            if matches:
+                meta_path = matches[0] / "client.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    meta["audit_statut"] = data["statut"]
+                    meta["audit_id"] = data["id"]
+                    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        except Exception as e:
+            logger.warning(f"Audit update client.json : {e}")
+
+    return data
+
+@app.put("/audits/{audit_id}")
+def update_audit(audit_id: str, data: dict):
+    audits = _load_audits()
+    for i, a in enumerate(audits):
+        if a.get("id") == audit_id:
+            audits[i] = {**a, **data, "id": audit_id, "updated_at": datetime.now().isoformat()}
+            _save_audits(audits)
+            # Sync client.json si statut change
+            if "statut" in data and audits[i].get("client_slug"):
+                try:
+                    matches = list(CLIENTS_DIR.glob(f"{audits[i]['client_slug']}*"))
+                    if matches:
+                        mp = matches[0] / "client.json"
+                        if mp.exists():
+                            meta = json.loads(mp.read_text())
+                            meta["audit_statut"] = data["statut"]
+                            mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+                except: pass
+            return audits[i]
+    raise HTTPException(status_code=404, detail="Audit non trouvé")
+
+@app.delete("/audits/{audit_id}")
+def delete_audit(audit_id: str):
+    audits = _load_audits()
+    audits = [a for a in audits if a.get("id") != audit_id]
+    _save_audits(audits)
+    return {"status": "deleted"}
+
+@app.post("/audits/{audit_id}/complete")
+def complete_audit(audit_id: str, data: dict):
+    """
+    Finalise un audit :
+    1. Marque l'audit comme 'audite'
+    2. Crée une tâche 'Envoi compte rendu' à J+5
+    3. Extrait le planning prévisionnel et l'injecte dans le calendrier
+    """
+    audits = _load_audits()
+    audit = None
+    for i, a in enumerate(audits):
+        if a.get("id") == audit_id:
+            audits[i] = {**a, **data, "statut": "audite",
+                         "completed_at": datetime.now().isoformat(),
+                         "compte_rendu": data.get("compte_rendu", {})}
+            audit = audits[i]
+            break
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit non trouvé")
+    _save_audits(audits)
+
+    # Met à jour client.json
+    if audit.get("client_slug"):
+        try:
+            matches = list(CLIENTS_DIR.glob(f"{audit['client_slug']}*"))
+            if matches:
+                mp = matches[0] / "client.json"
+                if mp.exists():
+                    meta = json.loads(mp.read_text())
+                    meta["audit_statut"] = "audite"
+                    meta["audit_date"] = datetime.now().strftime("%d/%m/%Y")
+                    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        except: pass
+
+    # Crée la tâche "Envoi compte rendu" à J+5
+    deadline_cr = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d")
+    tasks = _load_tasks()
+    task_cr = {
+        "id": f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_audit_cr",
+        "created_at": datetime.now().isoformat(),
+        "source": "Audit",
+        "titre": f"Envoi compte rendu d'audit — {audit.get('client_nom', '')}",
+        "priorite": "HAUT",
+        "description": f"Envoyer le compte rendu de réunion de démarrage à {audit.get('client_nom', '')} suite à l'audit du {datetime.now().strftime('%d/%m/%Y')}.",
+        "deadline": deadline_cr,
+        "client_slug": audit.get("client_slug"),
+        "client_detecte": audit.get("client_nom"),
+        "categorie": "audit",
+        "done": False,
+    }
+    tasks.append(task_cr)
+    _save_tasks(tasks)
+
+    # Injecte le planning prévisionnel dans le calendrier
+    planning = data.get("planning_previsionnel", [])
+    if planning:
+        cal = _load_cal()
+        for evt in planning:
+            cal_event = {
+                "id": int(datetime.now().timestamp() * 1000) + planning.index(evt),
+                "created_at": datetime.now().isoformat(),
+                "titre": evt.get("titre", ""),
+                "date": evt.get("date", ""),
+                "date_fin": evt.get("date_fin", evt.get("date", "")),
+                "type": evt.get("type", "culturel"),
+                "client_slug": audit.get("client_slug"),
+                "client_nom": audit.get("client_nom"),
+                "projet_nom": evt.get("projet_nom", ""),
+                "couleur": evt.get("couleur", "#2834B7"),
+                "source": "audit_planning",
+            }
+            cal_type = "culturel" if cal_event["type"] not in ("formalites",) else "formalites"
+            cal[cal_type].append(cal_event)
+        _save_cal(cal)
+        logger.info(f"Planning prévisionnel injecté : {len(planning)} événements")
+
+    return {"status": "ok", "task_cr": task_cr, "planning_events": len(planning)}
+
+
+@app.get("/planning-events")
+def get_planning_events():
+    """Retourne tous les événements de planning prévisionnel."""
+    cal = _load_cal()
+    all_events = cal.get("culturel", []) + cal.get("formalites", [])
+    planning = [e for e in all_events if e.get("source") == "audit_planning"]
+    return planning
+
+
+@app.get("/export/template-audit")
+def export_template_audit():
+    """Génère le template de réunion de démarrage au format xlsx."""
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import io as io_mod
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Réunion de démarrage"
+
+    ORANGE = "FF795A"; BLUE = "2834B7"; PEACH = "FFD2AD"; LIGHT = "F7F8FF"; WHITE = "FFFFFF"
+    thin = Side(style="thin", color="E0E0E0")
+    thick = Side(style="medium", color=ORANGE)
+    def bdr(): return Border(left=thin, right=thin, top=thin, bottom=thin)
+    def bdr_accent(): return Border(left=Side(style="medium", color=BLUE), right=thin, top=thin, bottom=thin)
+
+    # ── Helpers ──
+    def section(ws, titre, subtitle=""):
+        ws.append([])
+        ws.append([titre])
+        r = ws.max_row
+        ws.merge_cells(f"A{r}:E{r}")
+        ws.cell(r,1).font = Font(bold=True, size=12, color=WHITE, name="Josefin Sans")
+        ws.cell(r,1).fill = PatternFill("solid", fgColor=BLUE)
+        ws.cell(r,1).alignment = Alignment(vertical="center", indent=1)
+        ws.row_dimensions[r].height = 28
+        if subtitle:
+            ws.append(["    " + subtitle])
+            rs = ws.max_row
+            ws.merge_cells(f"A{rs}:E{rs}")
+            ws.cell(rs,1).font = Font(italic=True, size=9, color="888888", name="DM Sans")
+
+    def field(ws, label, hint="", value=""):
+        ws.append([label, value or ""])
+        r = ws.max_row
+        ws.merge_cells(f"B{r}:E{r}")
+        ws.cell(r,1).font = Font(bold=True, size=10, color="444444", name="DM Sans")
+        ws.cell(r,1).fill = PatternFill("solid", fgColor=LIGHT)
+        ws.cell(r,1).alignment = Alignment(vertical="center", indent=1)
+        ws.cell(r,2).font = Font(size=10, name="DM Sans", color="222222")
+        ws.cell(r,2).fill = PatternFill("solid", fgColor=WHITE)
+        ws.cell(r,2).alignment = Alignment(vertical="center", wrap_text=True, indent=1)
+        for col in range(1,6):
+            ws.cell(r,col).border = bdr()
+        ws.row_dimensions[r].height = 22
+        if hint:
+            ws.cell(r,1).comment = None  # openpyxl: no easy comment, use italic note
+            pass
+
+    def note(ws, txt):
+        ws.append(["", txt])
+        r = ws.max_row
+        ws.merge_cells(f"B{r}:E{r}")
+        ws.cell(r,1).fill = PatternFill("solid", fgColor=LIGHT)
+        ws.cell(r,2).font = Font(italic=True, size=9, color="AAAAAA", name="DM Sans")
+        ws.row_dimensions[r].height = 16
+
+    def bigfield(ws, label, rows=3):
+        ws.append([label])
+        r = ws.max_row
+        ws.merge_cells(f"A{r}:E{r}")
+        ws.cell(r,1).font = Font(bold=True, size=10, color="444444", name="DM Sans")
+        ws.cell(r,1).fill = PatternFill("solid", fgColor=LIGHT)
+        ws.cell(r,1).border = bdr()
+        for extra in range(rows):
+            ws.append([""])
+            re_ = ws.max_row
+            ws.merge_cells(f"A{re_}:E{re_}")
+            ws.cell(re_,1).fill = PatternFill("solid", fgColor=WHITE)
+            ws.cell(re_,1).border = bdr()
+            ws.row_dimensions[re_].height = 20
+
+    # ── EN-TÊTE ──
+    ws.merge_cells("A1:E1")
+    ws["A1"] = "PAUSE KRÉYOL — RÉUNION DE DÉMARRAGE"
+    ws["A1"].font = Font(bold=True, size=18, color=BLUE, name="Josefin Sans")
+    ws["A1"].fill = PatternFill("solid", fgColor=PEACH)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 48
+
+    ws.merge_cells("A2:E2")
+    ws["A2"] = "Ingénierie culturelle · De l'idée au lancement, valorisons votre projet !"
+    ws["A2"].font = Font(italic=True, size=10, color=ORANGE, name="DM Sans")
+    ws["A2"].alignment = Alignment(horizontal="center")
+    ws.row_dimensions[2].height = 20
+
+    ws.append([])
+
+    # ── SECTION 1 : Informations générales ──
+    section(ws, "1. INFORMATIONS GÉNÉRALES")
+    field(ws, "Date de la réunion")
+    field(ws, "Lieu / Format", "Présentiel, Visio...")
+    field(ws, "Participants (structure)")
+    field(ws, "Participants (PauseKreyol)")
+    field(ws, "Nom de la structure / association")
+    field(ws, "Nom du projet")
+
+    # ── SECTION 2 : Présentation de la structure ──
+    section(ws, "2. PRÉSENTATION DE LA STRUCTURE", "Identité, histoire, missions")
+    field(ws, "Statut juridique")
+    field(ws, "Année de création")
+    field(ws, "Objet social / missions")
+    bigfield(ws, "Description des activités actuelles", 3)
+    field(ws, "Territoire d'intervention")
+    field(ws, "Équipe salariée (nb + rôles)")
+    field(ws, "Budget annuel approximatif (€)")
+    field(ws, "Sources de financement principales")
+
+    # ── SECTION 3 : Projet à accompagner ──
+    section(ws, "3. PROJET À ACCOMPAGNER", "Description, objectifs, calendrier")
+    field(ws, "Intitulé du projet")
+    field(ws, "Type de projet", "Festival, résidence, tournée, création...")
+    bigfield(ws, "Description détaillée du projet", 4)
+    field(ws, "Public cible")
+    field(ws, "Territoire / lieux envisagés")
+    field(ws, "Partenaires identifiés")
+    field(ws, "Budget prévisionnel estimé (€)")
+    field(ws, "Sources de financement envisagées")
+
+    # ── SECTION 4 : Planning prévisionnel ──
+    section(ws, "4. PLANNING PRÉVISIONNEL", "Dates clés à injecter dans le calendrier")
+    ws.append(["Étape / Événement", "Date début", "Date fin", "Type", "Notes"])
+    hr = ws.max_row
+    for col, h in enumerate(["Étape / Événement", "Date début", "Date fin", "Type", "Notes"], 1):
+        c = ws.cell(hr, col)
+        c.font = Font(bold=True, size=10, color=WHITE, name="DM Sans")
+        c.fill = PatternFill("solid", fgColor=ORANGE)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = bdr()
+    ws.row_dimensions[hr].height = 24
+    for _ in range(8):
+        ws.append(["", "", "", "", ""])
+        r = ws.max_row
+        bg = WHITE if r % 2 == 0 else LIGHT
+        for col in range(1,6):
+            ws.cell(r,col).fill = PatternFill("solid", fgColor=bg)
+            ws.cell(r,col).border = bdr()
+            ws.cell(r,col).font = Font(size=10, name="DM Sans")
+        ws.row_dimensions[r].height = 20
+
+    # ── SECTION 5 : Besoins identifiés ──
+    section(ws, "5. BESOINS IDENTIFIÉS & PRESTATIONS ENVISAGÉES")
+    ws.append(["Prestation", "Périmètre", "Priorité", "Délai", "Notes"])
+    hr2 = ws.max_row
+    for col, h in enumerate(["Prestation", "Périmètre", "Priorité", "Délai", "Notes"], 1):
+        c = ws.cell(hr2, col)
+        c.font = Font(bold=True, size=10, color=WHITE, name="DM Sans")
+        c.fill = PatternFill("solid", fgColor=BLUE)
+        c.alignment = Alignment(horizontal="center")
+        c.border = bdr()
+    ws.row_dimensions[hr2].height = 22
+    PRESTATIONS = [
+        "Administration culturelle", "Gestion de subventions", "Gestion RH / Paie",
+        "Communication & identité", "Comptabilité / Devis-Factures", "Conseil stratégique"
+    ]
+    for p in PRESTATIONS:
+        ws.append([p, "", "", "", ""])
+        r = ws.max_row
+        for col in range(1,6):
+            ws.cell(r,col).border = bdr()
+            ws.cell(r,col).font = Font(size=10, name="DM Sans")
+            ws.cell(r,col).fill = PatternFill("solid", fgColor=WHITE if r%2==0 else LIGHT)
+        ws.row_dimensions[r].height = 20
+
+    # ── SECTION 6 : Points de vigilance & observations ──
+    section(ws, "6. POINTS DE VIGILANCE & OBSERVATIONS")
+    bigfield(ws, "Points d'attention identifiés (juridique, financier, social...)", 4)
+    bigfield(ws, "Recommandations immédiates", 3)
+
+    # ── SECTION 7 : Prochaines étapes & actions ──
+    section(ws, "7. PROCHAINES ÉTAPES", "Actions à engager suite à cette réunion")
+    ws.append(["Action", "Responsable", "Délai", "Statut", "Notes"])
+    hr3 = ws.max_row
+    for col, h in enumerate(["Action", "Responsable", "Délai", "Statut", "Notes"], 1):
+        c = ws.cell(hr3, col)
+        c.font = Font(bold=True, size=10, color=WHITE, name="DM Sans")
+        c.fill = PatternFill("solid", fgColor=ORANGE)
+        c.alignment = Alignment(horizontal="center")
+        c.border = bdr()
+    ws.row_dimensions[hr3].height = 22
+    ACTIONS = [
+        "Envoi compte rendu de réunion", "Envoi devis de démarrage",
+        "Collecte des documents manquants", "Accès Drive partagé",
+        "Ouverture espace client PauseKreyol", ""
+    ]
+    for ac in ACTIONS:
+        ws.append([ac, "Océane / Client", "", "À faire", ""])
+        r = ws.max_row
+        for col in range(1,6):
+            ws.cell(r,col).border = bdr()
+            ws.cell(r,col).font = Font(size=10, name="DM Sans")
+            ws.cell(r,col).fill = PatternFill("solid", fgColor=WHITE if r%2==0 else LIGHT)
+        ws.row_dimensions[r].height = 20
+
+    # ── Pied de page ──
+    ws.append([])
+    ws.append(["Pause Kréyol · contact@pausekreyol.fr · pausekreyol.fr"])
+    rf = ws.max_row
+    ws.merge_cells(f"A{rf}:E{rf}")
+    ws.cell(rf,1).font = Font(italic=True, size=9, color=ORANGE, name="DM Sans")
+    ws.cell(rf,1).alignment = Alignment(horizontal="center")
+
+    # Largeurs
+    ws.column_dimensions["A"].width = 32
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 14
+    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["E"].width = 22
+
+    buf = io_mod.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        io_mod.BytesIO(buf.read()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=PauseKreyol_Template_Reunion_Demarrage.xlsx"}
+    )
+
