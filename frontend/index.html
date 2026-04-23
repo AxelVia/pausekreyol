@@ -9312,7 +9312,12 @@ function EmailingView() {
         const payload = { ...newEvent, client_nom: c?.nom || '', source: 'pausekreyol' };
         try {
           const res = await fetch(`${API}/google-calendar/events`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-          if (res.ok) { setGcalEvents(p => [...p, await res.json()]); setSyncMsg('✅ Événement créé dans Google Calendar'); setTimeout(() => setSyncMsg(''), 3000); }
+          if (res.ok) {
+            const saved = await res.json();
+            setGcalEvents(p => [...p, saved]);
+            setSyncMsg('✅ Événement créé dans Google Calendar');
+            setTimeout(() => setSyncMsg(''), 3000);
+          }
         } catch {}
         setShowAddEvent(false);
         setNewEvent(EMPTY_EVENT);
