@@ -1374,6 +1374,71 @@
                </div>
              </div>
            </div>
+
+          {/* Bloc subventions dashboard */}
+          {subventions.length > 0 && (
+            <div className="grid-2">
+              <div className="card">
+                <div className="card-header">
+                  <div className="card-title">🏛 Subventions</div>
+                  <button className="btn" style={{ fontSize: 11 }} onClick={() => setView('subventions')}>Voir tout →</button>
+                </div>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                  <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: 'var(--success-light)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--success)' }}>{caSubvObtenu.toLocaleString('fr-FR')} €</div>
+                    <div style={{ fontSize: 10, color: 'var(--success)' }}>Obtenus / Versés</div>
+                  </div>
+                  <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: 'var(--warn-light)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--warn)' }}>{subvEnCours.length}</div>
+                    <div style={{ fontSize: 10, color: 'var(--warn)' }}>En cours</div>
+                  </div>
+                </div>
+                {(() => {
+                  const todayStr = new Date().toISOString().slice(0,10);
+                  const tachesSubv = subventions
+                    .flatMap(s => (s.taches||[]).map(t => ({...t, subNom: s.modele_nom||s.organisme, clientNom: s.client_nom})))
+                    .filter(t => !t.done && t.deadline)
+                    .sort((a,b) => a.deadline.localeCompare(b.deadline))
+                    .slice(0, 4);
+                  if (!tachesSubv.length) return <div style={{ fontSize: 12, color: 'var(--text3)', textAlign: 'center', padding: '8px 0' }}>Aucune tâche de suivi active</div>;
+                  return tachesSubv.map(t => {
+                    const diff = Math.round((new Date(t.deadline+'T00:00:00') - new Date()) / 86400000);
+                    return (
+                      <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{t.titre}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text3)' }}>{t.subNom} · {t.clientNom}</div>
+                        </div>
+                        <span style={{ fontWeight: 700, fontSize: 11, color: diff < 0 ? 'var(--danger)' : diff <= 7 ? 'var(--warn)' : 'var(--text3)' }}>
+                          {diff < 0 ? `J+${Math.abs(diff)}` : `J-${diff}`}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+              <div className="card">
+                <div className="card-header"><div className="card-title">⏰ Deadlines subventions</div></div>
+                {subvDeadlines.length === 0
+                  ? <div style={{ fontSize: 12, color: 'var(--text3)', textAlign: 'center', padding: '8px 0' }}>Aucune deadline à venir</div>
+                  : subvDeadlines.map(s => {
+                    const diff = Math.round((new Date(s.deadline+'T00:00:00') - new Date()) / 86400000);
+                    return (
+                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 500 }}>{s.modele_nom || s.organisme}</div>
+                          <div style={{ fontSize: 11, color: 'var(--pk-blue)' }}>{s.client_nom}</div>
+                        </div>
+                        <span style={{ fontWeight: 700, fontSize: 12, color: diff <= 3 ? 'var(--danger)' : diff <= 14 ? 'var(--warn)' : 'var(--text3)', flexShrink: 0 }}>
+                          {diff <= 0 ? 'Dépassé' : `J-${diff}`}
+                        </span>
+                      </div>
+                    );
+                  })
+                }
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -5688,8 +5753,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         acompte_pct: 30, facilite_paiement: '1x', notes: '',
       });
       const [prestations, setPrestations] = useState([
-        { description: '', type: '', quantite: 1, tarif_unitaire: 0, sous_total: 0 }
+        { description: '', texte_libre: '', type: '', quantite: 1, tarif_unitaire: 0, remise_pct: 0, sous_total: 0 }
       ]);
+      const [remiseGlobale, setRemiseGlobale] = useState(0); // % remise sur total
+      const [showTexteLibre, setShowTexteLibre] = useState({}); // {i: true} affiche la zone texte
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
 
@@ -5704,32 +5771,57 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         setPrestations(prev => {
           const next = [...prev];
           next[i] = { ...next[i], [k]: v };
-          if (k === 'quantite' || k === 'tarif_unitaire') {
-            next[i].sous_total = (parseFloat(next[i].quantite) || 0) * (parseFloat(next[i].tarif_unitaire) || 0);
-          }
+          // Recalcule le sous-total avec remise éventuelle
+          const qt = parseFloat(next[i].quantite) || 0;
+          const tu = parseFloat(next[i].tarif_unitaire) || 0;
+          const remPct = parseFloat(next[i].remise_pct) || 0;
+          const brut = qt * tu;
+          next[i].sous_total = Math.round(brut * (1 - remPct/100) * 100) / 100;
           if (k === 'type') {
             const tarif = tarifs.find(t => t.label === v);
             if (tarif) {
               next[i].tarif_unitaire = tarif.tarif;
-              next[i].sous_total = (parseFloat(next[i].quantite) || 1) * tarif.tarif;
+              const brut2 = (parseFloat(next[i].quantite) || 1) * tarif.tarif;
+              next[i].sous_total = Math.round(brut2 * (1 - remPct/100) * 100) / 100;
               if (!next[i].description) next[i].description = v;
             }
           }
           return next;
         });
       }
-
       function addLine() {
-        setPrestations(p => [...p, { description: '', type: '', quantite: 1, tarif_unitaire: 0, sous_total: 0 }]);
+        setPrestations(prev => [...prev, { description: '', texte_libre: '', type: '', quantite: 1, tarif_unitaire: 0, remise_pct: 0, sous_total: 0 }]);
       }
+
 
       function removeLine(i) {
         setPrestations(p => p.filter((_, idx) => idx !== i));
       }
 
-      const total = prestations.reduce((s, p) => s + (parseFloat(p.sous_total) || 0), 0);
+      const totalBrut = prestations.reduce((s, p) => s + (parseFloat(p.sous_total) || 0), 0);
+      const remiseGlobaleAmt = Math.round(totalBrut * (parseFloat(remiseGlobale) || 0) / 100 * 100) / 100;
+      const total = Math.round((totalBrut - remiseGlobaleAmt) * 100) / 100;
       const acompte = Math.round(total * (parseFloat(form.acompte_pct) || 0) / 100 * 100) / 100;
       const solde = Math.round((total - acompte) * 100) / 100;
+
+      // Calcul de l'échéancier automatique
+      function calcEcheances(facilite, totalNet, dateEmission) {
+        const base = dateEmission || new Date().toISOString().slice(0,10);
+        const addDays = (d, n) => { const dt = new Date(d); dt.setDate(dt.getDate()+n); return dt.toISOString().slice(0,10); };
+        const addMonths = (d, n) => { const dt = new Date(d); dt.setMonth(dt.getMonth()+n); return dt.toISOString().slice(0,10); };
+        if (facilite === '1x') return [{ label: 'Paiement intégral', montant: totalNet, date: addDays(base, 30), pct: 100 }];
+        if (facilite === '2x') return [
+          { label: 'Acompte 50%', montant: Math.round(totalNet/2*100)/100, date: addDays(base, 0), pct: 50 },
+          { label: 'Solde 50%', montant: Math.round(totalNet/2*100)/100, date: addMonths(base, 1), pct: 50 },
+        ];
+        if (facilite === '3x') return [
+          { label: '1er tiers', montant: Math.round(totalNet/3*100)/100, date: addDays(base, 0), pct: 33 },
+          { label: '2ème tiers', montant: Math.round(totalNet/3*100)/100, date: addMonths(base, 1), pct: 33 },
+          { label: '3ème tiers', montant: Math.round(totalNet/3*100)/100, date: addMonths(base, 2), pct: 34 },
+        ];
+        return form.echeances_manuelles || [];
+      }
+      const echeances = calcEcheances(form.facilite_paiement, total, form.date_emission);
 
       async function submit() {
         if (!form.client_nom) { setError('Client obligatoire'); return; }
@@ -5739,9 +5831,14 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           const res = await fetch(`${API}/devis`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...form, prestations, total_ht: total }),
+            body: JSON.stringify({ ...form, prestations, total_ht: total, remise_globale_pct: parseFloat(remiseGlobale)||0, remise_globale_amt: remiseGlobaleAmt, echeances }),
           });
           if (!res.ok) throw new Error(await res.text());
+          const saved = await res.json();
+          // Notif sync si échéancier créé
+          if (saved.echeances && saved.echeances.length > 1) {
+            console.info(`Dévis créé · ${saved.echeances.length} échéances sync calendrier`);
+          }
           onCreated();
         } catch (e) {
           setError(e.message);
@@ -5778,38 +5875,79 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             {/* Prestations */}
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>Prestations *</div>
             {prestations.map((p, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'flex-end' }}>
-                <div style={{ flex: 2 }}>
-                  <input className="form-input" style={{ fontSize: 12 }} value={p.description}
-                    onChange={e => updatePresta(i, 'description', e.target.value)} placeholder="Description" />
+              <div key={i} style={{ marginBottom: 10, padding: '8px', background: 'var(--surface2)', borderRadius: 8 }}>
+                {/* Ligne principale */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'flex-end' }}>
+                  <div style={{ flex: 3 }}>
+                    <input className="form-input" style={{ fontSize: 12 }} value={p.description}
+                      onChange={e => updatePresta(i, 'description', e.target.value)} placeholder="Intitulé de la prestation *" />
+                  </div>
+                  <div style={{ flex: 1.5 }}>
+                    <select className="form-input" style={{ fontSize: 12 }} value={p.type}
+                      onChange={e => updatePresta(i, 'type', e.target.value)}>
+                      <option value="">Type</option>
+                      {tarifs.map(t => <option key={t.label} value={t.label}>{t.label}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ width: 56 }}>
+                    <input className="form-input" style={{ fontSize: 12, textAlign: 'center' }} type="number" value={p.quantite}
+                      onChange={e => updatePresta(i, 'quantite', e.target.value)} min="0" step="0.5" placeholder="Qté" />
+                  </div>
+                  <div style={{ width: 80 }}>
+                    <input className="form-input" style={{ fontSize: 12, textAlign: 'right' }} type="number" value={p.tarif_unitaire}
+                      onChange={e => updatePresta(i, 'tarif_unitaire', e.target.value)} placeholder="PU €" />
+                  </div>
+                  <div style={{ width: 54 }}>
+                    <input className="form-input" style={{ fontSize: 12, textAlign: 'center', borderColor: p.remise_pct > 0 ? 'var(--pk-orange)' : 'var(--border2)' }}
+                      type="number" value={p.remise_pct || ''} min="0" max="100"
+                      onChange={e => updatePresta(i, 'remise_pct', e.target.value)} placeholder="% rem" />
+                  </div>
+                  <div style={{ width: 80, textAlign: 'right', fontWeight: 700, fontSize: 13, paddingBottom: 6, color: 'var(--pk-blue)', flexShrink: 0 }}>
+                    {(p.sous_total || 0).toLocaleString('fr-FR')} €
+                    {p.remise_pct > 0 && <div style={{ fontSize: 10, color: 'var(--pk-orange)', fontWeight: 400 }}>-{p.remise_pct}%</div>}
+                  </div>
+                  <button onClick={() => removeLine(i)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', paddingBottom: 6, fontSize: 16 }}>✕</button>
                 </div>
-                <div style={{ flex: 1.5 }}>
-                  <select className="form-input" style={{ fontSize: 12 }} value={p.type}
-                    onChange={e => updatePresta(i, 'type', e.target.value)}>
-                    <option value="">Type / formule</option>
-                    {tarifs.map(t => <option key={t.label} value={t.label}>{t.label} ({t.tarif} {t.unite})</option>)}
-                  </select>
+                {/* Texte libre / description détaillée */}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button onClick={() => setShowTexteLibre(s => ({...s, [i]: !s[i]}))}
+                    style={{ fontSize: 10, background: 'none', border: '1px solid var(--border2)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', color: 'var(--text3)', whiteSpace: 'nowrap' }}>
+                    {showTexteLibre[i] ? '▲ Masquer desc.' : '▼ Description détaillée'}
+                  </button>
+                  {p.texte_libre && !showTexteLibre[i] && (
+                    <span style={{ fontSize: 10, color: 'var(--text3)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.texte_libre.slice(0,60)}</span>
+                  )}
                 </div>
-                <div style={{ width: 60 }}>
-                  <input className="form-input" style={{ fontSize: 12 }} type="number" value={p.quantite}
-                    onChange={e => updatePresta(i, 'quantite', e.target.value)} min="0" step="0.5" />
-                </div>
-                <div style={{ width: 80 }}>
-                  <input className="form-input" style={{ fontSize: 12 }} type="number" value={p.tarif_unitaire}
-                    onChange={e => updatePresta(i, 'tarif_unitaire', e.target.value)} />
-                </div>
-                <div style={{ width: 80, textAlign: 'right', fontWeight: 600, fontSize: 13, paddingBottom: 8 }}>
-                  {(p.sous_total || 0).toLocaleString('fr-FR')} €
-                </div>
-                <button onClick={() => removeLine(i)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', paddingBottom: 8 }}>✕</button>
+                {showTexteLibre[i] && (
+                  <textarea className="form-input" style={{ fontSize: 11, marginTop: 4, resize: 'vertical', minHeight: 48 }}
+                    value={p.texte_libre || ''}
+                    onChange={e => updatePresta(i, 'texte_libre', e.target.value)}
+                    placeholder="Description détaillée, conditions, inclusions… (apparaîtra dans le devis Word)" />
+                )}
               </div>
             ))}
-            <button className="btn" style={{ fontSize: 12, marginBottom: 14 }} onClick={addLine}>+ Ligne</button>
+            <button className="btn" style={{ fontSize: 12, marginBottom: 10 }} onClick={addLine}>+ Ligne</button>
 
             {/* Totaux */}
             <div style={{ background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', padding: '12px', marginBottom: 14 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
-                <span>Total HT</span><strong>{total.toLocaleString('fr-FR')} €</strong>
+              {totalBrut !== total && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 12, color: 'var(--text3)' }}>
+                  <span>Sous-total brut</span><span>{totalBrut.toLocaleString('fr-FR')} €</span>
+                </div>
+              )}
+              {/* Remise globale */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, fontSize: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--text2)' }}>Remise globale (%)</span>
+                  <input type="number" min="0" max="100" value={remiseGlobale || ''}
+                    onChange={e => setRemiseGlobale(e.target.value)}
+                    style={{ width: 60, padding: '2px 6px', border: '1px solid var(--border2)', borderRadius: 4, fontSize: 12, textAlign: 'center' }}
+                    placeholder="0" />
+                </div>
+                {remiseGlobaleAmt > 0 && <span style={{ color: 'var(--pk-orange)', fontWeight: 600 }}>- {remiseGlobaleAmt.toLocaleString('fr-FR')} €</span>}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 14, fontWeight: 700, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+                <span>Total HT</span><strong style={{ color: 'var(--pk-blue)' }}>{total.toLocaleString('fr-FR')} €</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12, color: 'var(--text3)' }}>
                 <span>TVA — Non applicable (Art. 293B du CGI)</span><span>0 €</span>
@@ -5835,6 +5973,26 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                   <option value="3x">3 fois</option>
                   <option value="manuel">Manuel (délais personnalisés)</option>
                 </select>
+                {/* Prévisualisation échéancier */}
+                {total > 0 && echeances.length > 0 && (
+                  <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--pk-blue-light)', borderRadius: 6, borderLeft: '3px solid var(--pk-blue)' }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--pk-blue)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 5 }}>
+                      Échéancier automatique
+                    </div>
+                    {echeances.map((e, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--pk-blue)', padding: '2px 0', borderBottom: i < echeances.length-1 ? '1px solid var(--pk-blue)20' : 'none' }}>
+                        <span>{e.label}</span>
+                        <div style={{ display: 'flex', gap: 16 }}>
+                          <span style={{ color: 'var(--text3)' }}>{e.date?.split('-').reverse().join('/')}</span>
+                          <strong>{e.montant.toLocaleString('fr-FR')} €</strong>
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 5, fontStyle: 'italic' }}>
+                      ✅ Ces échéances seront créées comme tâches et sync avec le calendrier
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label className="form-label">Notes</label>
@@ -6220,6 +6378,82 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [uploading, setUploading] = useState(null);
       const [msg, setMsg] = useState('');
       const [localSub, setLocalSub] = useState(sub);
+      const [tachesSubv, setTachesSubv] = useState(sub.taches || []);
+      const [showNewTache, setShowNewTache] = useState(false);
+      const [newTache, setNewTache] = useState({ titre: '', deadline: '', priorite: 'Normal', notes: '' });
+
+      const TACHES_TYPES_SUBV = [
+        'Préparer le dossier', 'Collecter les pièces justificatives', 'Rédiger le budget',
+        'Déposer le dossier', 'Relancer l'instructeur', 'Envoyer les compléments',
+        'Signer la convention', 'Envoyer le compte rendu financier', 'Archiver le dossier',
+      ];
+
+      async function addTacheSubv() {
+        if (!newTache.titre) return;
+        const t = {
+          id: `tsubv_${Date.now()}`,
+          ...newTache,
+          created_at: new Date().toISOString(),
+          done: false,
+          sub_id: localSub.id,
+        };
+        const newTaches = [...tachesSubv, t];
+        setTachesSubv(newTaches);
+        // Persiste sur la subvention
+        const updated = { ...localSub, taches: newTaches };
+        setLocalSub(updated);
+        onUpdate(updated);
+        // Crée aussi dans le module tâches global + calendrier
+        try {
+          await fetch(\`\${API}/taches\`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              titre: newTache.titre,
+              deadline: newTache.deadline,
+              priorite: newTache.priorite,
+              description: \`Subvention \${localSub.modele_nom || localSub.organisme} — \${localSub.client_nom}. \${newTache.notes}\`,
+              client_slug: localSub.client_slug,
+              client_detecte: localSub.client_nom,
+              categorie: 'subvention',
+              calendrier: 'formalites',
+              sub_id: localSub.id,
+            })
+          });
+          if (newTache.deadline) {
+            await fetch(\`\${API}/calendrier/event\`, {
+              method: 'POST', headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({
+                titre: \`📋 \${newTache.titre} — \${localSub.client_nom}\`,
+                date: newTache.deadline,
+                type: 'formalite',
+                client_slug: localSub.client_slug,
+                client: localSub.client_nom,
+                couleur: '#2834B7',
+                source: 'subvention',
+              })
+            });
+          }
+        } catch {}
+        // Patch subvention
+        await fetch(\`\${API}/subventions/\${localSub.id}\`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ taches: newTaches })
+        }).catch(() => {});
+        setShowNewTache(false);
+        setNewTache({ titre: '', deadline: '', priorite: 'Normal', notes: '' });
+      }
+
+      async function toggleTache(tId) {
+        const newTaches = tachesSubv.map(t => t.id === tId ? {...t, done: !t.done} : t);
+        setTachesSubv(newTaches);
+        const updated = { ...localSub, taches: newTaches };
+        setLocalSub(updated);
+        onUpdate(updated);
+        await fetch(\`\${API}/subventions/\${localSub.id}\`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ taches: newTaches })
+        }).catch(() => {});
+      }
 
       // Récupère les détails du client depuis clientsDetails
       const clientDetail = clientsDetails.find(c => c.slug === sub.client_slug);
@@ -6489,6 +6723,103 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Module tâches subvention */}
+          <div className="card" style={{ marginTop: 14 }}>
+            <div className="card-header">
+              <div>
+                <div className="card-title">✅ Tâches & suivi</div>
+                <div className="card-subtitle">
+                  {tachesSubv.filter(t=>t.done).length}/{tachesSubv.length} accomplie(s)
+                  {tachesSubv.length > 0 && (
+                    <span style={{ marginLeft: 8 }}>
+                      <span style={{ background: 'var(--success-light)', color: 'var(--success)', padding: '1px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600 }}>
+                        {Math.round(tachesSubv.filter(t=>t.done).length/tachesSubv.length*100)}%
+                      </span>
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => setShowNewTache(true)}>+ Tâche</button>
+            </div>
+            {/* Barre de progression */}
+            {tachesSubv.length > 0 && (
+              <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, marginBottom: 10 }}>
+                <div style={{ height: '100%', background: 'var(--success)', borderRadius: 3, width: `${Math.round(tachesSubv.filter(t=>t.done).length/tachesSubv.length*100)}%`, transition: 'width 0.3s' }} />
+              </div>
+            )}
+            {tachesSubv.length === 0 ? (
+              <div className="empty" style={{ padding: '12px 0' }}>
+                <div className="empty-text">Aucune tâche. Ajoutez des actions de suivi.</div>
+              </div>
+            ) : tachesSubv.sort((a,b) => (a.done?1:-1) - (b.done?1:-1)).map(t => {
+              const now = new Date().toISOString().slice(0,10);
+              const isLate = !t.done && t.deadline && t.deadline < now;
+              const isSoon = !t.done && t.deadline && t.deadline >= now && t.deadline <= new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+              return (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)', opacity: t.done ? 0.5 : 1 }}>
+                  <button onClick={() => toggleTache(t.id)} style={{ background: 'none', border: `2px solid ${t.done ? 'var(--success)' : 'var(--border2)'}`, borderRadius: '50%', width: 20, height: 20, cursor: 'pointer', flexShrink: 0, color: t.done ? 'var(--success)' : 'transparent', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}>
+                    {t.done ? '✓' : ''}
+                  </button>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: t.done ? 400 : 500, textDecoration: t.done ? 'line-through' : 'none' }}>{t.titre}</div>
+                    {t.deadline && (
+                      <div style={{ fontSize: 11, color: isLate ? 'var(--danger)' : isSoon ? 'var(--warn)' : 'var(--text3)', marginTop: 2 }}>
+                        {isLate ? '⚠️ Dépassé : ' : '📅 '}{t.deadline.split('-').reverse().join('/')}
+                      </div>
+                    )}
+                    {t.notes && <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>{t.notes}</div>}
+                  </div>
+                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 6, background: t.priorite === 'URGENT' ? 'var(--danger-light)' : t.priorite === 'HAUT' ? 'var(--warn-light)' : 'var(--surface2)', color: t.priorite === 'URGENT' ? 'var(--danger)' : t.priorite === 'HAUT' ? 'var(--warn)' : 'var(--text3)', fontWeight: 600, flexShrink: 0 }}>
+                    {t.priorite}
+                  </span>
+                </div>
+              );
+            })}
+            {/* Modal ajout tâche */}
+            {showNewTache && (
+              <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNewTache(false)}>
+                <div className="modal" style={{ maxWidth: 460 }}>
+                  <div className="modal-title">✅ Nouvelle tâche</div>
+                  <div className="form-group">
+                    <label className="form-label">Titre *</label>
+                    <select className="form-input" value={newTache.titre} onChange={e => setNewTache(p=>({...p,titre:e.target.value}))}>
+                      <option value="">— Choisir ou saisir —</option>
+                      {TACHES_TYPES_SUBV.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    <input className="form-input" style={{ marginTop: 4 }} value={newTache.titre} onChange={e => setNewTache(p=>({...p,titre:e.target.value}))} placeholder="Ou saisir un intitulé personnalisé..." />
+                  </div>
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">Deadline</label>
+                      <input className="form-input" type="date" value={newTache.deadline} onChange={e => setNewTache(p=>({...p,deadline:e.target.value}))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Priorité</label>
+                      <select className="form-input" value={newTache.priorite} onChange={e => setNewTache(p=>({...p,priorite:e.target.value}))}>
+                        <option value="Normal">Normal</option>
+                        <option value="HAUT">Haut</option>
+                        <option value="URGENT">URGENT</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Notes</label>
+                    <input className="form-input" value={newTache.notes} onChange={e => setNewTache(p=>({...p,notes:e.target.value}))} placeholder="Contexte, instructions..." />
+                  </div>
+                  {newTache.deadline && (
+                    <div style={{ fontSize: 11, padding: '6px 10px', background: 'var(--pk-blue-light)', borderRadius: 6, color: 'var(--pk-blue)', marginBottom: 8 }}>
+                      ✅ Cette tâche sera ajoutée au module Tâches et sync avec le calendrier Formalités
+                    </div>
+                  )}
+                  <div className="modal-footer">
+                    <button className="btn" onClick={() => setShowNewTache(false)}>Annuler</button>
+                    <button className="btn btn-primary" onClick={addTacheSubv} disabled={!newTache.titre}>Créer →</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );

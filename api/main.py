@@ -2365,8 +2365,94 @@ def create_devis(body: dict):
         "echeances": body.get("echeances", []),
         "factures_liees": [],
     }
+    # Remise globale
+    remise_globale_pct = float(body.get("remise_globale_pct", 0))
+    remise_globale_amt = round(total_ht * remise_globale_pct / 100, 2)
+    total_net = round(total_ht - remise_globale_amt, 2)
+
+    # Échéancier
+    echeances = body.get("echeances", [])
+    facilite = body.get("facilite_paiement", "1x")
+    if not echeances and total_net > 0:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        add_days = lambda n: (datetime.now() + timedelta(days=n)).strftime("%Y-%m-%d")
+        add_months = lambda n: (datetime.now().replace(month=((datetime.now().month-1+n)%12)+1, year=datetime.now().year+(datetime.now().month-1+n)//12)).strftime("%Y-%m-%d")
+        if facilite == "1x":
+            echeances = [{"label": "Paiement intégral", "montant": total_net, "date": add_days(30), "pct": 100}]
+        elif facilite == "2x":
+            half = round(total_net / 2, 2)
+            echeances = [
+                {"label": "Acompte 50%", "montant": half, "date": today_str, "pct": 50},
+                {"label": "Solde 50%", "montant": total_net - half, "date": add_days(30), "pct": 50},
+            ]
+        elif facilite == "3x":
+            third = round(total_net / 3, 2)
+            echeances = [
+                {"label": "1er tiers", "montant": third, "date": today_str, "pct": 33},
+                {"label": "2ème tiers", "montant": third, "date": add_days(30), "pct": 33},
+                {"label": "3ème tiers", "montant": total_net - 2*third, "date": add_days(60), "pct": 34},
+            ]
+
+    new_devis.update({
+        "total_ht": total_net,
+        "total_brut": round(total_ht, 2),
+        "remise_globale_pct": remise_globale_pct,
+        "remise_globale_amt": remise_globale_amt,
+        "acompte_montant": round(total_net * acompte_pct / 100, 2),
+        "solde": round(total_net - round(total_net * acompte_pct / 100, 2), 2),
+        "echeances": echeances,
+    })
+
     devis.append(new_devis)
     _save_devis(devis)
+
+    # Crée des tâches pour les échéances de paiement
+    if echeances:
+        tasks = _load_tasks()
+        for ech in echeances:
+            if ech.get("date") and ech.get("montant", 0) > 0:
+                task = {
+                    "id": f"task_ech_{new_devis['id']}_{echeances.index(ech)}",
+                    "created_at": datetime.now().isoformat(),
+                    "source": "Devis",
+                    "titre": f"Échéance {ech['label']} — {body.get('client_nom','')} ({ech['montant']} €)",
+                    "priorite": "Normal",
+                    "description": f"Devis {new_devis['numero']} · {ech['label']} : {ech['montant']} € — {body.get('client_nom','')}",
+                    "deadline": ech["date"],
+                    "client_slug": body.get("client_slug"),
+                    "client_detecte": body.get("client_nom"),
+                    "categorie": "facturation",
+                    "calendrier": "formalites",
+                    "done": False,
+                }
+                tasks.append(task)
+        _save_tasks(tasks)
+        logger.info(f"Devis {new_devis['numero']} : {len(echeances)} échéances → tâches créées")
+
+        # Sync calendrier
+        try:
+            cal = _load_cal()
+            for ech in echeances:
+                if ech.get("date"):
+                    cal_event = {
+                        "id": int(datetime.now().timestamp() * 1000) + echeances.index(ech),
+                        "created_at": datetime.now().isoformat(),
+                        "titre": f"💰 {ech['label']} — {body.get('client_nom','')}",
+                        "date": ech["date"],
+                        "type": "formalite",
+                        "client_slug": body.get("client_slug"),
+                        "client": body.get("client_nom"),
+                        "couleur": "#2834B7",
+                        "montant": ech["montant"],
+                        "devis_id": new_devis["id"],
+                        "source": "devis_echeance",
+                    }
+                    cal["formalites"].append(cal_event)
+            _save_cal(cal)
+            logger.info(f"Devis {new_devis['numero']} : {len(echeances)} events calendrier créés")
+        except Exception as e:
+            logger.warning(f"Devis calendrier sync : {e}")
+
     return new_devis
 
 
