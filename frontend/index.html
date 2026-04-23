@@ -6489,13 +6489,13 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         onUpdate(updated);
         // Crée aussi dans le module tâches global + calendrier
         try {
-          await fetch(\`\${API}/taches\`, {
+          await fetch(`${API}/taches`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
               titre: newTache.titre,
               deadline: newTache.deadline,
               priorite: newTache.priorite,
-              description: \`Subvention \${localSub.modele_nom || localSub.organisme} — \${localSub.client_nom}. \${newTache.notes}\`,
+              description: `Subvention ${localSub.modele_nom || localSub.organisme} — ${localSub.client_nom}. ${newTache.notes}`,
               client_slug: localSub.client_slug,
               client_detecte: localSub.client_nom,
               categorie: 'subvention',
@@ -6504,10 +6504,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             })
           });
           if (newTache.deadline) {
-            await fetch(\`\${API}/calendrier/event\`, {
+            await fetch(`${API}/calendrier/event`, {
               method: 'POST', headers: {'Content-Type':'application/json'},
               body: JSON.stringify({
-                titre: \`📋 \${newTache.titre} — \${localSub.client_nom}\`,
+                titre: `📋 ${newTache.titre} — ${localSub.client_nom}`,
                 date: newTache.deadline,
                 type: 'formalite',
                 client_slug: localSub.client_slug,
@@ -6519,7 +6519,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           }
         } catch {}
         // Patch subvention
-        await fetch(\`\${API}/subventions/\${localSub.id}\`, {
+        await fetch(`${API}/subventions/${localSub.id}`, {
           method: 'PATCH', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ taches: newTaches })
         }).catch(() => {});
@@ -6533,7 +6533,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         const updated = { ...localSub, taches: newTaches };
         setLocalSub(updated);
         onUpdate(updated);
-        await fetch(\`\${API}/subventions/\${localSub.id}\`, {
+        await fetch(`${API}/subventions/${localSub.id}`, {
           method: 'PATCH', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ taches: newTaches })
         }).catch(() => {});
