@@ -4525,3 +4525,563 @@ def export_template_audit():
         headers={"Content-Disposition": "attachment; filename=PauseKreyol_Template_Reunion_Demarrage.xlsx"}
     )
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# GOOGLE CALENDAR — Sync bidirectionnelle (Zcal passe par Google Cal)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+GCAL_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+# ID du calendrier Google Calendar (primary = calendrier principal du compte Gmail)
+# Pour un calendrier secondaire, mettre l'ID complet (ex: xxx@group.calendar.google.com)
+
+
+def _gcal_service():
+    """Retourne le service Google Calendar (None si pas en prod)."""
+    if os.getenv("ENV") != "production":
+        return None
+    try:
+        from engine.drive_storage import _get_calendar_service
+        return _get_calendar_service()
+    except Exception as e:
+        logger.warning(f"Google Calendar service unavailable: {e}")
+        return None
+
+
+def _gcal_event_to_local(gev: dict) -> dict:
+    """Convertit un event Google Calendar en format PauseKreyol."""
+    start = gev.get("start", {})
+    end = gev.get("end", {})
+    date = start.get("date") or start.get("dateTime", "")[:10]
+    date_fin = end.get("date") or end.get("dateTime", "")[:10]
+    ext = gev.get("extendedProperties", {}).get("private", {})
+    return {
+        "id": f"gcal_{gev['id']}",
+        "gcal_id": gev["id"],
+        "titre": gev.get("summary", "Sans titre"),
+        "date": date,
+        "date_fin": date_fin,
+        "description": gev.get("description", ""),
+        "lieu": gev.get("location", ""),
+        "type": ext.get("pk_type", "culturel"),
+        "client_slug": ext.get("pk_client_slug", ""),
+        "client": ext.get("pk_client_nom", ""),
+        "couleur": ext.get("pk_couleur", "#2834B7"),
+        "source": "google_calendar",
+        "is_indispo": ext.get("pk_indispo", "false") == "true",
+        "created_at": gev.get("created", ""),
+        "updated_at": gev.get("updated", ""),
+    }
+
+
+@app.get("/google-calendar/events")
+def get_gcal_events(days_past: int = 30, days_future: int = 90):
+    """
+    Liste les events du Google Calendar.
+    Zcal écrit ses RDV ici automatiquement — on les lit pour les afficher dans PauseKreyol.
+    """
+    svc = _gcal_service()
+    if not svc:
+        # En dev : retourne les events locaux qui ont une source gcal
+        cal = _load_cal()
+        all_evts = cal.get("culturel", []) + cal.get("formalites", [])
+        return [e for e in all_evts if e.get("source") == "google_calendar"]
+
+    try:
+        now = datetime.utcnow()
+        time_min = (now - timedelta(days=days_past)).isoformat() + "Z"
+        time_max = (now + timedelta(days=days_future)).isoformat() + "Z"
+        result = svc.events().list(
+            calendarId=GCAL_ID,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=200,
+        ).execute()
+        events = result.get("items", [])
+        return [_gcal_event_to_local(e) for e in events]
+    except Exception as e:
+        logger.error(f"Google Calendar get events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/google-calendar/events")
+def create_gcal_event(body: dict):
+    """
+    Crée un event dans Google Calendar.
+    Si is_indispo=true → crée un event 'Busy' qui bloque Zcal automatiquement.
+    """
+    svc = _gcal_service()
+    titre = body.get("titre", "Événement")
+    date = body.get("date", "")
+    date_fin = body.get("date_fin", date)
+    is_indispo = body.get("is_indispo", False)
+    all_day = body.get("all_day", True)
+    heure_debut = body.get("heure_debut", "09:00")
+    heure_fin = body.get("heure_fin", "18:00")
+
+    # Si indispo → titre standardisé pour Zcal
+    if is_indispo:
+        titre = f"🚫 Indispo — {titre}" if not titre.startswith("🚫") else titre
+
+    if all_day:
+        start = {"date": date}
+        end = {"date": date_fin if date_fin > date else date}
+    else:
+        start = {"dateTime": f"{date}T{heure_debut}:00", "timeZone": "Europe/Paris"}
+        end = {"dateTime": f"{date_fin or date}T{heure_fin}:00", "timeZone": "Europe/Paris"}
+
+    gcal_event = {
+        "summary": titre,
+        "description": body.get("description", ""),
+        "location": body.get("lieu", ""),
+        "start": start,
+        "end": end,
+        "transparency": "opaque" if is_indispo else "transparent",
+        # transparent = 'Free' dans Google Cal → ne bloque PAS Zcal
+        # opaque = 'Busy' → BLOQUE Zcal automatiquement
+        "extendedProperties": {
+            "private": {
+                "pk_type": body.get("type", "culturel"),
+                "pk_client_slug": body.get("client_slug", ""),
+                "pk_client_nom": body.get("client_nom", ""),
+                "pk_couleur": body.get("couleur", "#2834B7"),
+                "pk_indispo": "true" if is_indispo else "false",
+                "pk_source": body.get("source", "pausekreyol"),
+            }
+        },
+    }
+
+    if not svc:
+        # Dev : sauvegarde localement
+        cal = _load_cal()
+        local_evt = {
+            "id": int(datetime.now().timestamp() * 1000),
+            "gcal_id": None,
+            "titre": titre,
+            "date": date, "date_fin": date_fin,
+            "type": body.get("type", "culturel"),
+            "client_slug": body.get("client_slug", ""),
+            "client": body.get("client_nom", ""),
+            "couleur": "#FF0000" if is_indispo else body.get("couleur", "#2834B7"),
+            "is_indispo": is_indispo,
+            "source": "google_calendar",
+            "created_at": datetime.now().isoformat(),
+        }
+        cal_type = "formalites" if is_indispo else body.get("type", "culturel")
+        cal[cal_type if cal_type in cal else "culturel"].append(local_evt)
+        _save_cal(cal)
+        return local_evt
+
+    try:
+        created = svc.events().insert(calendarId=GCAL_ID, body=gcal_event).execute()
+        logger.info(f"Google Calendar event créé: {created['id']} — {'INDISPO' if is_indispo else 'normal'}")
+        return _gcal_event_to_local(created)
+    except Exception as e:
+        logger.error(f"Google Calendar create event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/google-calendar/events/{gcal_id}")
+def update_gcal_event(gcal_id: str, body: dict):
+    """Met à jour un event Google Calendar (sync descendante)."""
+    svc = _gcal_service()
+    if not svc:
+        return {"status": "dev_mode", "gcal_id": gcal_id}
+    try:
+        existing = svc.events().get(calendarId=GCAL_ID, eventId=gcal_id).execute()
+        if "summary" in body: existing["summary"] = body["summary"]
+        if "date" in body:
+            if existing.get("start", {}).get("date"):
+                existing["start"] = {"date": body["date"]}
+                existing["end"] = {"date": body.get("date_fin", body["date"])}
+            else:
+                tz = existing.get("start", {}).get("timeZone", "Europe/Paris")
+                existing["start"] = {"dateTime": f"{body['date']}T{body.get('heure_debut','09:00')}:00", "timeZone": tz}
+                existing["end"] = {"dateTime": f"{body.get('date_fin', body['date'])}T{body.get('heure_fin','18:00')}:00", "timeZone": tz}
+        if "is_indispo" in body:
+            existing["transparency"] = "opaque" if body["is_indispo"] else "transparent"
+        updated = svc.events().update(calendarId=GCAL_ID, eventId=gcal_id, body=existing).execute()
+        return _gcal_event_to_local(updated)
+    except Exception as e:
+        logger.error(f"Google Calendar update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/google-calendar/events/{gcal_id}")
+def delete_gcal_event(gcal_id: str):
+    """Supprime un event de Google Calendar."""
+    svc = _gcal_service()
+    if not svc:
+        return {"status": "dev_mode"}
+    try:
+        svc.events().delete(calendarId=GCAL_ID, eventId=gcal_id).execute()
+        return {"status": "deleted"}
+    except Exception as e:
+        logger.error(f"Google Calendar delete: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/google-calendar/disponibilites")
+def get_disponibilites(date_debut: str = None, date_fin: str = None):
+    """
+    Retourne les créneaux disponibles (non bloqués par Zcal ou indispo).
+    Zcal marque les RDV comme 'Busy' → on les détecte pour calculer les dispo.
+    """
+    svc = _gcal_service()
+    if not svc:
+        return {"disponible": True, "message": "Mode dev — Google Calendar non connecté"}
+    try:
+        start = date_debut or datetime.now().strftime("%Y-%m-%d")
+        end = date_fin or (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+        result = svc.freebusy().query(body={
+            "timeMin": f"{start}T00:00:00Z",
+            "timeMax": f"{end}T23:59:59Z",
+            "items": [{"id": GCAL_ID}],
+        }).execute()
+        busy_slots = result.get("calendars", {}).get(GCAL_ID, {}).get("busy", [])
+        return {
+            "period": {"start": start, "end": end},
+            "busy_slots": busy_slots,
+            "nb_creneaux_occupes": len(busy_slots),
+        }
+    except Exception as e:
+        logger.error(f"Google Calendar disponibilités: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/google-calendar/sync")
+def sync_gcal():
+    """
+    Sync bidirectionnelle : récupère tous les events Google Calendar
+    et met à jour le store local PauseKreyol.
+    """
+    svc = _gcal_service()
+    if not svc:
+        return {"status": "dev_mode", "message": "Google Calendar non disponible en développement"}
+    try:
+        now = datetime.utcnow()
+        time_min = (now - timedelta(days=7)).isoformat() + "Z"
+        time_max = (now + timedelta(days=180)).isoformat() + "Z"
+        result = svc.events().list(
+            calendarId=GCAL_ID,
+            timeMin=time_min, timeMax=time_max,
+            singleEvents=True, orderBy="startTime",
+            maxResults=500,
+        ).execute()
+        gcal_events = result.get("items", [])
+        local_events = [_gcal_event_to_local(e) for e in gcal_events]
+
+        # Merge dans le store local
+        cal = _load_cal()
+        # Supprime les anciens events Google Calendar
+        cal["culturel"] = [e for e in cal["culturel"] if e.get("source") != "google_calendar"]
+        cal["formalites"] = [e for e in cal["formalites"] if e.get("source") != "google_calendar"]
+        # Réinjecte
+        for evt in local_events:
+            if evt.get("is_indispo") or evt.get("type") == "formalites":
+                cal["formalites"].append(evt)
+            else:
+                cal["culturel"].append(evt)
+        _save_cal(cal)
+        zcal_rdv = [e for e in gcal_events if "zcal" in e.get("description", "").lower() or "calendly" in e.get("description", "").lower()]
+        logger.info(f"Sync Google Calendar : {len(local_events)} events — {len(zcal_rdv)} RDV Zcal")
+        return {
+            "status": "ok",
+            "events_synced": len(local_events),
+            "zcal_rdv": len(zcal_rdv),
+            "indispo": len([e for e in local_events if e.get("is_indispo")]),
+        }
+    except Exception as e:
+        logger.error(f"Google Calendar sync: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/google-calendar/retroplanning/{client_slug}")
+def sync_retroplanning_to_gcal(client_slug: str, body: dict):
+    """
+    Injecte le retroplanning d'un audit dans Google Calendar du CLIENT.
+    Ces events sont taggés avec le client_slug — pas de sync globale.
+    """
+    svc = _gcal_service()
+    events = body.get("events", [])
+    created = []
+    for evt in events:
+        local_evt = {
+            "titre": evt.get("titre", ""),
+            "date": evt.get("date", ""),
+            "date_fin": evt.get("date_fin", evt.get("date", "")),
+            "type": evt.get("type", "culturel"),
+            "client_slug": client_slug,
+            "client_nom": body.get("client_nom", ""),
+            "source": "retroplanning",
+            "couleur": "#2834B7",
+            "description": f"Retroplanning — {body.get('client_nom', '')}",
+        }
+        if svc:
+            try:
+                result = create_gcal_event(local_evt)
+                created.append(result)
+            except: pass
+        else:
+            # Dev : sauvegarde local seulement
+            cal = _load_cal()
+            local_store = {**local_evt, "id": int(datetime.now().timestamp()*1000) + events.index(evt)}
+            cal["culturel"].append(local_store)
+            _save_cal(cal)
+            created.append(local_store)
+    return {"status": "ok", "created": len(created), "events": created}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE GOOGLE CALENDAR / ZCAL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _gcal_service():
+    """Retourne le service Google Calendar."""
+    from engine.drive_storage import _get_calendar_service
+    return _get_calendar_service()
+
+
+def _gcal_primary_id() -> str:
+    """Retourne l'ID du calendrier principal (primary)."""
+    return os.environ.get("GCAL_CALENDAR_ID", "primary")
+
+
+@app.get("/gcal/events")
+def get_gcal_events(days_ahead: int = 60, days_back: int = 7):
+    """
+    Récupère les events Google Calendar (calendrier principal).
+    Utilisé pour afficher les RDVs Zcal et les indisponibilités.
+    """
+    if os.getenv("ENV") != "production":
+        return {"events": [], "message": "Google Calendar disponible en production uniquement"}
+    try:
+        svc = _gcal_service()
+        now = datetime.utcnow()
+        time_min = (now - timedelta(days=days_back)).isoformat() + "Z"
+        time_max = (now + timedelta(days=days_ahead)).isoformat() + "Z"
+        result = svc.events().list(
+            calendarId=_gcal_primary_id(),
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=200,
+        ).execute()
+        events = result.get("items", [])
+        parsed = []
+        for e in events:
+            start = e.get("start", {})
+            end = e.get("end", {})
+            parsed.append({
+                "id": e.get("id"),
+                "titre": e.get("summary", ""),
+                "description": e.get("description", ""),
+                "date": start.get("date") or start.get("dateTime", "")[:10],
+                "date_fin": end.get("date") or end.get("dateTime", "")[:10],
+                "heure_debut": start.get("dateTime", "")[-14:-9] if "T" in start.get("dateTime","") else "",
+                "heure_fin": end.get("dateTime", "")[-14:-9] if "T" in end.get("dateTime","") else "",
+                "statut": e.get("status", ""),
+                "location": e.get("location", ""),
+                "source": "gcal",
+                "is_zcal": "zcal" in e.get("description","").lower() or "zcal.co" in e.get("description","").lower(),
+                "creator": e.get("creator", {}).get("email",""),
+                "couleur_id": e.get("colorId",""),
+            })
+        return {"events": parsed, "count": len(parsed)}
+    except Exception as e:
+        logger.error(f"Google Calendar read: {e}")
+        return {"events": [], "error": str(e)}
+
+
+@app.post("/gcal/indisponibilite")
+def create_indisponibilite(body: dict):
+    """
+    Crée une indisponibilité dans Google Calendar.
+    Zcal lira automatiquement cet event et bloquera le créneau.
+    """
+    titre = body.get("titre", "Indisponible — Pause Kréyol")
+    date_debut = body.get("date_debut")  # YYYY-MM-DD
+    date_fin = body.get("date_fin", date_debut)
+    heure_debut = body.get("heure_debut")  # HH:MM ou None (all-day)
+    heure_fin = body.get("heure_fin")
+    notes = body.get("notes", "")
+    couleur = body.get("couleur_id", "11")  # 11 = rouge Tomato dans GCal
+
+    if not date_debut:
+        raise HTTPException(status_code=400, detail="date_debut requis")
+
+    # Sauvegarde locale d'abord
+    cal = _load_cal()
+    if "indisponibilites" not in cal:
+        cal["indisponibilites"] = []
+    local_id = f"indispo_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    local_event = {
+        "id": local_id,
+        "titre": titre,
+        "date": date_debut,
+        "date_fin": date_fin,
+        "heure_debut": heure_debut,
+        "heure_fin": heure_fin,
+        "notes": notes,
+        "type": "indisponibilite",
+        "gcal_id": None,
+        "created_at": datetime.now().isoformat(),
+    }
+    cal["indisponibilites"].append(local_event)
+    _save_cal(cal)
+
+    # Push vers Google Calendar
+    if os.getenv("ENV") == "production":
+        try:
+            svc = _gcal_service()
+            if heure_debut and heure_fin:
+                event_body = {
+                    "summary": titre,
+                    "description": notes or "Créé depuis PauseKreyol",
+                    "start": {"dateTime": f"{date_debut}T{heure_debut}:00", "timeZone": "Europe/Paris"},
+                    "end":   {"dateTime": f"{date_fin}T{heure_fin}:00",   "timeZone": "Europe/Paris"},
+                    "colorId": str(couleur),
+                    "visibility": "private",
+                }
+            else:
+                # Événement sur toute la journée
+                fin_exclu = (datetime.strptime(date_fin, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                event_body = {
+                    "summary": titre,
+                    "description": notes or "Créé depuis PauseKreyol",
+                    "start": {"date": date_debut},
+                    "end":   {"date": fin_exclu},
+                    "colorId": str(couleur),
+                    "visibility": "private",
+                }
+            created = svc.events().insert(
+                calendarId=_gcal_primary_id(),
+                body=event_body
+            ).execute()
+            # Met à jour l'ID Google Calendar
+            for i, ev in enumerate(cal["indisponibilites"]):
+                if ev["id"] == local_id:
+                    cal["indisponibilites"][i]["gcal_id"] = created["id"]
+                    break
+            _save_cal(cal)
+            local_event["gcal_id"] = created["id"]
+            logger.info(f"Indispo créée dans Google Cal: {created['id']}")
+        except Exception as e:
+            logger.warning(f"Google Calendar push indispo: {e}")
+
+    return local_event
+
+
+@app.delete("/gcal/indisponibilite/{indispo_id}")
+def delete_indisponibilite(indispo_id: str):
+    """Supprime une indisponibilité (locale + Google Calendar)."""
+    cal = _load_cal()
+    indispos = cal.get("indisponibilites", [])
+    target = next((x for x in indispos if x.get("id") == indispo_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Indisponibilité non trouvée")
+
+    # Supprime dans Google Cal
+    if target.get("gcal_id") and os.getenv("ENV") == "production":
+        try:
+            svc = _gcal_service()
+            svc.events().delete(calendarId=_gcal_primary_id(), eventId=target["gcal_id"]).execute()
+            logger.info(f"Indispo supprimée de Google Cal: {target['gcal_id']}")
+        except Exception as e:
+            logger.warning(f"Google Calendar delete indispo: {e}")
+
+    cal["indisponibilites"] = [x for x in indispos if x.get("id") != indispo_id]
+    _save_cal(cal)
+    return {"status": "deleted"}
+
+
+@app.get("/gcal/sync")
+def sync_gcal():
+    """
+    Sync montante : lit Google Calendar et met à jour le calendrier PauseKreyol.
+    Inclut les RDVs Zcal (reconnus via leur description/source).
+    """
+    if os.getenv("ENV") != "production":
+        return {"synced": 0, "message": "Sync disponible en production uniquement"}
+    try:
+        svc = _gcal_service()
+        now = datetime.utcnow()
+        result = svc.events().list(
+            calendarId=_gcal_primary_id(),
+            timeMin=now.isoformat() + "Z",
+            timeMax=(now + timedelta(days=90)).isoformat() + "Z",
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=100,
+        ).execute()
+        events = result.get("items", [])
+        cal = _load_cal()
+        if "gcal_synced" not in cal:
+            cal["gcal_synced"] = []
+
+        # Met à jour les events synchés
+        gcal_ids = {e.get("gcal_id") for e in cal.get("gcal_synced", [])}
+        new_events = []
+        for e in events:
+            eid = e.get("id")
+            if eid in gcal_ids:
+                continue  # déjà synché
+            start = e.get("start", {})
+            is_zcal = any(x in e.get("description","").lower() for x in ["zcal", "zcal.co", "booking"])
+            synced_evt = {
+                "id": f"gcal_{eid}",
+                "gcal_id": eid,
+                "titre": e.get("summary",""),
+                "date": start.get("date") or start.get("dateTime","")[:10],
+                "type": "zcal_rdv" if is_zcal else "gcal",
+                "source": "gcal",
+                "is_zcal": is_zcal,
+                "synced_at": datetime.now().isoformat(),
+            }
+            new_events.append(synced_evt)
+
+        cal["gcal_synced"] = cal.get("gcal_synced", []) + new_events
+        _save_cal(cal)
+        logger.info(f"GCal sync: {len(new_events)} nouveaux events")
+        return {"synced": len(new_events), "total_events": len(events)}
+    except Exception as e:
+        logger.error(f"GCal sync: {e}")
+        return {"synced": 0, "error": str(e)}
+
+
+@app.get("/gcal/indisponibilites")
+def get_indisponibilites():
+    """Retourne toutes les indisponibilités locales."""
+    cal = _load_cal()
+    return cal.get("indisponibilites", [])
+
+
+@app.post("/gcal/event-to-gcal")
+def push_event_to_gcal(body: dict):
+    """
+    Pousse un event PauseKreyol vers Google Calendar.
+    Utilisé pour le retroplanning audit et les événements culturels importants.
+    """
+    if os.getenv("ENV") != "production":
+        return {"status": "skip", "message": "Production uniquement"}
+    try:
+        svc = _gcal_service()
+        date_debut = body.get("date")
+        date_fin = body.get("date_fin", date_debut)
+        couleur_map = {"culturel": "7", "formalite": "11", "reunion": "2", "planning": "9"}
+        couleur_id = couleur_map.get(body.get("type",""), "1")
+        
+        fin_exclu = (datetime.strptime(date_fin, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        event_body = {
+            "summary": body.get("titre",""),
+            "description": f"PauseKreyol · {body.get('client_nom','')} · {body.get('notes','')}",
+            "start": {"date": date_debut},
+            "end":   {"date": fin_exclu},
+            "colorId": couleur_id,
+        }
+        created = svc.events().insert(calendarId=_gcal_primary_id(), body=event_body).execute()
+        return {"status": "ok", "gcal_id": created["id"]}
+    except Exception as e:
+        logger.warning(f"Push event to GCal: {e}")
+        return {"status": "error", "error": str(e)}
+

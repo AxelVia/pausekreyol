@@ -4703,6 +4703,59 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             </div>
           )}
 
+          {/* Modal indisponibilité → Google Cal → Zcal */}
+          {showIndispoForm && (
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowIndispoForm(false)}>
+              <div className="modal" style={{ maxWidth: 440 }}>
+                <div className="modal-title">🚫 Bloquer un créneau Zcal</div>
+                <div style={{ fontSize: 12, padding: '8px 10px', background: '#FFF3E0', borderRadius: 6, marginBottom: 12, color: '#5D4037' }}>
+                  📅 Ce créneau sera créé dans Google Calendar → Zcal le bloquera automatiquement pour les réservations.
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Titre</label>
+                  <input className="form-input" value={newIndispo.titre} onChange={e => setNewIndispo(p=>({...p,titre:e.target.value}))} />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date début *</label>
+                    <input className="form-input" type="date" value={newIndispo.date_debut} onChange={e => setNewIndispo(p=>({...p,date_debut:e.target.value,date_fin:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date fin</label>
+                    <input className="form-input" type="date" value={newIndispo.date_fin} onChange={e => setNewIndispo(p=>({...p,date_fin:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Heure début</label>
+                    <input className="form-input" type="time" value={newIndispo.heure_debut} onChange={e => setNewIndispo(p=>({...p,heure_debut:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Heure fin</label>
+                    <input className="form-input" type="time" value={newIndispo.heure_fin} onChange={e => setNewIndispo(p=>({...p,heure_fin:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => setShowIndispoForm(false)}>Annuler</button>
+                  <button className="btn btn-primary" style={{ background: '#D50000', borderColor: '#D50000' }} onClick={async () => {
+                    try {
+                      const res = await fetch(`${API}/gcal/indisponibilite`, {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify(newIndispo)
+                      });
+                      if (res.ok) {
+                        const saved = await res.json();
+                        setIndispos(p => [...p, saved]);
+                      }
+                    } catch {}
+                    setShowIndispoForm(false);
+                    setNewIndispo({ titre: 'Indisponible', date_debut: '', date_fin: '', heure_debut: '', heure_fin: '' });
+                  }} disabled={!newIndispo.date_debut}>🚫 Bloquer →</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {showAdd && (
             <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
               <div className="modal">
@@ -4744,12 +4797,22 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [events, setEvents] = useState(() => {
         try { return JSON.parse(localStorage.getItem('pk_cal_events') || '[]'); } catch { return []; }
       });
+      const [indispos, setIndispos] = useState([]);
+      const [showIndispoForm, setShowIndispoForm] = useState(false);
+      const [newIndispo, setNewIndispo] = useState({ titre: 'Indisponible', date_debut: '', date_fin: '', heure_debut: '', heure_fin: '' });
       const [showAdd, setShowAdd] = useState(false);
       const [showAddCal, setShowAddCal] = useState(null); // 'formalite' | 'culturel'
       const [selectedDay, setSelectedDay] = useState(null);
       const [filterClient, setFilterClient] = useState('tous');
       const [filterType, setFilterType] = useState('tous'); // 'tous' | 'formalite' | 'culturel' | 'tache' | 'planning'
       const [newEvent, setNewEvent] = useState({ titre: '', type: 'formalite', client: '', couleur: '#FF795A', note: '' });
+
+      // Charge les indisponibilités depuis l'API
+      useEffect(() => {
+        fetch(`${API}/gcal/indisponibilites`).then(r => r.ok ? r.json() : []).then(d => {
+          setIndispos(Array.isArray(d) ? d : []);
+        }).catch(() => {});
+      }, []);
 
       // Charge les events depuis l'API pour avoir les events injectés par les audits
       useEffect(() => {
@@ -4827,8 +4890,17 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         return false;
       });
       const allAutoEvents_ = filterType === 'tous' || filterType === 'formalite' ? allAutoEventsFiltered : [];
+      // Indisponibilités → affichées en formalités avec style spécial
+      const indispoEvents = (filterType === 'tous' || filterType === 'formalite') ? indispos.map(ind => ({
+        id: `indispo_${ind.id}`,
+        date: ind.date,
+        titre: `🚫 ${ind.titre}`,
+        type: 'indisponibilite',
+        couleur: '#D50000',
+        isIndispo: true,
+      })) : [];
 
-      const eventsFormalite = [...allAutoEvents_, ...eventsFiltered.filter(e => e.type === 'formalite'), ...tachesFormalite.map(t => ({
+      const eventsFormalite = [...allAutoEvents_, ...indispoEvents, ...eventsFiltered.filter(e => e.type === 'formalite'), ...tachesFormalite.map(t => ({
         id: `tache_${t.id}`, date: t.deadline, titre: `📌 ${t.titre}`, type: 'formalite',
         couleur: t.priorite === 'URGENT' ? '#B71C1C' : t.priorite === 'Attention' ? '#E65100' : '#2834B7',
         isTache: true, client: t.client_detecte,
@@ -4864,10 +4936,19 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           <div className="card" style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <div style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 700, fontSize: 11, color, textTransform: 'uppercase', letterSpacing: '0.8px' }}>{title}</div>
-              <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px', background: color, borderColor: color }}
-                onClick={() => { setShowAddCal(calType); setShowAdd(true); setSelectedDay(todayStr); }}>
-                + Ajouter
-              </button>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px', background: color, borderColor: color }}
+                  onClick={() => { setShowAddCal(calType); setShowAdd(true); setSelectedDay(todayStr); }}>
+                  + Ajouter
+                </button>
+                {calType === 'culturel' && (
+                  <button className="btn" style={{ fontSize: 10, padding: '3px 6px', color: '#D50000', borderColor: '#D50000' }}
+                    onClick={() => { setNewIndispo(p => ({...p, date_debut: todayStr, date_fin: todayStr})); setShowIndispoForm(true); }}
+                    title="Bloquer ce créneau dans Zcal">
+                    🚫
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Navigation mois commune */}
@@ -6266,6 +6347,9 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       annuaire: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="2" y="1" width="12" height="14" rx="1.5" /><path d="M5 5h6M5 8h6M5 11h3" /></svg>,
       calendrier: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="3" width="14" height="12" rx="1.5" /><path d="M1 7h14M5 1v4M11 1v4" /></svg>,
       comm: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M14 2H2a1 1 0 00-1 1v8a1 1 0 001 1h4l2 2 2-2h4a1 1 0 001-1V3a1 1 0 00-1-1z" /></svg>,
+      rh: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.76 2.24-5 5-5"/><circle cx="12" cy="8" r="1.5"/><path d="M9.5 14c0-1.93 1.12-3.5 2.5-3.5s2.5 1.57 2.5 3.5"/></svg>,
+      audit: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/><path d="M5 6.5h3M6.5 5v3"/></svg>,
+      zcal: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="1" y="3" width="14" height="12" rx="1.5"/><path d="M1 7h14M5 1v4M11 1v4"/><circle cx="5" cy="10.5" r="1"/><circle cx="11" cy="10.5" r="1"/></svg>,
     };
 
     // ── App ───────────────────────────────────────────────────────────────────────
@@ -8890,7 +8974,18 @@ function EmailingView() {
             const result = await res.json();
             const updated = { ...form, statut:'audite', compte_rendu: { ...(form.compte_rendu||{}), planning } };
             onUpdate(updated);
-            setSavedMsg(`✅ Audit finalisé · Tâche CR créée · ${result.planning_events} événement(s) injectés`);
+            // Push retroplanning vers Google Calendar
+            planning.forEach(async evt => {
+              if (evt.date && evt.titre) {
+                try {
+                  await fetch(`${API}/gcal/event-to-gcal`, {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ ...evt, client_nom: form.client_nom, notes: 'Retroplanning audit — ' + form.client_nom })
+                  });
+                } catch {}
+              }
+            });
+            setSavedMsg(`✅ Audit finalisé · Tâche CR créée · ${result.planning_events} événement(s) injectés${planning.length > 0 ? ' · Planning → Google Calendar' : ''}`);
           }
         } catch {}
         setCompleting(false);
@@ -9148,6 +9243,711 @@ function EmailingView() {
     }
 
 
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ZCAL & DISPONIBILITÉS — Sync avec Google Calendar
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    function ZcalView({ clients }) {
+      const [tab, setTab] = useState('calendrier');
+      const [gcalEvents, setGcalEvents] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [syncing, setSyncing] = useState(false);
+      const [syncMsg, setSyncMsg] = useState('');
+      const [busySlots, setBusySlots] = useState([]);
+      const [showAddIndispo, setShowAddIndispo] = useState(false);
+      const [showAddEvent, setShowAddEvent] = useState(false);
+      const [mois, setMois] = useState(new Date().getMonth());
+      const [annee, setAnnee] = useState(new Date().getFullYear());
+      const EMPTY_INDISPO = { titre: '', date: '', date_fin: '', heure_debut: '09:00', heure_fin: '18:00', all_day: true, notes: '', client_slug: '' };
+      const EMPTY_EVENT = { titre: '', date: '', date_fin: '', type: 'culturel', client_slug: '', client_nom: '', couleur: '#2834B7', notes: '' };
+      const [newIndispo, setNewIndispo] = useState(EMPTY_INDISPO);
+      const [newEvent, setNewEvent] = useState(EMPTY_EVENT);
+      const MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+      const JOURS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+
+      useEffect(() => { loadGcalEvents(); }, []);
+
+      async function loadGcalEvents() {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API}/google-calendar/events`);
+          if (res.ok) setGcalEvents(await res.json());
+        } catch {}
+        setLoading(false);
+      }
+
+      async function syncGcal() {
+        setSyncing(true);
+        setSyncMsg('');
+        try {
+          const res = await fetch(`${API}/google-calendar/sync`, { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            setSyncMsg(`✅ ${data.events_synced} events sync · ${data.zcal_rdv} RDV Zcal · ${data.indispo} indispo`);
+            await loadGcalEvents();
+          }
+        } catch { setSyncMsg('❌ Erreur de sync'); }
+        setSyncing(false);
+        setTimeout(() => setSyncMsg(''), 5000);
+      }
+
+      async function createIndispo() {
+        const c = clients.find(x => x.slug === newIndispo.client_slug);
+        const payload = { ...newIndispo, is_indispo: true, type: 'formalites', client_nom: c?.nom || '', source: 'indispo' };
+        try {
+          const res = await fetch(`${API}/google-calendar/events`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          if (res.ok) {
+            const saved = await res.json();
+            setGcalEvents(p => [...p, saved]);
+            setSyncMsg('✅ Indisponibilité créée — Google Calendar + Zcal bloqué');
+            setTimeout(() => setSyncMsg(''), 4000);
+          }
+        } catch { setSyncMsg('❌ Erreur création indispo'); }
+        setShowAddIndispo(false);
+        setNewIndispo(EMPTY_INDISPO);
+      }
+
+      async function createEvent() {
+        const c = clients.find(x => x.slug === newEvent.client_slug);
+        const payload = { ...newEvent, client_nom: c?.nom || '', source: 'pausekreyol' };
+        try {
+          const res = await fetch(`${API}/google-calendar/events`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          if (res.ok) { setGcalEvents(p => [...p, await res.json()]); setSyncMsg('✅ Événement créé dans Google Calendar'); setTimeout(() => setSyncMsg(''), 3000); }
+        } catch {}
+        setShowAddEvent(false);
+        setNewEvent(EMPTY_EVENT);
+      }
+
+      async function deleteEvent(evt) {
+        if (!window.confirm(`Supprimer "${evt.titre}" de Google Calendar ?`)) return;
+        const gcalId = evt.gcal_id || evt.id?.replace('gcal_','');
+        if (gcalId && !String(gcalId).startsWith('gcal_') === false) {
+          await fetch(`${API}/google-calendar/events/${gcalId}`, { method: 'DELETE' }).catch(()=>{});
+        }
+        setGcalEvents(p => p.filter(e => e.id !== evt.id));
+      }
+
+      // Filtre events par mois affiché
+      const eventsThisMonth = gcalEvents.filter(e => {
+        if (!e.date) return false;
+        const d = new Date(e.date + 'T00:00:00');
+        return d.getMonth() === mois && d.getFullYear() === annee;
+      });
+      const indispos = gcalEvents.filter(e => e.is_indispo);
+      const zcalRdvs = gcalEvents.filter(e => e.source === 'google_calendar' && !e.is_indispo);
+      const today = new Date();
+      const todayStr = today.toISOString().slice(0,10);
+      const firstDayAdj = (new Date(annee, mois, 1).getDay() + 6) % 7;
+      const daysInMonth = new Date(annee, mois + 1, 0).getDate();
+
+      return (
+        <div>
+          {/* Header */}
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+            <div className="tabs" style={{ marginBottom:0 }}>
+              {[['calendrier','📅 Calendrier Google'], ['dispos','✅ Disponibilités'], ['rdvs',`📞 RDV Zcal (${zcalRdvs.length})`], ['guide','ℹ️ Configuration']].map(([k,l]) => (
+                <button key={k} className={`tab ${tab===k?'active':''}`} onClick={()=>setTab(k)}>{l}</button>
+              ))}
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              {syncMsg && <span style={{ fontSize:12, color:'var(--success)', alignSelf:'center' }}>{syncMsg}</span>}
+              <button className="btn" style={{ fontSize:12 }} onClick={syncGcal} disabled={syncing}>
+                {syncing ? '⏳ Sync...' : '🔄 Sync Google Calendar'}
+              </button>
+              <button className="btn" style={{ fontSize:12, background:'var(--danger-light)', color:'var(--danger)', borderColor:'var(--danger)30' }}
+                onClick={() => setShowAddIndispo(true)}>🚫 Indispo</button>
+              <button className="btn btn-primary" style={{ fontSize:12 }} onClick={() => setShowAddEvent(true)}>+ Événement</button>
+            </div>
+          </div>
+
+          {/* ── TAB CALENDRIER ── */}
+          {tab === 'calendrier' && (
+            <div>
+              {loading && <div style={{ textAlign:'center', padding:20, color:'var(--text3)' }}>⏳ Chargement Google Calendar...</div>}
+              {/* Nav mois */}
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+                <button className="btn" onClick={() => { if (mois===0){setMois(11);setAnnee(a=>a-1);}else setMois(m=>m-1); }}>←</button>
+                <div style={{ fontFamily:"'Josefin Sans',sans-serif", fontWeight:700, fontSize:15, color:'var(--pk-blue)' }}>{MOIS[mois]} {annee}</div>
+                <button className="btn" onClick={() => { if (mois===11){setMois(0);setAnnee(a=>a+1);}else setMois(m=>m+1); }}>→</button>
+              </div>
+              {/* Grille */}
+              <div className="card" style={{ padding:12 }}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2, marginBottom:4 }}>
+                  {JOURS.map(j => <div key={j} style={{ textAlign:'center', fontSize:10, fontWeight:700, color:'var(--text3)', padding:'3px 0' }}>{j}</div>)}
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2 }}>
+                  {Array(firstDayAdj).fill(null).map((_,i) => <div key={`e${i}`} style={{ minHeight:64 }} />)}
+                  {Array.from({length:daysInMonth},(_,i)=>i+1).map(d => {
+                    const ds = `${annee}-${String(mois+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                    const dayEvts = gcalEvents.filter(e => e.date === ds || (e.date <= ds && e.date_fin >= ds));
+                    const isToday = ds === todayStr;
+                    const isWeekend = (new Date(ds+'T00:00:00').getDay() + 6) % 7 >= 5;
+                    const hasIndispo = dayEvts.some(e => e.is_indispo);
+                    return (
+                      <div key={d} style={{ minHeight:64, padding:'3px 4px', borderRadius:6, background: hasIndispo ? '#FFF0F0' : isWeekend ? '#FFF8F0' : 'var(--surface)', border: isToday ? '2px solid var(--pk-blue)' : '1px solid var(--border)' }}>
+                        <div style={{ fontSize:11, fontWeight:isToday?700:400, color:isToday?'var(--pk-blue)':isWeekend?'var(--pk-orange)':'var(--text2)', marginBottom:2 }}>{d}</div>
+                        {dayEvts.slice(0,3).map((e,i) => (
+                          <div key={i} title={e.titre} style={{ fontSize:9, padding:'1px 3px', borderRadius:3, marginBottom:1, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis', background: e.is_indispo ? '#FFEBEE' : e.couleur+'20', color: e.is_indispo ? '#C62828' : e.couleur || 'var(--pk-blue)', fontWeight:500 }}>
+                            {e.is_indispo ? '🚫' : '●'} {e.titre}
+                          </div>
+                        ))}
+                        {dayEvts.length > 3 && <div style={{ fontSize:9, color:'var(--text3)' }}>+{dayEvts.length-3}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* Liste du mois */}
+              {eventsThisMonth.length > 0 && (
+                <div className="card" style={{ marginTop:12 }}>
+                  <div className="card-header"><div className="card-title">Événements — {MOIS[mois]} {annee}</div></div>
+                  {eventsThisMonth.sort((a,b)=>a.date.localeCompare(b.date)).map((e,i) => (
+                    <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px solid var(--border)' }}>
+                      <div style={{ width:36, height:36, borderRadius:6, background: e.is_indispo ? '#FFEBEE' : (e.couleur||'var(--pk-blue)')+'20', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, flexShrink:0 }}>
+                        {e.is_indispo ? '🚫' : e.source==='google_calendar' ? '📅' : '✏️'}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:500 }}>{e.titre}</div>
+                        <div style={{ fontSize:11, color:'var(--text3)' }}>
+                          {e.date}{e.date_fin && e.date_fin !== e.date ? ` → ${e.date_fin}` : ''}
+                          {e.client && <span style={{ color:'var(--pk-blue)', marginLeft:6 }}>· {e.client}</span>}
+                          {e.source === 'google_calendar' && <span style={{ marginLeft:6, background:'#E8F5E9', color:'#2E7D32', padding:'1px 5px', borderRadius:6, fontSize:9, fontWeight:700 }}>GCAL</span>}
+                          {e.is_indispo && <span style={{ marginLeft:6, background:'#FFEBEE', color:'#C62828', padding:'1px 5px', borderRadius:6, fontSize:9, fontWeight:700 }}>INDISPO → ZCAL BLOQUÉ</span>}
+                        </div>
+                      </div>
+                      <button onClick={() => deleteEvent(e)} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text3)', fontSize:14, padding:'2px 6px' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── TAB DISPONIBILITÉS ── */}
+          {tab === 'dispos' && (
+            <div>
+              <div className="card" style={{ marginBottom:14, background:'var(--pk-blue-light)', border:'1px solid var(--pk-blue)20', padding:'12px 16px' }}>
+                <div style={{ fontSize:13, color:'var(--pk-blue)', fontWeight:600 }}>Comment fonctionnent les disponibilités</div>
+                <div style={{ fontSize:12, color:'var(--text2)', marginTop:6 }}>
+                  Zcal lit directement ton Google Calendar pour afficher les créneaux disponibles.
+                  Pour bloquer un créneau dans Zcal, crée une <strong>indisponibilité</strong> ici → l'event est envoyé à Google Calendar avec le statut "Occupé" (Busy) → Zcal le détecte et masque automatiquement le créneau.
+                </div>
+              </div>
+
+              {/* Indisponibilités actives */}
+              <div className="card">
+                <div className="card-header">
+                  <div><div className="card-title">🚫 Indisponibilités ({indispos.length})</div>
+                    <div className="card-subtitle">Ces créneaux sont bloqués dans Zcal via Google Calendar</div>
+                  </div>
+                  <button className="btn btn-primary" style={{ fontSize:11 }} onClick={() => setShowAddIndispo(true)}>+ Indispo</button>
+                </div>
+                {indispos.length === 0
+                  ? <div className="empty"><div className="empty-text">Aucune indisponibilité configurée. Zcal affiche tous vos créneaux libres.</div></div>
+                  : indispos.sort((a,b) => a.date.localeCompare(b.date)).filter(e => e.date >= todayStr).map((e,i) => (
+                    <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
+                      <div style={{ width:40, height:40, borderRadius:8, background:'#FFEBEE', color:'#C62828', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>🚫</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600 }}>{e.titre}</div>
+                        <div style={{ fontSize:11, color:'var(--text3)' }}>
+                          {e.date}{e.date_fin && e.date_fin !== e.date ? ` → ${e.date_fin}` : ''}
+                          {e.client && <span style={{ color:'var(--pk-blue)', marginLeft:6 }}>· {e.client}</span>}
+                        </div>
+                        <div style={{ fontSize:10, marginTop:2 }}>
+                          <span style={{ background:'#FFEBEE', color:'#C62828', padding:'1px 6px', borderRadius:6, fontWeight:700 }}>ZCAL BLOQUÉ</span>
+                          {e.source === 'google_calendar' && <span style={{ marginLeft:4, background:'#E8F5E9', color:'#2E7D32', padding:'1px 6px', borderRadius:6, fontWeight:700, fontSize:9 }}>SYNC GOOGLE CAL</span>}
+                        </div>
+                      </div>
+                      <button onClick={() => deleteEvent(e)} style={{ background:'none', border:'1px solid var(--danger)30', borderRadius:6, cursor:'pointer', color:'var(--danger)', fontSize:12, padding:'3px 8px' }}>Supprimer</button>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          )}
+
+          {/* ── TAB RDV ZCAL ── */}
+          {tab === 'rdvs' && (
+            <div>
+              <div className="card" style={{ marginBottom:12, padding:'10px 14px', background:'var(--success-light)', border:'1px solid var(--success)20' }}>
+                <div style={{ fontSize:12, color:'var(--success)', fontWeight:600 }}>
+                  ✅ Les RDV pris via Zcal apparaissent automatiquement dans ton Google Calendar et sont synchronisés ici après une sync.
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-header">
+                  <div className="card-title">📞 RDV Zcal synchronisés</div>
+                  <button className="btn" style={{ fontSize:11 }} onClick={syncGcal} disabled={syncing}>{syncing ? '⏳' : '🔄 Actualiser'}</button>
+                </div>
+                {zcalRdvs.length === 0
+                  ? <div className="empty"><div className="empty-text">Aucun RDV détecté. Cliquez "🔄 Sync Google Calendar" pour charger les events.</div></div>
+                  : zcalRdvs.sort((a,b) => a.date.localeCompare(b.date)).map((e,i) => (
+                    <div key={i} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
+                      <div style={{ width:40, height:40, borderRadius:8, background:'var(--success-light)', color:'var(--success)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>📞</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600 }}>{e.titre}</div>
+                        <div style={{ fontSize:11, color:'var(--text3)' }}>
+                          {e.date}{e.date_fin && e.date_fin !== e.date ? ` → ${e.date_fin}` : ''}
+                          {e.client && <span style={{ color:'var(--pk-blue)', marginLeft:6 }}>· {e.client}</span>}
+                        </div>
+                        {e.lieu && <div style={{ fontSize:11, color:'var(--text3)' }}>📍 {e.lieu}</div>}
+                        {e.description && <div style={{ fontSize:11, color:'var(--text2)', fontStyle:'italic', marginTop:2 }}>{e.description.slice(0,100)}</div>}
+                      </div>
+                      <span style={{ background:'var(--success-light)', color:'var(--success)', padding:'3px 8px', borderRadius:8, fontSize:10, fontWeight:700, flexShrink:0 }}>RDV</span>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          )}
+
+          {/* ── TAB GUIDE ── */}
+          {tab === 'guide' && (
+            <div>
+              <div className="card" style={{ marginBottom:14 }}>
+                <div className="card-header"><div className="card-title">⚙️ Architecture Zcal × Google Calendar × PauseKreyol</div></div>
+                {[
+                  { step:'1', titre:'Zcal prend les RDV', desc:'Zcal lit ton Google Calendar pour afficher tes disponibilités. Chaque RDV pris via Zcal est automatiquement ajouté dans Google Calendar.', status:'✅ Automatique' },
+                  { step:'2', titre:'PauseKreyol lit Google Calendar', desc:'En cliquant "🔄 Sync", PauseKreyol récupère tous les events de ton Google Calendar (RDV Zcal + events culturels + indisponibilités).', status:'✅ Via scope calendar' },
+                  { step:'3', titre:'Bloquer Zcal avec une Indispo', desc:'Crée une "🚫 Indispo" ici → l\'event est créé dans Google Calendar avec statut "Occupé" → Zcal détecte automatiquement ce créneau comme indisponible.', status:'✅ Sync descendante' },
+                  { step:'4', titre:'Régénérer le token OAuth', desc:'Le scope Google Calendar doit être autorisé dans le token OAuth. Si la sync échoue, il faut régénérer le refresh_token avec le scope "calendar" ajouté.', status:'⚠️ Vérifier en prod' },
+                  { step:'5', titre:'Calendrier Google Agenda perso', desc:'Pour synchroniser un agenda perso (indispos perso), configurer GOOGLE_CALENDAR_ID avec l\'ID de cet agenda dans les variables d\'environnement Railway.', status:'🔧 Config Railway' },
+                ].map(({step, titre, desc, status}) => (
+                  <div key={step} style={{ display:'flex', gap:12, padding:'12px 0', borderBottom:'1px solid var(--border)' }}>
+                    <div style={{ width:28, height:28, borderRadius:'50%', background:'var(--pk-blue)', color:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, flexShrink:0 }}>{step}</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, fontWeight:600, marginBottom:3 }}>{titre}</div>
+                      <div style={{ fontSize:12, color:'var(--text2)' }}>{desc}</div>
+                    </div>
+                    <span style={{ fontSize:11, fontWeight:600, color:'var(--success)', flexShrink:0, alignSelf:'center', whiteSpace:'nowrap' }}>{status}</span>
+                  </div>
+                ))}
+                <div style={{ marginTop:14, padding:'10px 12px', background:'var(--warn-light)', borderRadius:8, fontSize:12, color:'var(--warn)' }}>
+                  <strong>Variable env à ajouter dans Railway :</strong><br/>
+                  <code>GOOGLE_CALENDAR_ID = primary</code> (ou l'ID d'un agenda secondaire)<br/>
+                  <code>GMAIL_REFRESH_TOKEN</code> doit être régénéré avec le scope <code>calendar</code> en plus de <code>drive</code> et <code>gmail</code>.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── MODAL INDISPONIBILITÉ ── */}
+          {showAddIndispo && (
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowAddIndispo(false)}>
+              <div className="modal" style={{ maxWidth:480 }}>
+                <div className="modal-title">🚫 Créer une indisponibilité</div>
+                <div style={{ padding:'8px 12px', background:'#FFEBEE', borderRadius:8, marginBottom:14, fontSize:12, color:'#C62828' }}>
+                  Ce créneau sera marqué "Occupé" dans Google Calendar → Zcal le bloquera automatiquement.
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Motif *</label>
+                  <input className="form-input" value={newIndispo.titre} onChange={e => setNewIndispo(p=>({...p,titre:e.target.value}))} placeholder="Ex: Formation, Congés, RDV personnel..." />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date début *</label>
+                    <input className="form-input" type="date" value={newIndispo.date} onChange={e => setNewIndispo(p=>({...p,date:e.target.value,date_fin:p.date_fin||e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date fin</label>
+                    <input className="form-input" type="date" value={newIndispo.date_fin} onChange={e => setNewIndispo(p=>({...p,date_fin:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label" style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <input type="checkbox" checked={newIndispo.all_day} onChange={e => setNewIndispo(p=>({...p,all_day:e.target.checked}))} />
+                    Journée entière
+                  </label>
+                </div>
+                {!newIndispo.all_day && (
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">Heure début</label>
+                      <input className="form-input" type="time" value={newIndispo.heure_debut} onChange={e => setNewIndispo(p=>({...p,heure_debut:e.target.value}))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Heure fin</label>
+                      <input className="form-input" type="time" value={newIndispo.heure_fin} onChange={e => setNewIndispo(p=>({...p,heure_fin:e.target.value}))} />
+                    </div>
+                  </div>
+                )}
+                <div className="form-group">
+                  <label className="form-label">Client associé (optionnel)</label>
+                  <select className="form-input" value={newIndispo.client_slug} onChange={e => setNewIndispo(p=>({...p,client_slug:e.target.value}))}>
+                    <option value="">— Aucun —</option>
+                    {clients.filter(c=>!c.archived).map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
+                  </select>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => { setShowAddIndispo(false); setNewIndispo(EMPTY_INDISPO); }}>Annuler</button>
+                  <button className="btn btn-primary" style={{ background:'var(--danger)', borderColor:'var(--danger)' }} onClick={createIndispo} disabled={!newIndispo.titre || !newIndispo.date}>
+                    🚫 Bloquer dans Zcal →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── MODAL NOUVEL ÉVÉNEMENT ── */}
+          {showAddEvent && (
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowAddEvent(false)}>
+              <div className="modal" style={{ maxWidth:460 }}>
+                <div className="modal-title">📅 Ajouter un événement</div>
+                <div className="form-group">
+                  <label className="form-label">Titre *</label>
+                  <input className="form-input" value={newEvent.titre} onChange={e => setNewEvent(p=>({...p,titre:e.target.value}))} placeholder="Intitulé de l'événement" />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date début *</label>
+                    <input className="form-input" type="date" value={newEvent.date} onChange={e => setNewEvent(p=>({...p,date:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date fin</label>
+                    <input className="form-input" type="date" value={newEvent.date_fin} onChange={e => setNewEvent(p=>({...p,date_fin:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Type</label>
+                    <select className="form-input" value={newEvent.type} onChange={e => setNewEvent(p=>({...p,type:e.target.value}))}>
+                      <option value="culturel">Culturel</option>
+                      <option value="formalites">Formalités</option>
+                      <option value="reunion">Réunion</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Client</label>
+                    <select className="form-input" value={newEvent.client_slug} onChange={e => setNewEvent(p=>({...p,client_slug:e.target.value}))}>
+                      <option value="">— Aucun —</option>
+                      {clients.filter(c=>!c.archived).map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => setShowAddEvent(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={createEvent} disabled={!newEvent.titre || !newEvent.date}>Créer dans Google Calendar →</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // MODULE ZCAL & DISPONIBILITÉS
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    function ZcalView({ clients }) {
+      const [tab, setTab] = useState('rdvs');
+      const [gcalEvents, setGcalEvents] = useState([]);
+      const [indispos, setIndispos] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [syncing, setSyncing] = useState(false);
+      const [syncMsg, setSyncMsg] = useState('');
+      const [showAddIndispo, setShowAddIndispo] = useState(false);
+      const [newIndispo, setNewIndispo] = useState({
+        titre: 'Indisponible', date_debut: '', date_fin: '', heure_debut: '', heure_fin: '', notes: '', couleur_id: '11'
+      });
+
+      const COULEURS_GCAL = [
+        { id: '11', label: 'Tomato (rouge)', hex: '#D50000' },
+        { id: '4',  label: 'Flamingo (rose)', hex: '#E67C73' },
+        { id: '6',  label: 'Tangerine (orange)', hex: '#F4511E' },
+        { id: '5',  label: 'Banana (jaune)', hex: '#F6BF26' },
+        { id: '2',  label: 'Sage (vert clair)', hex: '#33B679' },
+        { id: '10', label: 'Basil (vert)', hex: '#0B8043' },
+        { id: '7',  label: 'Peacock (bleu)', hex: '#039BE5' },
+        { id: '9',  label: 'Blueberry (bleu)', hex: '#3F51B5' },
+        { id: '3',  label: 'Lavender (violet)', hex: '#7986CB' },
+        { id: '8',  label: 'Graphite (gris)', hex: '#616161' },
+      ];
+
+      useEffect(() => {
+        loadIndispos();
+        loadGcalEvents();
+      }, []);
+
+      async function loadGcalEvents() {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API}/gcal/events?days_ahead=60&days_back=7`);
+          const d = await res.json();
+          setGcalEvents(d.events || []);
+          if (d.message) setSyncMsg(d.message);
+        } catch { setSyncMsg('Erreur de connexion'); }
+        setLoading(false);
+      }
+
+      async function loadIndispos() {
+        try {
+          const res = await fetch(`${API}/gcal/indisponibilites`);
+          const d = await res.json();
+          setIndispos(Array.isArray(d) ? d : []);
+        } catch {}
+      }
+
+      async function syncGcal() {
+        setSyncing(true);
+        setSyncMsg('⏳ Synchronisation en cours...');
+        try {
+          const res = await fetch(`${API}/gcal/sync`);
+          const d = await res.json();
+          if (d.error) setSyncMsg(`⚠️ ${d.error}`);
+          else setSyncMsg(`✅ ${d.synced} nouveau(x) event(s) récupérés de Google Calendar`);
+          loadGcalEvents();
+        } catch { setSyncMsg('❌ Erreur de synchronisation'); }
+        setSyncing(false);
+        setTimeout(() => setSyncMsg(''), 5000);
+      }
+
+      async function addIndispo() {
+        if (!newIndispo.date_debut) return;
+        try {
+          const res = await fetch(`${API}/gcal/indisponibilite`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newIndispo)
+          });
+          if (res.ok) {
+            const saved = await res.json();
+            setIndispos(p => [...p, saved]);
+            setSyncMsg('✅ Indisponibilité créée et envoyée à Google Calendar → Zcal la verra automatiquement');
+            setTimeout(() => setSyncMsg(''), 5000);
+          }
+        } catch { setSyncMsg('❌ Erreur création indisponibilité'); }
+        setShowAddIndispo(false);
+        setNewIndispo({ titre: 'Indisponible', date_debut: '', date_fin: '', heure_debut: '', heure_fin: '', notes: '', couleur_id: '11' });
+      }
+
+      async function deleteIndispo(id) {
+        if (!window.confirm('Supprimer cette indisponibilité ? Elle sera aussi supprimée de Google Calendar.')) return;
+        try {
+          await fetch(`${API}/gcal/indisponibilite/${id}`, { method: 'DELETE' });
+          setIndispos(p => p.filter(x => x.id !== id));
+        } catch {}
+      }
+
+      const rdvsZcal = gcalEvents.filter(e => e.is_zcal || e.source === 'zcal');
+      const rdvsNormaux = gcalEvents.filter(e => !e.is_zcal);
+      const today = new Date().toISOString().slice(0,10);
+      const prochains = gcalEvents.filter(e => e.date >= today).sort((a,b) => a.date.localeCompare(b.date)).slice(0, 10);
+
+      return (
+        <div>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div className="tabs" style={{ marginBottom: 0 }}>
+              {[
+                ['rdvs',    `📅 RDVs & Agenda (${gcalEvents.length})`],
+                ['indispos', `🚫 Indisponibilités (${indispos.length})`],
+                ['infos',   'ℹ️ Comment ça marche'],
+              ].map(([k, l]) => (
+                <button key={k} className={`tab ${tab===k?'active':''}`} onClick={() => setTab(k)}>{l}</button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {syncMsg && <span style={{ fontSize: 12, color: 'var(--success)', alignSelf: 'center', maxWidth: 300 }}>{syncMsg}</span>}
+              <button className="btn" style={{ fontSize: 12 }} onClick={syncGcal} disabled={syncing}>
+                {syncing ? '⏳ Sync...' : '🔄 Sync Google Calendar'}
+              </button>
+              {tab === 'indispos' && (
+                <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowAddIndispo(true)}>
+                  + Bloquer un créneau
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ══ AGENDA / RDVs ══ */}
+          {tab === 'rdvs' && (
+            <div>
+              {/* Bandeau info Zcal */}
+              <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--pk-blue-light)', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <span style={{ fontSize: 20 }}>📅</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--pk-blue)' }}>Sync via Google Calendar</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                    Les RDVs pris via Zcal apparaissent dans votre Google Calendar → PauseKreyol les lit ici.
+                    Les indisponibilités créées ici sont poussées dans Google Cal → Zcal les bloque automatiquement.
+                  </div>
+                </div>
+              </div>
+
+              {loading && <div className="empty"><div className="empty-text">⏳ Chargement du calendrier Google...</div></div>}
+              {!loading && gcalEvents.length === 0 && (
+                <div className="card">
+                  <div className="empty">
+                    <div className="empty-icon">📅</div>
+                    <div className="empty-text">Aucun event récupéré depuis Google Calendar.</div>
+                    <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>
+                      Cliquez "🔄 Sync Google Calendar" pour importer vos événements.
+                      {syncMsg && <div style={{ marginTop: 4, color: 'var(--warn)' }}>{syncMsg}</div>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* RDVs Zcal identifiés */}
+              {rdvsZcal.length > 0 && (
+                <div className="card" style={{ marginBottom: 12 }}>
+                  <div className="card-header">
+                    <div className="card-title">🔗 RDVs Zcal</div>
+                    <span style={{ fontSize: 11, background: 'var(--success-light)', color: 'var(--success)', padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>{rdvsZcal.length} RDV(s)</span>
+                  </div>
+                  {rdvsZcal.map((e, i) => (
+                    <div key={e.id || i} style={{ display: 'flex', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }}>
+                      <div style={{ width: 44, textAlign: 'center', flexShrink: 0 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--success)' }}>{e.date?.split('-')[2]}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)' }}>{['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][parseInt(e.date?.split('-')[1])-1]}</div>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{e.titre}</div>
+                        {(e.heure_debut || e.heure_fin) && <div style={{ fontSize: 11, color: 'var(--text3)' }}>🕐 {e.heure_debut}{e.heure_fin ? ` → ${e.heure_fin}` : ''}</div>}
+                        {e.location && <div style={{ fontSize: 11, color: 'var(--text3)' }}>📍 {e.location}</div>}
+                      </div>
+                      <span style={{ fontSize: 10, background: 'var(--success-light)', color: 'var(--success)', padding: '2px 8px', borderRadius: 8, fontWeight: 600, flexShrink: 0 }}>Zcal</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Prochains events Google Cal */}
+              {prochains.filter(e => !e.is_zcal).length > 0 && (
+                <div className="card">
+                  <div className="card-header"><div className="card-title">🗓 Agenda Google Calendar</div></div>
+                  {prochains.filter(e => !e.is_zcal).map((e, i) => (
+                    <div key={e.id || i} style={{ display: 'flex', gap: 12, padding: '7px 0', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+                      <div style={{ width: 44, textAlign: 'center', flexShrink: 0 }}>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--pk-blue)' }}>{e.date?.split('-')[2]}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)' }}>{['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][parseInt(e.date?.split('-')[1])-1]}</div>
+                      </div>
+                      <div style={{ flex: 1, fontSize: 12 }}>
+                        <span style={{ fontWeight: 500 }}>{e.titre}</span>
+                        {e.heure_debut && <span style={{ color: 'var(--text3)', marginLeft: 8 }}>{e.heure_debut}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ INDISPONIBILITÉS ══ */}
+          {tab === 'indispos' && (
+            <div>
+              <div style={{ marginBottom: 12, padding: '10px 14px', background: '#FFF3E0', borderRadius: 8, borderLeft: '3px solid var(--pk-orange)', fontSize: 12, color: '#5D4037' }}>
+                <strong>🔗 Sync automatique avec Zcal :</strong> Les créneaux bloqués ici sont créés dans votre Google Calendar.
+                Zcal vérifie Google Cal pour les indispos → il bloquera automatiquement ces créneaux pour les réservations.
+              </div>
+
+              <div className="card">
+                {indispos.length === 0 ? (
+                  <div className="empty">
+                    <div className="empty-icon">🚫</div>
+                    <div className="empty-text">Aucun créneau bloqué. Cliquez "+ Bloquer un créneau".</div>
+                  </div>
+                ) : indispos.sort((a,b) => a.date?.localeCompare(b.date||'')).map(ind => (
+                  <div key={ind.id} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }}>
+                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: COULEURS_GCAL.find(c => c.id === ind.couleur_id)?.hex || '#D50000', marginTop: 4, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{ind.titre}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                        {ind.date}
+                        {ind.date_fin && ind.date_fin !== ind.date && ` → ${ind.date_fin}`}
+                        {ind.heure_debut && ` · ${ind.heure_debut}${ind.heure_fin ? ` → ${ind.heure_fin}` : ''}`}
+                      </div>
+                      {ind.notes && <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>{ind.notes}</div>}
+                      <div style={{ fontSize: 10, color: ind.gcal_id ? 'var(--success)' : 'var(--warn)', marginTop: 2 }}>
+                        {ind.gcal_id ? '✅ Sync Google Calendar' : '⏳ En attente de sync Google Cal'}
+                      </div>
+                    </div>
+                    <button onClick={() => deleteIndispo(ind.id)} style={{ background: 'none', border: '1px solid var(--danger)40', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer', color: 'var(--danger)', flexShrink: 0 }}>🗑</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ══ INFOS ══ */}
+          {tab === 'infos' && (
+            <div className="card">
+              <div className="card-header"><div className="card-title">ℹ️ Comment fonctionne la sync Zcal</div></div>
+              {[
+                ['🔗 Architecture de sync', 'Zcal n\'a pas d\'API publique. La connexion passe par votre Google Calendar, que Zcal peut lire. PauseKreyol pousse les événements dans Google Cal → Zcal les voit automatiquement.'],
+                ['🚫 Bloquer un créneau (descendant → Zcal)', 'Créez une indisponibilité ici → PauseKreyol la crée dans Google Calendar → Zcal lit Google Cal et bloque le créneau pour les réservations.'],
+                ['📅 RDV pris via Zcal (montant → PauseKreyol)', 'Quand quelqu\'un réserve via Zcal, l\'event apparaît dans votre Google Calendar. Cliquez "🔄 Sync Google Calendar" pour importer ces RDVs dans PauseKreyol.'],
+                ['🔄 Sync automatique', 'La sync est déclenchée manuellement ou automatiquement toutes les heures (à configurer dans les paramètres Railway).'],
+                ['📱 Google Agenda perso', 'Vos events Google Cal personnels (hors PauseKreyol) apparaissent aussi dans l\'onglet "Agenda" après une sync. Zcal les lit aussi pour bloquer vos créneaux perso.'],
+                ['🎯 Prérequis Zcal', 'Dans Zcal → Settings → Calendar connections → connecter votre Google Calendar (contact@pausekreyol.fr). C\'est ce qui crée le pont.'],
+              ].map(([titre, desc]) => (
+                <div key={titre} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>{titre}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>{desc}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Modal ajout indispo */}
+          {showAddIndispo && (
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowAddIndispo(false)}>
+              <div className="modal" style={{ maxWidth: 480 }}>
+                <div className="modal-title">🚫 Bloquer un créneau</div>
+                <div className="form-group">
+                  <label className="form-label">Titre</label>
+                  <input className="form-input" value={newIndispo.titre} onChange={e => setNewIndispo(p=>({...p,titre:e.target.value}))} placeholder="Indisponible, Congés, Formation..." />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date début *</label>
+                    <input className="form-input" type="date" value={newIndispo.date_debut} onChange={e => setNewIndispo(p=>({...p,date_debut:e.target.value,date_fin:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date fin</label>
+                    <input className="form-input" type="date" value={newIndispo.date_fin} onChange={e => setNewIndispo(p=>({...p,date_fin:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Heure début (optionnel)</label>
+                    <input className="form-input" type="time" value={newIndispo.heure_debut} onChange={e => setNewIndispo(p=>({...p,heure_debut:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Heure fin</label>
+                    <input className="form-input" type="time" value={newIndispo.heure_fin} onChange={e => setNewIndispo(p=>({...p,heure_fin:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Couleur Google Calendar</label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                    {COULEURS_GCAL.map(c => (
+                      <button key={c.id} onClick={() => setNewIndispo(p=>({...p,couleur_id:c.id}))}
+                        style={{ width: 28, height: 28, borderRadius: '50%', background: c.hex, border: newIndispo.couleur_id === c.id ? '3px solid var(--pk-blue)' : '2px solid transparent', cursor: 'pointer' }}
+                        title={c.label} />
+                    ))}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Notes (optionnel)</label>
+                  <input className="form-input" value={newIndispo.notes} onChange={e => setNewIndispo(p=>({...p,notes:e.target.value}))} placeholder="Vacances, Formation, RDV perso..." />
+                </div>
+                <div style={{ fontSize: 11, padding: '6px 10px', background: 'var(--pk-blue-light)', borderRadius: 6, color: 'var(--pk-blue)', marginBottom: 12 }}>
+                  📅 Cet événement sera créé dans votre Google Calendar → Zcal le lira et bloquera le créneau automatiquement
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => setShowAddIndispo(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={addIndispo} disabled={!newIndispo.date_debut}>Bloquer le créneau →</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
     function App() {
       // ── Auth ────────────────────────────────────────────────────────────────
       const [authed, setAuthed] = useState(() => sessionStorage.getItem('pk_auth') === '1');
@@ -9220,12 +10020,13 @@ function EmailingView() {
         { key: 'rh', label: '👥 Ressources Humaines', icon: icons.rh, section: 'gestion' },
         { key: 'audit', label: '🔍 Audits', icon: icons.audit, section: 'gestion' },
         { key: 'calendrier', label: 'Calendriers', icon: icons.calendrier, section: 'outils' },
+        { key: 'zcal', label: '📅 Zcal & Dispos', icon: icons.zcal, section: 'outils' },
         { key: 'annuaire', label: 'Annuaire', icon: icons.annuaire, section: 'outils' },
         { key: 'emailing', label: 'Emailing', icon: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M2.5 3.5L8 7.5L13.5 3.5" /><rect x="1" y="2" width="14" height="12" rx="1" /></svg>, section: 'outils' },
         { key: 'comm', label: 'Comm & Assets', icon: icons.comm, section: 'outils' },
       ];
 
-      const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', subventions: 'Subventions', rh: 'Ressources Humaines', audit: 'Audits', annuaire: 'Annuaire', calendrier: 'Calendriers', emailing: 'Gestion Emailing', comm: 'Communication' };
+      const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', subventions: 'Subventions', rh: 'Ressources Humaines', audit: 'Audits', zcal: 'Zcal & Disponibilités', annuaire: 'Annuaire', calendrier: 'Calendriers', emailing: 'Gestion Emailing', comm: 'Communication' };
 
       return (
         <div className="app">
@@ -9309,8 +10110,9 @@ function EmailingView() {
               {view === 'subventions' && <SubventionsView clients={data?.clients || []} />}
           {view === 'rh' && <RHView clients={data?.clients || []} />}
           {view === 'audit' && <AuditView clients={data?.clients || []} />}
+          {view === 'zcal' && <ZcalView clients={data?.clients || []} />}
               {view === 'annuaire' && <AnnuaireView />}
-              {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} />}
+              {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} onSwitchToZcal={() => setView('zcal')} />}
               {view === 'emailing' && <EmailingView />}
               {view === 'comm' && <CommView clients={data?.clients || []} />}
             </main>
