@@ -1020,21 +1020,6 @@ def _save_comm(data: dict):
         except Exception as e:
             logger.warning(f"Drive sync comm.json : {e}")
 
-def _save_campaigns(campaigns: list):
-    CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CAMPAIGNS_FILE.write_text(json.dumps(campaigns, ensure_ascii=False, indent=2))
-    if os.getenv("ENV") == "production":
-        try:
-            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
-            root_id = get_root_folder_id()
-            file_id = drive_find_file("campaigns.json", root_id)
-            if file_id:
-                drive_update_json(file_id, campaigns)
-            else:
-                drive_upload_json(campaigns, "campaigns.json", root_id)
-        except Exception as e:
-            logger.warning(f"Drive sync campaigns.json : {e}")
-
 def _save_tasks(tasks: list):
     """Sauvegarde tasks.json localement et sur Drive."""
     TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
