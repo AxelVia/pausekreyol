@@ -4,6 +4,7 @@ Lit la FICHE_CLIENT_V2 et extrait toutes les données structurées.
 Détecte automatiquement V1 et V2 du template.
 """
 
+import io
 import logging
 from pathlib import Path
 from typing import Optional
@@ -330,6 +331,68 @@ def _parse_structure(wb, ttype) -> dict:
         "adresse_siege": _val(ws, "B12") if not is_sn else _val(ws, "B10"),
         "licence_type1": _val(ws, "E6") if not is_sn else None,
     }
+
+
+def parse_excel_bytes(content: bytes, filename: str = "") -> dict:
+    """
+    Parse un fichier Excel depuis son contenu binaire (sans sauvegarde sur disque).
+    Utilisé par la route /import/parse pour la prévisualisation avant création client.
+    Retourne le même format que parse_excel_client.
+    """
+    result = {
+        "type_fichier": "unknown",
+        "type_structure": "asso_france",
+        "client_data": {},
+        "projet_data": {},
+        "nb_champs": 0,
+        "champs_manquants": [],
+        "erreur": None,
+    }
+
+    try:
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+        ttype = detect_template_type(wb)
+        result["type_fichier"] = ttype
+
+        if ttype == "intake_v2":
+            client_data = parse_intake_v2(wb)
+        elif ttype == "intake_v1":
+            client_data = parse_intake_v1(wb)
+        elif ttype == "collecte_france":
+            client_data = _parse_collecte(wb, "ASSO_FRANCE", "asso_france")
+        elif ttype == "collecte_senegal":
+            client_data = _parse_collecte(wb, "SAS_SENEGAL", "sas_senegal")
+        elif ttype in ("structure_fr", "structure_sn"):
+            client_data = _parse_structure(wb, ttype)
+        else:
+            result["erreur"] = "Format non reconnu. Utilisez TEMPLATE_FICHE_CLIENT_V2.xlsx"
+            return result
+
+        result["type_structure"] = client_data.get("type_structure", "asso_france")
+        result["client_data"] = client_data
+        result["nb_champs"] = len([v for v in client_data.values() if v])
+
+        required = ["nom_officiel", "email_contact", "president"]
+        is_sn = result["type_structure"] == "sas_senegal"
+        required.append("ninea" if is_sn else "siret")
+        result["champs_manquants"] = [f for f in required if not client_data.get(f)]
+
+        cat = (client_data.get("categorie") or "").lower()
+        if "diffuseur" in cat and not client_data.get("licence_type1"):
+            result["champs_manquants"].append("licence_type1 (obligatoire pour diffuseur)")
+
+        domaines = (client_data.get("domaines_artistiques") or "").lower()
+        if any(x in domaines for x in ("écriture", "écrivain", "littérature")):
+            if not client_data.get("societe_droits"):
+                result["champs_manquants"].append("societe_droits (recommandé pour auteur)")
+
+        logger.info(f"parse_excel_bytes {ttype} : {result['nb_champs']} champs, {len(result['champs_manquants'])} manquants")
+
+    except Exception as e:
+        result["erreur"] = str(e)
+        logger.error(f"Erreur parse_excel_bytes ({filename}) : {e}")
+
+    return result
 
 
 def diff_with_existing(parsed: dict, existing_client_data: dict) -> dict:
