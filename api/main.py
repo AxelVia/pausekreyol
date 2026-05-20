@@ -68,7 +68,9 @@ def _check_relances_auto():
             if not f.get("date_echeance"):
                 continue
             try:
-                echeance = datetime.strptime(f["date_echeance"], "%d/%m/%Y").date()
+                echeance = datetime.strptime(
+                    _parse_date_fr(f["date_echeance"]), "%d/%m/%Y"
+                ).date()
             except Exception:
                 continue
             diff = (echeance - today).days
@@ -141,7 +143,9 @@ def _check_relances_auto():
             if not d.get("date_limite_signature"):
                 continue
             try:
-                limite = datetime.strptime(d["date_limite_signature"], "%d/%m/%Y").date()
+                limite = datetime.strptime(
+                    _parse_date_fr(d["date_limite_signature"]), "%d/%m/%Y"
+                ).date()
             except Exception:
                 continue
             diff = (limite - today).days
@@ -932,6 +936,89 @@ def root():
     return {"message": "PauseKreyol API", "version": "0.1.0", "docs": "/docs"}
 
 
+@app.get("/backups")
+def list_backups():
+    """Liste les backups JSON disponibles (5 derniers par fichier)."""
+    backup_dir = CLIENTS_DIR / ".backups"
+    if not backup_dir.exists():
+        return {"backups": []}
+    files = sorted(backup_dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    return {
+        "backups": [
+            {
+                "filename": f.name,
+                "size_kb": round(f.stat().st_size / 1024, 1),
+                "created_at": datetime.fromtimestamp(f.stat().st_mtime).strftime("%d/%m/%Y %H:%M:%S"),
+            }
+            for f in files[:50]
+        ]
+    }
+
+
+@app.post("/backups/restore/{filename}")
+def restore_backup(filename: str):
+    """
+    Restaure un backup JSON.
+    Le nom du fichier original est déduit du nom du backup (ex: tasks_20260520_142000.json → tasks.json).
+    """
+    backup_dir = CLIENTS_DIR / ".backups"
+    backup_path = backup_dir / filename
+    if not backup_path.exists():
+        raise HTTPException(status_code=404, detail="Backup non trouvé")
+
+    # Déduit le nom du fichier cible (partie avant le timestamp)
+    stem = filename.rsplit("_", 2)[0]  # ex: "tasks_20260520_142000" → "tasks"
+    target = CLIENTS_DIR / f"{stem}.json"
+
+    # Sauvegarde la version actuelle avant restauration
+    _backup_json(target)
+
+    shutil.copy2(backup_path, target)
+    logger.info(f"Restauration backup : {filename} → {target.name}")
+    return {"status": "restored", "target": target.name, "from": filename}
+
+
+# ── Backup JSON versioning ────────────────────────────────────────────────────
+
+def _backup_json(path: Path, max_backups: int = 5) -> None:
+    """
+    Sauvegarde une copie horodatée du fichier JSON avant écrasement.
+    Garde les `max_backups` versions les plus récentes.
+    Les backups sont stockés dans clients/.backups/ (ignoré par git).
+    """
+    if not path.exists():
+        return
+    try:
+        backup_dir = path.parent / ".backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        shutil.copy2(path, backup_dir / f"{path.stem}_{ts}.json")
+        # Supprime les anciens backups (garde les N derniers)
+        old = sorted(backup_dir.glob(f"{path.stem}_*.json"))
+        for obsolete in old[:-max_backups]:
+            obsolete.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning(f"Backup {path.name} impossible : {e}")
+
+
+# ── Normalisation des dates ────────────────────────────────────────────────────
+
+def _parse_date_fr(value: str) -> Optional[str]:
+    """
+    Accepte DD/MM/YYYY ou YYYY-MM-DD, retourne toujours DD/MM/YYYY.
+    Lève ValueError si le format n'est pas reconnu.
+    """
+    if not value:
+        return None
+    v = str(value).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(v, fmt).strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    raise ValueError(f"Format de date non reconnu : '{v}' (attendu DD/MM/YYYY ou YYYY-MM-DD)")
+
+
 # ── Routes tâches ─────────────────────────────────────────────────────────────
 
 TASKS_FILE = CLIENTS_DIR / "tasks.json"
@@ -946,6 +1033,7 @@ def _load_subventions() -> list:
     return []
 
 def _save_subventions(subventions: list):
+    _backup_json(SUBVENTIONS_FILE)
     SUBVENTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
     SUBVENTIONS_FILE.write_text(json.dumps(subventions, ensure_ascii=False, indent=2))
     if os.getenv("ENV") == "production":
@@ -966,6 +1054,7 @@ def _load_annuaire() -> list:
     return []
 
 def _save_annuaire(annuaire: list):
+    _backup_json(ANNUAIRE_FILE)
     ANNUAIRE_FILE.parent.mkdir(parents=True, exist_ok=True)
     ANNUAIRE_FILE.write_text(json.dumps(annuaire, ensure_ascii=False, indent=2))
     if os.getenv("ENV") == "production":
@@ -986,6 +1075,7 @@ def _load_campaigns() -> list:
     return []
 
 def _save_campaigns(campaigns: list):
+    _backup_json(CAMPAIGNS_FILE)
     CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
     CAMPAIGNS_FILE.write_text(json.dumps(campaigns, ensure_ascii=False, indent=2))
     if os.getenv("ENV") == "production":
@@ -1020,8 +1110,16 @@ def _save_comm(data: dict):
         except Exception as e:
             logger.warning(f"Drive sync comm.json : {e}")
 
+def _load_tasks() -> list:
+    """Charge tasks.json."""
+    if TASKS_FILE.exists():
+        return json.loads(TASKS_FILE.read_text())
+    return []
+
+
 def _save_tasks(tasks: list):
     """Sauvegarde tasks.json localement et sur Drive."""
+    _backup_json(TASKS_FILE)
     TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     TASKS_FILE.write_text(json.dumps(tasks, ensure_ascii=False, indent=2))
     if os.getenv("ENV") == "production":
@@ -1038,11 +1136,37 @@ def _save_tasks(tasks: list):
 
 
 @app.get("/taches")
-def get_taches():
-    """Retourne toutes les tâches."""
-    if not TASKS_FILE.exists():
-        return []
-    return json.loads(TASKS_FILE.read_text())
+def get_taches(
+    page: int = 1,
+    per_page: int = 0,
+    done: Optional[bool] = None,
+    priorite: Optional[str] = None,
+    categorie: Optional[str] = None,
+):
+    """
+    Retourne les tâches.
+    Sans per_page (ou per_page=0) : retourne la liste complète (rétrocompat).
+    Avec per_page > 0 : retourne un objet paginé { total, page, per_page, total_pages, items }.
+    """
+    tasks = _load_tasks()
+    if done is not None:
+        tasks = [t for t in tasks if t.get("done") == done]
+    if priorite:
+        tasks = [t for t in tasks if t.get("priorite") == priorite]
+    if categorie:
+        tasks = [t for t in tasks if t.get("categorie") == categorie]
+    tasks_sorted = sorted(tasks, key=lambda x: x.get("created_at", ""), reverse=True)
+    if not per_page:
+        return tasks_sorted
+    total = len(tasks_sorted)
+    start = (page - 1) * per_page
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "items": tasks_sorted[start : start + per_page],
+    }
 
 
 @app.post("/taches")
@@ -2129,6 +2253,7 @@ def _load_devis() -> list:
 
 
 def _save_devis(devis: list):
+    _backup_json(DEVIS_FILE)
     DEVIS_FILE.parent.mkdir(parents=True, exist_ok=True)
     DEVIS_FILE.write_text(json.dumps(devis, ensure_ascii=False, indent=2))
     # Sync Drive
@@ -2152,6 +2277,7 @@ def _load_factures() -> list:
 
 
 def _save_factures(factures: list):
+    _backup_json(FACTURES_FILE)
     FACTURES_FILE.parent.mkdir(parents=True, exist_ok=True)
     FACTURES_FILE.write_text(json.dumps(factures, ensure_ascii=False, indent=2))
     if os.getenv("ENV") == "production":
@@ -2168,27 +2294,45 @@ def _save_factures(factures: list):
 
 
 def _next_numero_devis(client_slug: str = "") -> str:
-    """Numéro de devis par client : D{YEAR}-{CLIENT_INITIALS}-{N:03d}"""
+    """
+    Génère un numéro de devis unique : D{YEAR}-{INITIALS}-{N:03d}.
+    Utilise le MAX des numéros existants (pas le COUNT) pour éviter
+    les doublons après suppression d'un devis.
+    """
     year = datetime.now().year
     devis = _load_devis()
-    # Filtre par client si fourni, sinon global
-    if client_slug:
-        same = [d for d in devis if str(d.get("annee", "")) == str(year) and d.get("client_slug", "") == client_slug]
-        # Initiales du slug (3 chars)
-        initials = "".join(c.upper() for c in client_slug if c.isalpha())[:3] or "CLI"
-        n = len(same) + 1
-        return f"D{year}-{initials}-{n:03d}"
-    else:
-        this_year = [d for d in devis if str(d.get("annee", "")) == str(year)]
-        n = len(this_year) + 1
-        return f"D{year}-{n:03d}"
+    initials = "".join(c.upper() for c in client_slug if c.isalpha())[:3] or "PK"
+    prefix = f"D{year}-{initials}-"
+    nums = []
+    for d in devis:
+        num = str(d.get("numero", ""))
+        if num.startswith(prefix):
+            try:
+                nums.append(int(num[len(prefix):]))
+            except ValueError:
+                pass
+    n = max(nums, default=0) + 1
+    return f"{prefix}{n:03d}"
 
 
 def _next_numero_facture() -> str:
+    """
+    Génère un numéro de facture unique : FACTURE N°{YEAR}-{N:03d}-PK.
+    Utilise le MAX des numéros existants pour éviter les doublons.
+    """
     year = datetime.now().year
     factures = _load_factures()
-    this_year = [f for f in factures if str(f.get("annee", "")) == str(year)]
-    n = len(this_year) + 1
+    prefix = f"FACTURE N°{year}-"
+    nums = []
+    for f in factures:
+        num = str(f.get("numero", ""))
+        if num.startswith(prefix):
+            try:
+                part = num[len(prefix):].split("-")[0]
+                nums.append(int(part))
+            except (ValueError, IndexError):
+                pass
+    n = max(nums, default=0) + 1
     return f"FACTURE N°{year}-{n:03d}-PK"
 
 
@@ -2304,9 +2448,37 @@ def _create_facture_majoration(facture: dict) -> dict:
 # ── Routes devis ──────────────────────────────────────────────────────────────
 
 @app.get("/devis")
-def get_all_devis():
-    """Retourne tous les devis."""
-    return _load_devis()
+def get_all_devis(
+    page: int = 1,
+    per_page: int = 0,
+    statut: Optional[str] = None,
+    client_slug: Optional[str] = None,
+    annee: Optional[int] = None,
+):
+    """
+    Retourne les devis.
+    Sans per_page (ou per_page=0) : retourne la liste complète (rétrocompat).
+    Avec per_page > 0 : retourne un objet paginé { total, page, per_page, total_pages, items }.
+    """
+    devis = _load_devis()
+    if statut:
+        devis = [d for d in devis if d.get("statut") == statut]
+    if client_slug:
+        devis = [d for d in devis if d.get("client_slug") == client_slug]
+    if annee:
+        devis = [d for d in devis if str(d.get("annee", "")) == str(annee)]
+    devis_sorted = sorted(devis, key=lambda x: x.get("created_at", ""), reverse=True)
+    if not per_page:
+        return devis_sorted
+    total = len(devis_sorted)
+    start = (page - 1) * per_page
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "items": devis_sorted[start : start + per_page],
+    }
 
 
 @app.get("/devis/tarifs")
@@ -2643,9 +2815,37 @@ def delete_facture(facture_id: str):
     return {"status": "deleted"}
 
 @app.get("/factures")
-def get_all_factures():
-    """Retourne toutes les factures."""
-    return _load_factures()
+def get_all_factures(
+    page: int = 1,
+    per_page: int = 0,
+    statut: Optional[str] = None,
+    client_slug: Optional[str] = None,
+    annee: Optional[int] = None,
+):
+    """
+    Retourne les factures.
+    Sans per_page (ou per_page=0) : retourne la liste complète (rétrocompat).
+    Avec per_page > 0 : retourne un objet paginé { total, page, per_page, total_pages, items }.
+    """
+    factures = _load_factures()
+    if statut:
+        factures = [f for f in factures if f.get("statut") == statut]
+    if client_slug:
+        factures = [f for f in factures if f.get("client_slug") == client_slug]
+    if annee:
+        factures = [f for f in factures if str(f.get("annee", "")) == str(annee)]
+    factures_sorted = sorted(factures, key=lambda x: x.get("created_at", ""), reverse=True)
+    if not per_page:
+        return factures_sorted
+    total = len(factures_sorted)
+    start = (page - 1) * per_page
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "items": factures_sorted[start : start + per_page],
+    }
 
 
 @app.post("/factures")
@@ -3266,30 +3466,53 @@ def export_compta_xlsx():
 
     # ── Devis ──
     ws_d = wb.create_sheet("\U0001f4dd Devis")
-    dh = ["ANNÉE","N° DEVIS","CLIENT","ÉTAT","PRESTATION","PÉRIODE",
-          "DATE ENVOI","MONTANT (€)","ACOMPTE (€)","RETOUR SIGNÉ","N° FACTURE LIÉ","MONTANT FACTURÉ","NOTES"]
+    dh = ["ANNÉE", "N° DEVIS", "CLIENT", "ÉTAT", "PRESTATION", "PÉRIODE",
+          "DATE ENVOI", "MONTANT (€)", "ACOMPTE (€)", "RETOUR SIGNÉ",
+          "N° FACTURE LIÉ", "MONTANT FACTURÉ (€)", "NOTES"]
     hdr(ws_d, dh)
-    for d in sorted(devis_list, key=lambda x: str(x.get("annee","")), reverse=True):
-        prest = (d.get("prestations") or [{}])[0].get("description","")
-        ws_d.append(["",
-            d.get("annee",""), d.get("numero",""), d.get("client_nom",""),
-            d.get("statut","").upper(), prest, d.get("periode",""), d.get("date_envoi",""),
-            d.get("total_ht",0), d.get("acompte_montant",0), d.get("date_signature",""),
-            (d.get("factures_liees") or [""])[0], "", d.get("notes","")
+    for d in sorted(devis_list, key=lambda x: str(x.get("annee", "")), reverse=True):
+        prest = (d.get("prestations") or [{}])[0].get("description", "")
+        facture_liee = (d.get("factures_liees") or [""])[0]
+        # Montant facturé : somme des factures liées si disponible
+        montant_facture = d.get("total_ht", 0) if facture_liee else ""
+        ws_d.append([
+            "",                               # col A : vide (séparateur visuel)
+            d.get("annee", ""),               # col B : ANNÉE
+            d.get("numero", ""),              # col C : N° DEVIS
+            d.get("client_nom", ""),          # col D : CLIENT
+            d.get("statut", "").upper(),      # col E : ÉTAT
+            prest,                            # col F : PRESTATION
+            d.get("periode", ""),             # col G : PÉRIODE
+            d.get("date_envoi", ""),          # col H : DATE ENVOI
+            d.get("total_ht", 0),             # col I : MONTANT
+            d.get("acompte_montant", 0),      # col J : ACOMPTE
+            d.get("date_signature", ""),      # col K : RETOUR SIGNÉ
+            facture_liee,                     # col L : N° FACTURE LIÉ
+            montant_facture,                  # col M : MONTANT FACTURÉ
+            d.get("notes", ""),               # col N : NOTES
         ])
 
     # ── Factures ──
     ws_f = wb.create_sheet("\U0001f9fe Factures")
-    fh = ["ANNÉE","N° FACTURE","CLIENT","ÉTAT","PRESTATION","PÉRIODE","DEVIS LIÉ",
-          "MONTANT (€)","DATE ENVOI","DATE PAIEMENT","SOLDE DÛ (€)","NOTES"]
+    fh = ["ANNÉE", "N° FACTURE", "CLIENT", "ÉTAT", "PRESTATION", "PÉRIODE", "DEVIS LIÉ",
+          "MONTANT (€)", "DATE ENVOI", "DATE PAIEMENT", "SOLDE DÛ (€)", "NOTES"]
     hdr(ws_f, fh)
-    for f in sorted(factures_list, key=lambda x: str(x.get("annee","")), reverse=True):
-        prest = (f.get("prestations") or [{}])[0].get("description","")
-        ws_f.append(["",
-            f.get("annee",""), f.get("numero",""), f.get("client_nom",""),
-            f.get("statut","").upper(), prest, f.get("periode",""), f.get("devis_numero",""),
-            f.get("total_ht",0), f.get("date_envoi",""), f.get("date_paiement",""),
-            f.get("solde_a_payer",0), f.get("notes","")
+    for f in sorted(factures_list, key=lambda x: str(x.get("annee", "")), reverse=True):
+        prest = (f.get("prestations") or [{}])[0].get("description", "")
+        ws_f.append([
+            "",                               # col A : vide (séparateur visuel)
+            f.get("annee", ""),               # col B : ANNÉE
+            f.get("numero", ""),              # col C : N° FACTURE
+            f.get("client_nom", ""),          # col D : CLIENT
+            f.get("statut", "").upper(),      # col E : ÉTAT
+            prest,                            # col F : PRESTATION
+            f.get("periode", ""),             # col G : PÉRIODE
+            f.get("devis_numero", ""),        # col H : DEVIS LIÉ
+            f.get("total_ht", 0),             # col I : MONTANT
+            f.get("date_envoi", ""),          # col J : DATE ENVOI
+            f.get("date_paiement", ""),       # col K : DATE PAIEMENT
+            f.get("solde_a_payer", 0),        # col L : SOLDE DÛ
+            f.get("notes", ""),               # col M : NOTES
         ])
 
     buf = io.BytesIO()
