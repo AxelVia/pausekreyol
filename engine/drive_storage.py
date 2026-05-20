@@ -38,6 +38,29 @@ def _get_service():
     return build("drive", "v3", credentials=creds)
 
 
+def _get_calendar_service():
+    """Retourne le client Google Calendar via OAuth (refresh token Gmail)."""
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["GMAIL_REFRESH_TOKEN"],
+        client_id=os.environ["GMAIL_CLIENT_ID"],
+        client_secret=os.environ["GMAIL_CLIENT_SECRET"],
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=[
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/calendar",
+        ],
+    )
+    creds.refresh(Request())
+    return build("calendar", "v3", credentials=creds)
+
+
 def get_root_folder_id() -> str:
     """Retourne l'ID du dossier Drive racine depuis les variables d'environnement."""
     fid = os.getenv("GOOGLE_DRIVE_FOLDER_ID")

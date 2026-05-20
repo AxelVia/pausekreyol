@@ -420,6 +420,54 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"rh_residences.json non restauré : {e}")
 
+        # Restaure campaigns.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            campaigns_drive = drive_download_json("campaigns.json", root_id)
+            if campaigns_drive:
+                CAMPAIGNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                CAMPAIGNS_FILE.write_text(json.dumps(campaigns_drive, ensure_ascii=False, indent=2))
+                logger.info(f"campaigns.json restauré depuis Drive ({len(campaigns_drive)} campagnes)")
+        except Exception as e:
+            logger.warning(f"campaigns.json non restauré : {e}")
+
+        # Restaure comm.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            comm_drive = drive_download_json("comm.json", root_id)
+            if comm_drive:
+                COMM_FILE.parent.mkdir(parents=True, exist_ok=True)
+                COMM_FILE.write_text(json.dumps(comm_drive, ensure_ascii=False, indent=2))
+                logger.info("comm.json restauré depuis Drive")
+        except Exception as e:
+            logger.warning(f"comm.json non restauré : {e}")
+
+        # Restaure calendrier.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            cal_drive = drive_download_json("calendrier.json", root_id)
+            if cal_drive:
+                CAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+                CAL_FILE.write_text(json.dumps(cal_drive, ensure_ascii=False, indent=2))
+                logger.info("calendrier.json restauré depuis Drive")
+        except Exception as e:
+            logger.warning(f"calendrier.json non restauré : {e}")
+
+        # Restaure audits.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            audits_drive = drive_download_json("audits.json", root_id)
+            if audits_drive:
+                AUDITS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                AUDITS_FILE.write_text(json.dumps(audits_drive, ensure_ascii=False, indent=2))
+                logger.info(f"audits.json restauré depuis Drive ({len(audits_drive)} audits)")
+        except Exception as e:
+            logger.warning(f"audits.json non restauré : {e}")
+
     scheduler = None
     if env == "production" and gmail_token:
         scheduler = BackgroundScheduler()
@@ -5042,11 +5090,6 @@ def sync_retroplanning_to_gcal(client_slug: str, body: dict):
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODULE GOOGLE CALENDAR / ZCAL
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def _gcal_service():
-    """Retourne le service Google Calendar."""
-    from engine.drive_storage import _get_calendar_service
-    return _get_calendar_service()
 
 
 def _gcal_primary_id() -> str:
