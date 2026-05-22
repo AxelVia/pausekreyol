@@ -1160,6 +1160,7 @@ OFFRES_FILE = CLIENTS_DIR / "offres.json"
 STRATEGIE_FILE = CLIENTS_DIR / "strategie.json"
 PROSPECTS_FILE = CLIENTS_DIR / "prospects.json"
 AI_USAGE_FILE = CLIENTS_DIR / "ai_usage.json"
+RSS_FEEDS_FILE = CLIENTS_DIR / "rss_feeds.json"
 
 
 # ── Tracking consommation IA ──────────────────────────────────────────────────
@@ -1223,6 +1224,26 @@ def _save_subventions(subventions: list):
                 drive_upload_json(subventions, "subventions.json", root_id)
         except Exception as e:
             logger.warning(f"Drive sync subventions.json : {e}")
+
+def _load_rss_feeds() -> dict:
+    if RSS_FEEDS_FILE.exists():
+        return json.loads(RSS_FEEDS_FILE.read_text())
+    return {}
+
+def _save_rss_feeds(feeds: dict):
+    RSS_FEEDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RSS_FEEDS_FILE.write_text(json.dumps(feeds, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("rss_feeds.json", root_id)
+            if file_id:
+                drive_update_json(file_id, feeds)
+            else:
+                drive_upload_json(feeds, "rss_feeds.json", root_id)
+        except Exception as e:
+            logger.warning(f"Drive sync rss_feeds.json : {e}")
 
 def _load_annuaire() -> list:
     if ANNUAIRE_FILE.exists():
@@ -1742,7 +1763,8 @@ async def analyser_prospect(body: dict):
         prospect_id = f"prospect_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         prompt = f"""Tu es une conseillère expérimentée en ingénierie culturelle pour Pause Kréyol.
-On te soumet une demande d'un prospect. Tu dois évaluer si c'est faisable et rentable.
+On te soumet une demande d'un prospect. Tu dois évaluer si c'est faisable et rentable,
+ET fournir une analyse stratégique complète du potentiel de développement de ce client.
 
 PROSPECT :
 - Nom / contact : {nom}
@@ -1778,15 +1800,35 @@ Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
   "engagements_possibles": ["sur quoi on peut s'engager"],
   "engagements_risques": ["ce qui est risqué d'accepter"],
   "estimation_charge": "ex : 3 à 5 jours de travail",
-  "recommandation_finale": "conseil final clair et direct"
+  "recommandation_finale": "conseil final clair et direct",
+  "sources_financement": [
+    {{
+      "source": "Nom du dispositif ou programme",
+      "organisme": "Organisme financeur",
+      "type": "public_national|public_regional|public_europeen|public_collectivite|prive_mecene|prive_fondation|francophonie|international",
+      "description": "Brève description et pourquoi pertinent pour ce client",
+      "montant_max": 0,
+      "montant_realiste": 0,
+      "priorite": "principale|secondaire"
+    }}
+  ],
+  "partenaires_potentiels": [
+    {{
+      "type": "ex: collectivité territoriale / fondation privée / réseau professionnel",
+      "exemples": "noms concrets d'organismes ou structures",
+      "role": "Co-financement / Légitimation / Diffusion / Mise en réseau"
+    }}
+  ],
+  "strategie_developpement": "Description précise d'une stratégie de développement sur 12-18 mois : axes prioritaires, actions concrètes, objectifs mesurables, points de vigilance."
 }}
-Valeurs autorisées : verdict = "POSSIBLE" | "SOUS CONDITIONS" | "DÉCONSEILLÉ" ; rentabilite = "RENTABLE" | "LIMITE" | "NON_RENTABLE"."""
+Valeurs autorisées : verdict = "POSSIBLE" | "SOUS CONDITIONS" | "DÉCONSEILLÉ" ; rentabilite = "RENTABLE" | "LIMITE" | "NON_RENTABLE".
+Pour sources_financement : liste du plus important au moins important (public avant privé, national avant local, européen si pertinent, francophonie/international si pertinent). Inclure collectivités territoriales, aides régionales, aides européennes (Creative Europe, FEDER, etc.), francophonie (OIF, etc.) si applicable."""
 
         ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
         try:
             response = ai.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=2000,
+                max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
@@ -1810,6 +1852,9 @@ Valeurs autorisées : verdict = "POSSIBLE" | "SOUS CONDITIONS" | "DÉCONSEILLÉ"
                 "engagements_risques": [],
                 "estimation_charge": "Non estimée",
                 "recommandation_finale": "Veuillez analyser manuellement cette demande.",
+                "sources_financement": [],
+                "partenaires_potentiels": [],
+                "strategie_developpement": "",
             }
 
         result["created_at"] = datetime.now().isoformat()
@@ -4537,6 +4582,278 @@ def delete_subvention(sub_id: str):
     subs = [s for s in subs if s["id"] != sub_id]
     _save_subventions(subs)
     return {"status": "ok"}
+
+
+# ── Rétroplanning subvention ────────────────────────────────────────────────────
+
+@app.post("/subventions/{sub_id}/retroplanning")
+async def generer_retroplanning_subvention(sub_id: str):
+    """
+    Génère un rétroplanning IA pour une subvention avec deadline.
+    Inclut minimum 5 allers/retours client (1h30 chacun) et toutes les étapes de travail.
+    """
+    try:
+        import anthropic as anthropic_sdk
+
+        subs = _load_subventions()
+        sub = next((s for s in subs if s["id"] == sub_id), None)
+        if not sub:
+            raise HTTPException(status_code=404, detail="Subvention non trouvée")
+
+        deadline = sub.get("deadline")
+        if not deadline:
+            raise HTTPException(status_code=400, detail="Cette subvention n'a pas de deadline définie. Renseignez d'abord une date de dépôt.")
+
+        try:
+            d_deadline = datetime.fromisoformat(str(deadline)[:10])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format de deadline invalide")
+
+        jours_restants = (d_deadline.date() - datetime.now().date()).days
+        organisme = sub.get("modele_nom") or sub.get("organisme", "?")
+        client_nom = sub.get("client_nom", "?")
+        montant = sub.get("montant_sollicite", "?")
+
+        prompt = f"""Tu es une experte en ingénierie culturelle pour Pause Kréyol.
+Génère un rétroplanning détaillé et réaliste pour le montage de ce dossier de subvention.
+
+SUBVENTION :
+- Organisme / Programme : {organisme}
+- Client : {client_nom}
+- Montant sollicité : {montant} €
+- Deadline de dépôt : {deadline}
+- Jours restants : {jours_restants}
+
+CONTRAINTES ABSOLUES :
+1. Inclure EXACTEMENT 5 allers/retours avec le client (type "rdv_client") d'1h30 minimum chacun :
+   - RDV 1 (Lancement) : cadrage du projet, recueil des informations de base
+   - RDV 2 (Collecte) : vérification des pièces collectées, alignement sur le budget
+   - RDV 3 (Contenu) : révision du contenu rédigé, ajustements narratifs
+   - RDV 4 (Validation) : validation du dossier complet avant dépôt
+   - RDV 5 (Dépôt/Clôture) : confirmation du dépôt, prochaines étapes
+2. Inclure les étapes internes (rédaction, vérifications, corrections)
+3. Inclure les démarches externes (demande de lettres d'engagement à des tiers, contacts organismes)
+4. Calculer les dates en remontant depuis la deadline
+5. Laisser 5 jours de marge minimum avant la deadline pour le dépôt final
+6. Adapter le nombre d'étapes à la complexité : pour moins de 30 jours, planning serré ; pour plus de 60 jours, planning plus espacé
+
+Réponds UNIQUEMENT en JSON valide avec cette structure :
+{{
+  "deadline": "{deadline}",
+  "total_heures_estimees": 0,
+  "nb_rdv_client": 5,
+  "etapes": [
+    {{
+      "id": 1,
+      "date": "YYYY-MM-DD",
+      "j_avant_deadline": 60,
+      "titre": "Titre de l'étape",
+      "type": "rdv_client|interne|externe|depot",
+      "duree_heures": 1.5,
+      "description": "Description détaillée de ce qui est fait lors de cette étape",
+      "livrables": ["livrable attendu 1"],
+      "priorite": "URGENT|HAUT|Normal"
+    }}
+  ],
+  "synthese": "Résumé du planning en 2-3 phrases",
+  "alertes": ["point de vigilance 1", "point de vigilance 2"]
+}}
+Les étapes DOIVENT être dans l'ordre chronologique (de la plus éloignée à la plus proche de la deadline).
+"j_avant_deadline" représente le nombre de jours avant la deadline (valeur positive, ex: 60 = 60 jours avant).
+Les 5 RDV client sont OBLIGATOIRES avec type="rdv_client"."""
+
+        ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        try:
+            response = ai.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=3000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = response.content[0].text.strip()
+            _log_ai_usage("retroplanning_sub", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(raw)
+        except Exception as e:
+            logger.warning(f"Rétroplanning subvention IA échoué : {e}")
+            raise HTTPException(status_code=500, detail="Erreur lors de la génération du rétroplanning. Veuillez réessayer.")
+
+        result["generated_at"] = datetime.now().isoformat()
+        result["sub_id"] = sub_id
+
+        # Sauvegarde dans la subvention
+        for i, s in enumerate(subs):
+            if s["id"] == sub_id:
+                subs[i]["retroplanning"] = result
+                break
+        _save_subventions(subs)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Flux RSS par client ─────────────────────────────────────────────────────────
+
+@app.get("/rss/{client_slug}")
+def get_rss_feed(client_slug: str):
+    """
+    Retourne le flux RSS d'opportunités de financement pour un client.
+    Format RSS 2.0 XML.
+    """
+    from fastapi.responses import Response
+    feeds = _load_rss_feeds()
+    feed_data = feeds.get(client_slug, {})
+    items = feed_data.get("items", [])
+    client_nom = feed_data.get("client_nom", client_slug)
+    generated_at = feed_data.get("generated_at", "")
+
+    rss_items = ""
+    for item in items:
+        pub_date = item.get("date", "")
+        try:
+            from email.utils import format_datetime as _fmt_dt
+            from datetime import datetime as _dt
+            pub_date = _fmt_dt(_dt.fromisoformat(pub_date))
+        except Exception:
+            pass
+        rss_items += f"""
+    <item>
+      <title><![CDATA[{item.get('titre', '')}]]></title>
+      <description><![CDATA[{item.get('description', '')}]]></description>
+      <category><![CDATA[{item.get('categorie', '')}]]></category>
+      <pubDate>{pub_date}</pubDate>
+      {f'<link>{item.get("url","")}</link>' if item.get("url") else ""}
+    </item>"""
+
+    rss_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>PauseKréyol — Opportunités pour {client_nom}</title>
+    <description>Veille subventions, mécènes et partenaires financiers — {client_nom}</description>
+    <language>fr</language>
+    <lastBuildDate>{generated_at}</lastBuildDate>
+    <generator>PauseKréyol</generator>
+    {rss_items}
+  </channel>
+</rss>"""
+
+    return Response(content=rss_xml, media_type="application/rss+xml; charset=utf-8")
+
+
+@app.post("/rss/{client_slug}/refresh")
+async def refresh_rss_feed(client_slug: str):
+    """
+    Régénère le flux RSS d'un client via IA (Claude).
+    Identifie subventions possibles, mécènes et partenaires financiers selon le profil du client.
+    """
+    try:
+        import anthropic as anthropic_sdk
+
+        # Charge les données du client
+        client_dir = CLIENTS_DIR / client_slug
+        client_data = {}
+        client_nom = client_slug
+        try:
+            from engine.template_engine import read_client_data
+            cd = read_client_data(client_slug)
+            if cd:
+                client_data = cd
+                client_nom = cd.get("nom_officiel") or cd.get("nom_usuel") or client_slug
+        except Exception:
+            pass
+
+        # Récupère aussi les subventions déjà en cours pour ce client
+        subs = _load_subventions()
+        subs_client = [s for s in subs if s.get("client_slug") == client_slug and not s.get("archived")]
+        subs_actives = [f"{s.get('modele_nom') or s.get('organisme')} ({s.get('statut')})" for s in subs_client]
+
+        prompt = f"""Tu es une experte en financement culturel pour Pause Kréyol, une agence d'ingénierie culturelle.
+Génère une veille complète des opportunités de financement pour ce client.
+
+CLIENT :
+- Nom : {client_nom}
+- Type de structure : {client_data.get('type_structure', 'association culturelle')}
+- Territoire : {client_data.get('adresse_siege', 'France')}
+- Domaine artistique : {client_data.get('domaine_artistique', 'arts vivants / culture')}
+- Contexte : {client_data.get('description', 'structure culturelle active')}
+
+SUBVENTIONS DÉJÀ EN COURS :
+{chr(10).join(subs_actives) if subs_actives else "Aucune"}
+
+Génère une liste de 10 à 15 opportunités pertinentes : subventions publiques, mécènes, partenariats financiers.
+Inclus : national (MCC, DRAC, CNM, CNC...), collectivités (Région, Département, Ville), européen (Creative Europe, FEDER, Erasmus+...), francophonie (OIF, IFAS...), mécénat privé (fondations, entreprises mécènes pertinentes).
+
+Réponds UNIQUEMENT en JSON valide :
+{{
+  "client_nom": "{client_nom}",
+  "items": [
+    {{
+      "titre": "Titre accrocheur de l'opportunité",
+      "categorie": "subvention_nationale|subvention_regionale|subvention_europeenne|mecenat_prive|mecenat_fondation|partenariat|francophonie",
+      "organisme": "Nom de l'organisme",
+      "description": "Description de l'opportunité et pourquoi elle est pertinente pour ce client (2-3 phrases)",
+      "montant_indicatif": "ex: 5 000 à 20 000 €",
+      "deadline_indicative": "ex: mars de chaque année / AAP annuel / continu",
+      "conseils": "Conseil pratique pour maximiser les chances (1 phrase)",
+      "url": "URL officielle si connue ou chaîne vide",
+      "priorite": "haute|moyenne|faible",
+      "date": "{datetime.now().isoformat()}"
+    }}
+  ],
+  "synthese": "Synthèse en 2-3 phrases des meilleures pistes pour ce client",
+  "prochaines_actions": ["action 1 concrète à mener", "action 2", "action 3"]
+}}"""
+
+        ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        try:
+            response = ai.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = response.content[0].text.strip()
+            _log_ai_usage("rss_generation", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(raw)
+        except Exception as e:
+            logger.warning(f"RSS refresh IA échoué pour {client_slug} : {e}")
+            raise HTTPException(status_code=500, detail="Erreur lors de la génération du flux RSS. Veuillez réessayer.")
+
+        result["generated_at"] = datetime.now().isoformat()
+        result["client_slug"] = client_slug
+        result["client_nom"] = client_nom
+
+        feeds = _load_rss_feeds()
+        feeds[client_slug] = result
+        _save_rss_feeds(feeds)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/rss")
+def list_rss_feeds():
+    """Liste tous les flux RSS générés (résumé par client)."""
+    feeds = _load_rss_feeds()
+    return [
+        {
+            "client_slug": slug,
+            "client_nom": data.get("client_nom", slug),
+            "generated_at": data.get("generated_at"),
+            "nb_items": len(data.get("items", [])),
+            "synthese": data.get("synthese", ""),
+        }
+        for slug, data in feeds.items()
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

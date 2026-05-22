@@ -152,12 +152,61 @@
         notes: sub.notes || '',
       });
       const [savingEdit, setSavingEdit] = useState(false);
+      const [retroplanning, setRetroplanning] = useState(sub.retroplanning || null);
+      const [rpLoading, setRpLoading] = useState(false);
+      const [rpMsg, setRpMsg] = useState('');
+      const [showRetroplan, setShowRetroplan] = useState(!!sub.retroplanning);
 
       const TACHES_TYPES_SUBV = [
         'Préparer le dossier', 'Collecter les pièces justificatives', 'Rédiger le budget',
         'Déposer le dossier', "Relancer l'instructeur", 'Envoyer les compléments',
         'Signer la convention', 'Envoyer le compte rendu financier', 'Archiver le dossier',
       ];
+
+      async function genererRetroplanning() {
+        if (!localSub.deadline) { setRpMsg('⚠️ Renseignez d\'abord une deadline de dépôt.'); return; }
+        setRpLoading(true);
+        setRpMsg('');
+        try {
+          const res = await fetch(`${API}/subventions/${localSub.id}/retroplanning`, { method: 'POST' });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Erreur'); }
+          const rp = await res.json();
+          setRetroplanning(rp);
+          setShowRetroplan(true);
+          const updated = { ...localSub, retroplanning: rp };
+          setLocalSub(updated);
+          onUpdate(updated);
+          setRpMsg('✅ Rétroplanning généré !');
+        } catch (e) { setRpMsg('⚠️ ' + e.message); }
+        setRpLoading(false);
+        setTimeout(() => setRpMsg(''), 5000);
+      }
+
+      async function pousserTachesRetroplanning() {
+        if (!retroplanning?.etapes) return;
+        let nb = 0;
+        for (const etape of retroplanning.etapes) {
+          try {
+            await fetch(`${API}/taches`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                titre: etape.titre,
+                deadline: etape.date,
+                priorite: etape.priorite || 'Normal',
+                description: `[Rétroplanning ${localSub.modele_nom || localSub.organisme}] ${etape.description || ''}`,
+                client_slug: localSub.client_slug,
+                client_detecte: localSub.client_nom,
+                categorie: 'subvention',
+                source: 'Rétroplanning',
+                sub_id: localSub.id,
+              })
+            });
+            nb++;
+          } catch {}
+        }
+        setRpMsg(`✅ ${nb} tâche(s) créée(s) dans le module Tâches`);
+        setTimeout(() => setRpMsg(''), 4000);
+      }
 
       async function addTacheSubv() {
         if (!newTache.titre) return;
@@ -762,6 +811,111 @@
               </div>
             )}
           </div>
+
+          {/* ── Rétroplanning IA ─────────────────────────────────────────── */}
+          <div className="card" style={{ marginTop: 14, borderTop: '4px solid var(--pk-blue)' }}>
+            <div className="card-header">
+              <div>
+                <div className="card-title" style={{ color: 'var(--pk-blue)' }}>📅 Rétroplanning IA</div>
+                <div className="card-subtitle">
+                  {retroplanning
+                   ? `Généré le ${new Date(retroplanning.generated_at).toLocaleDateString('fr-FR')} · ${(retroplanning.etapes || []).length} étapes · ~${retroplanning.total_heures_estimees || '?'}h`
+                   : 'Planification automatique des étapes jusqu\'au dépôt'}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {rpMsg && <span style={{ fontSize: 12, color: rpMsg.startsWith('✅') ? 'var(--success)' : 'var(--warn)' }}>{rpMsg}</span>}
+                {retroplanning && (
+                  <button className="btn" style={{ fontSize: 11 }} onClick={pousserTachesRetroplanning}>
+                   📋 Pousser vers Tâches
+                  </button>
+                )}
+                {retroplanning && (
+                  <button className="btn" style={{ fontSize: 11 }} onClick={() => setShowRetroplan(p => !p)}>
+                   {showRetroplan ? '▲ Réduire' : '▼ Afficher'}
+                  </button>
+                )}
+                <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={genererRetroplanning} disabled={rpLoading || !localSub.deadline}>
+                  {rpLoading ? '⏳ Génération...' : retroplanning ? '🔄 Regénérer' : '🤖 Générer le rétroplanning'}
+                </button>
+              </div>
+            </div>
+
+            {!localSub.deadline && (
+              <div style={{ fontSize: 12, color: 'var(--warn)', padding: '8px 10px', background: 'var(--warn-light)', borderRadius: 6, marginBottom: 8 }}>
+                ⚠️ Renseignez une deadline de dépôt dans les informations pour générer le rétroplanning.
+              </div>
+            )}
+
+            {retroplanning && showRetroplan && (
+              <div>
+                {retroplanning.synthese && (
+                  <div style={{ fontSize: 12, color: 'var(--text2)', background: 'var(--pk-blue-light)', borderRadius: 6, padding: '8px 12px', marginBottom: 12, lineHeight: 1.6 }}>
+                   {retroplanning.synthese}
+                  </div>
+                )}
+
+                {(retroplanning.alertes || []).length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                   {retroplanning.alertes.map((a, i) => (
+                     <div key={i} style={{ fontSize: 11, color: '#E65100', background: '#FFF3E0', borderRadius: 4, padding: '5px 10px', marginBottom: 4 }}>
+                       ⚠️ {a}
+                     </div>
+                   ))}
+                  </div>
+                )}
+
+                <div style={{ position: 'relative' }}>
+                  {(retroplanning.etapes || []).map((etape, i) => {
+                   const typeColors = {
+                     rdv_client: { bg: '#E3F2FD', c: '#1565C0', icon: '🤝', label: 'RDV client' },
+                     interne: { bg: 'var(--surface2)', c: 'var(--text2)', icon: '📝', label: 'Interne' },
+                     externe: { bg: '#F3E5F5', c: '#6A1B9A', icon: '📤', label: 'Externe' },
+                     depot: { bg: 'var(--success-light)', c: 'var(--success)', icon: '🏁', label: 'Dépôt' },
+                   };
+                   const tc = typeColors[etape.type] || typeColors.interne;
+                   const isRdv = etape.type === 'rdv_client';
+                   return (
+                     <div key={etape.id || i} style={{
+                       display: 'flex', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)',
+                       background: isRdv ? '#F0F7FF' : 'transparent',
+                       borderRadius: isRdv ? 6 : 0, paddingLeft: isRdv ? 8 : 0, marginBottom: isRdv ? 2 : 0,
+                     }}>
+                       <div style={{ width: 42, flexShrink: 0, textAlign: 'center' }}>
+                         <div style={{ fontSize: 18 }}>{tc.icon}</div>
+                         <div style={{ fontSize: 10, color: 'var(--text3)' }}>J-{etape.j_avant_deadline}</div>
+                       </div>
+                       <div style={{ flex: 1 }}>
+                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 3, flexWrap: 'wrap' }}>
+                           <span style={{ fontSize: 13, fontWeight: isRdv ? 700 : 500 }}>{etape.titre}</span>
+                           <span style={{ background: tc.bg, color: tc.c, fontSize: 10, padding: '1px 7px', borderRadius: 8, fontWeight: 600 }}>{tc.label}</span>
+                           {etape.duree_heures && <span style={{ fontSize: 10, color: 'var(--text3)' }}>⏱ {etape.duree_heures}h</span>}
+                         </div>
+                         <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>{etape.description}</div>
+                         {(etape.livrables || []).length > 0 && (
+                           <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                             📎 {etape.livrables.join(' · ')}
+                           </div>
+                         )}
+                       </div>
+                       <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--pk-blue)' }}>
+                           {etape.date ? new Date(etape.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : ''}
+                         </div>
+                         {etape.priorite && etape.priorite !== 'Normal' && (
+                           <span style={{ fontSize: 10, background: etape.priorite === 'URGENT' ? 'var(--danger-light)' : 'var(--warn-light)',
+                             color: etape.priorite === 'URGENT' ? 'var(--danger)' : 'var(--warn)', padding: '1px 5px', borderRadius: 6, fontWeight: 600 }}>
+                             {etape.priorite}
+                           </span>
+                         )}
+                       </div>
+                     </div>
+                   );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       );
     }
@@ -788,15 +942,53 @@
         champs: '', pieces: '', url: '' };
       const [newSub, setNewSub] = useState(EMPTY_SUB);
       const [newModele, setNewModele] = useState(EMPTY_MODELE);
+      const [rssFeeds, setRssFeeds] = useState([]);
+      const [rssClientSlug, setRssClientSlug] = useState('');
+      const [rssLoading, setRssLoading] = useState(false);
+      const [rssResult, setRssResult] = useState(null);
+      const [rssMsg, setRssMsg] = useState('');
 
       useEffect(() => {
         fetch(`${API}/subventions`).then(r => r.json()).then(setSubventions).catch(() => {});
+        fetch(`${API}/rss`).then(r => r.ok ? r.json() : []).then(setRssFeeds).catch(() => {});
         // Modèles perso depuis localStorage (pas besoin d'API)
         try { setModeles(JSON.parse(localStorage.getItem('pk_modeles_sub') || '[]')); } catch {}
         Promise.all(clients.map(c =>
           fetch(`${API}/clients/${c.slug}`).then(r => r.ok ? r.json() : null).catch(() => null)
         )).then(d => setClientsDetails(d.filter(Boolean)));
       }, [clients]);
+
+      async function genererRss(clientSlug) {
+        if (!clientSlug) { setRssMsg('⚠️ Sélectionnez un client.'); return; }
+        setRssLoading(true);
+        setRssMsg('');
+        setRssResult(null);
+        try {
+          const res = await fetch(`${API}/rss/${clientSlug}/refresh`, { method: 'POST' });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Erreur'); }
+          const data = await res.json();
+          setRssResult(data);
+          setRssFeeds(p => {
+            const existing = p.find(f => f.client_slug === clientSlug);
+            const summary = { client_slug: clientSlug, client_nom: data.client_nom, generated_at: data.generated_at, nb_items: (data.items||[]).length, synthese: data.synthese||'' };
+            return existing ? p.map(f => f.client_slug === clientSlug ? summary : f) : [summary, ...p];
+          });
+          setRssMsg(`✅ Flux généré — ${(data.items||[]).length} opportunités trouvées`);
+        } catch (e) { setRssMsg('⚠️ ' + e.message); }
+        setRssLoading(false);
+        setTimeout(() => setRssMsg(''), 5000);
+      }
+
+      async function loadRssFeed(clientSlug) {
+        try {
+          const res = await fetch(`${API}/rss/${clientSlug}/refresh`, { method: 'GET' }).catch(() => null);
+          // On appelle refresh pour récupérer les données existantes via GET /rss
+          const res2 = await fetch(`${API}/rss`);
+          const feeds = await res2.json();
+          const feed = feeds.find(f => f.client_slug === clientSlug);
+          if (feed) setRssResult(feed);
+        } catch {}
+      }
 
       function saveModeles(list) {
         setModeles(list);
@@ -973,6 +1165,7 @@
                 ['dashboard', '📊 Tableau de bord'],
                 ['suivi',     `📋 Suivi (${actives.length})`],
                 ['catalogue', '📚 Catalogue'],
+                ['rss',       `📡 Veille RSS${rssFeeds.length > 0 ? ` (${rssFeeds.length})` : ''}`],
               ].map(([k,l]) => (
                 <button key={k} className={`tab ${tab===k?'active':''}`} onClick={() => setTab(k)}>{l}</button>
               ))}
@@ -1284,6 +1477,137 @@
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ VEILLE RSS ══ */}
+          {tab === 'rss' && (
+            <div>
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div className="card-title" style={{ marginBottom: 14 }}>📡 Générer une veille pour un client</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12, lineHeight: 1.6 }}>
+                  L'IA analyse le profil du client et identifie les meilleures opportunités de financement : subventions nationales, régionales, européennes, mécènes, fondations et partenariats. Le flux RSS peut ensuite être abonné dans votre lecteur RSS.
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Client</label>
+                    <select className="form-input" value={rssClientSlug} onChange={e => { setRssClientSlug(e.target.value); setRssResult(null); }}>
+                      <option value="">— Sélectionner un client —</option>
+                      {clients.map(c => <option key={c.slug} value={c.slug}>{c.nom}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {rssMsg && (
+                  <div style={{ fontSize: 12, padding: '7px 12px', borderRadius: 6, background: rssMsg.startsWith('✅') ? 'var(--success-light)' : 'var(--warn-light)', color: rssMsg.startsWith('✅') ? 'var(--success)' : 'var(--warn)', marginBottom: 10 }}>{rssMsg}</div>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-primary" onClick={() => genererRss(rssClientSlug)} disabled={rssLoading || !rssClientSlug}>
+                    {rssLoading ? '⏳ Génération en cours...' : '🤖 Générer la veille IA'}
+                  </button>
+                  {rssClientSlug && (
+                    <button className="btn" onClick={() => { navigator.clipboard.writeText(`${API}/rss/${rssClientSlug}`); setRssMsg('✅ Lien RSS copié !'); setTimeout(() => setRssMsg(''), 2000); }}>
+                      🔗 Copier le lien RSS
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Résultat de la veille générée */}
+              {rssResult && rssResult.items && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-header">
+                    <div>
+                      <div className="card-title">🔍 Opportunités pour {rssResult.client_nom}</div>
+                      <div className="card-subtitle">{(rssResult.items || []).length} opportunités identifiées</div>
+                    </div>
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                      {rssResult.generated_at ? new Date(rssResult.generated_at).toLocaleDateString('fr-FR') : ''}
+                    </span>
+                  </div>
+
+                  {rssResult.synthese && (
+                    <div style={{ fontSize: 12, background: 'var(--pk-blue-light)', color: 'var(--text2)', borderRadius: 6, padding: '8px 12px', marginBottom: 12, lineHeight: 1.6 }}>
+                      {rssResult.synthese}
+                    </div>
+                  )}
+
+                  {(rssResult.prochaines_actions || []).length > 0 && (
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 6 }}>📋 Prochaines actions</div>
+                      {rssResult.prochaines_actions.map((a, i) => (
+                        <div key={i} style={{ fontSize: 12, padding: '4px 0', color: 'var(--text2)' }}>→ {a}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(rssResult.items || []).map((item, i) => {
+                    const catColors = {
+                      subvention_nationale: { bg: '#E3F2FD', c: '#1565C0', icon: '🏛' },
+                      subvention_regionale: { bg: '#E8F5E9', c: '#1B5E20', icon: '🗺' },
+                      subvention_europeenne: { bg: '#F3E5F5', c: '#6A1B9A', icon: '🇪🇺' },
+                      mecenat_prive: { bg: '#FFF3E0', c: '#E65100', icon: '💼' },
+                      mecenat_fondation: { bg: '#FFF9C4', c: '#F57F17', icon: '🏅' },
+                      partenariat: { bg: 'var(--surface2)', c: 'var(--text2)', icon: '🤝' },
+                      francophonie: { bg: '#FCE4EC', c: '#880E4F', icon: '🌍' },
+                    };
+                    const cc = catColors[item.categorie] || catColors.partenariat;
+                    const prioBg = item.priorite === 'haute' ? 'var(--danger-light)' : item.priorite === 'moyenne' ? 'var(--warn-light)' : 'var(--surface2)';
+                    const prioC = item.priorite === 'haute' ? 'var(--danger)' : item.priorite === 'moyenne' ? 'var(--warn)' : 'var(--text3)';
+                    return (
+                      <div key={i} style={{ padding: '12px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                        <div style={{ fontSize: 22, width: 32, flexShrink: 0, textAlign: 'center' }}>{cc.icon}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
+                            <span style={{ fontWeight: 600, fontSize: 13 }}>{item.titre}</span>
+                            <span style={{ background: cc.bg, color: cc.c, fontSize: 10, padding: '1px 7px', borderRadius: 8 }}>{item.organisme}</span>
+                            <span style={{ background: prioBg, color: prioC, fontSize: 10, padding: '1px 7px', borderRadius: 8, fontWeight: 600 }}>{item.priorite}</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 6, lineHeight: 1.5 }}>{item.description}</div>
+                          <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text3)', flexWrap: 'wrap' }}>
+                            {item.montant_indicatif && <span>💰 {item.montant_indicatif}</span>}
+                            {item.deadline_indicative && <span>📅 {item.deadline_indicative}</span>}
+                            {item.conseils && <span style={{ fontStyle: 'italic', color: 'var(--pk-blue)' }}>💡 {item.conseils}</span>}
+                          </div>
+                          {item.url && (
+                            <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--pk-blue)', marginTop: 4, display: 'block' }}>
+                              🔗 {item.url}
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Flux existants */}
+              {rssFeeds.length > 0 && (
+                <div className="card">
+                  <div className="card-title" style={{ marginBottom: 12 }}>📂 Flux existants</div>
+                  {rssFeeds.map(feed => (
+                    <div key={feed.client_slug} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: 13 }}>{feed.client_nom}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                          {feed.nb_items} item(s) · Mis à jour le {feed.generated_at ? new Date(feed.generated_at).toLocaleDateString('fr-FR') : '—'}
+                        </div>
+                        {feed.synthese && <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic', marginTop: 2 }}>{feed.synthese.slice(0, 100)}…</div>}
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn" style={{ fontSize: 11 }} onClick={() => {
+                          setRssClientSlug(feed.client_slug);
+                          genererRss(feed.client_slug);
+                        }}>🔄 Actualiser</button>
+                        <button className="btn" style={{ fontSize: 11 }} onClick={() => {
+                          navigator.clipboard.writeText(`${API}/rss/${feed.client_slug}`);
+                          setRssMsg('✅ Lien RSS copié !');
+                          setTimeout(() => setRssMsg(''), 2000);
+                        }}>🔗 Lien RSS</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
