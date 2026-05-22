@@ -4705,6 +4705,7 @@ def get_rss_feed(client_slug: str):
     Format RSS 2.0 XML.
     """
     from fastapi.responses import Response
+    from email.utils import format_datetime as _fmt_dt
     feeds = _load_rss_feeds()
     feed_data = feeds.get(client_slug, {})
     items = feed_data.get("items", [])
@@ -4715,9 +4716,7 @@ def get_rss_feed(client_slug: str):
     for item in items:
         pub_date = item.get("date", "")
         try:
-            from email.utils import format_datetime as _fmt_dt
-            from datetime import datetime as _dt
-            pub_date = _fmt_dt(_dt.fromisoformat(pub_date))
+            pub_date = _fmt_dt(datetime.fromisoformat(pub_date))
         except Exception:
             pass
         rss_items += f"""
@@ -4801,7 +4800,7 @@ Réponds UNIQUEMENT en JSON valide :
       "conseils": "Conseil pratique pour maximiser les chances (1 phrase)",
       "url": "URL officielle si connue ou chaîne vide",
       "priorite": "haute|moyenne|faible",
-      "date": "{datetime.now().isoformat()}"
+      "date": "YYYY-MM-DD (date de la prochaine échéance ou date du jour si continu)"
     }}
   ],
   "synthese": "Synthèse en 2-3 phrases des meilleures pistes pour ce client",

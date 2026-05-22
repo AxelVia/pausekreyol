@@ -202,7 +202,9 @@
               })
             });
             nb++;
-          } catch {}
+          } catch (e) {
+            console.warn('Tâche non créée :', e);
+          }
         }
         setRpMsg(`✅ ${nb} tâche(s) créée(s) dans le module Tâches`);
         setTimeout(() => setRpMsg(''), 4000);
@@ -981,8 +983,6 @@
 
       async function loadRssFeed(clientSlug) {
         try {
-          const res = await fetch(`${API}/rss/${clientSlug}/refresh`, { method: 'GET' }).catch(() => null);
-          // On appelle refresh pour récupérer les données existantes via GET /rss
           const res2 = await fetch(`${API}/rss`);
           const feeds = await res2.json();
           const feed = feeds.find(f => f.client_slug === clientSlug);
@@ -1593,7 +1593,7 @@
                         <div style={{ fontSize: 11, color: 'var(--text3)' }}>
                           {feed.nb_items} item(s) · Mis à jour le {feed.generated_at ? new Date(feed.generated_at).toLocaleDateString('fr-FR') : '—'}
                         </div>
-                        {feed.synthese && <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic', marginTop: 2 }}>{feed.synthese.slice(0, 100)}…</div>}
+                        {feed.synthese && <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic', marginTop: 2 }}>{feed.synthese.length > 100 ? feed.synthese.substring(0, 100) + '…' : feed.synthese}</div>}
                       </div>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn" style={{ fontSize: 11 }} onClick={() => {
