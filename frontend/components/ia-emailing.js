@@ -14,6 +14,8 @@ function IAUsageView() {
     email: 'Génération email',
     strategie: 'Analyse stratégie',
     analyse_formulaire_subvention: 'Analyse formulaire subvention',
+    retroplanning_sub: 'Rétroplanning subvention',
+    rss_generation: 'Génération flux RSS',
   };
 
   // Coût estimé Claude Sonnet : ~$3/M input, ~$15/M output (tarifs Anthropic indicatifs)

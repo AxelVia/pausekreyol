@@ -463,6 +463,16 @@
       function ResultCard({ r }) {
         const vs = VERDICT_STYLE[r.verdict] || VERDICT_STYLE['SOUS CONDITIONS'];
         const rs = RENTA_STYLE[r.rentabilite] || RENTA_STYLE['LIMITE'];
+        const TYPE_LABELS = {
+          public_national: { label: 'National', c: '#1565C0', bg: '#E3F2FD' },
+          public_regional: { label: 'Régional', c: '#1B5E20', bg: '#E8F5E9' },
+          public_europeen: { label: 'Européen', c: '#6A1B9A', bg: '#F3E5F5' },
+          public_collectivite: { label: 'Collectivité', c: '#E65100', bg: '#FFF3E0' },
+          prive_mecene: { label: 'Mécène privé', c: '#37474F', bg: '#ECEFF1' },
+          prive_fondation: { label: 'Fondation', c: '#F57F17', bg: '#FFF9C4' },
+          francophonie: { label: 'Francophonie', c: '#880E4F', bg: '#FCE4EC' },
+          international: { label: 'International', c: '#004D40', bg: '#E0F2F1' },
+        };
         return (
           <div className="card" style={{ marginTop: 16 }}>
             <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -528,8 +538,65 @@
             </div>
 
             {r.recommandation_finale && (
-              <div style={{ background: vs.bg, border: `1px solid ${vs.color}30`, borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, color: vs.color }}>
+              <div style={{ background: vs.bg, border: `1px solid ${vs.color}30`, borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, color: vs.color, marginBottom: 12 }}>
                 💡 {r.recommandation_finale}
+              </div>
+            )}
+
+            {/* ── Sources de financement ── */}
+            {r.sources_financement?.length > 0 && (
+              <div style={{ marginTop: 14, borderTop: '2px solid var(--border)', paddingTop: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--pk-blue)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
+                  💰 Sources de financement envisageables
+                </div>
+                {r.sources_financement.map((sf, i) => {
+                  const tc = TYPE_LABELS[sf.type] || { label: sf.type || 'Autre', c: 'var(--text2)', bg: 'var(--surface2)' };
+                  return (
+                    <div key={i} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8, background: sf.priorite === 'principale' ? 'var(--pk-blue-light)' : 'var(--surface)' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>{sf.source}</span>
+                        <span style={{ background: tc.bg, color: tc.c, fontSize: 10, padding: '1px 7px', borderRadius: 8, fontWeight: 600 }}>{tc.label}</span>
+                        {sf.organisme && <span style={{ fontSize: 11, color: 'var(--text3)' }}>{sf.organisme}</span>}
+                        {sf.priorite === 'principale' && <span style={{ background: 'var(--success-light)', color: 'var(--success)', fontSize: 10, padding: '1px 7px', borderRadius: 8, fontWeight: 700 }}>⭐ Prioritaire</span>}
+                      </div>
+                      {sf.description && <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>{sf.description}</div>}
+                      <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text3)' }}>
+                        {sf.montant_max > 0 && <span>≤ {Number(sf.montant_max).toLocaleString('fr-FR')} € max</span>}
+                        {sf.montant_realiste > 0 && <span style={{ color: 'var(--success)', fontWeight: 600 }}>~{Number(sf.montant_realiste).toLocaleString('fr-FR')} € réaliste</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* ── Partenaires potentiels ── */}
+            {r.partenaires_potentiels?.length > 0 && (
+              <div style={{ marginTop: 14, borderTop: '2px solid var(--border)', paddingTop: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#6A1B9A', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
+                  🤝 Partenaires potentiels
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {r.partenaires_potentiels.map((pp, i) => (
+                    <div key={i} style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                      <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 3 }}>{pp.type}</div>
+                      {pp.exemples && <div style={{ fontSize: 11, color: 'var(--pk-blue)', marginBottom: 3 }}>ex: {pp.exemples}</div>}
+                      {pp.role && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{pp.role}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Stratégie de développement ── */}
+            {r.strategie_developpement && (
+              <div style={{ marginTop: 14, borderTop: '2px solid var(--border)', paddingTop: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#E65100', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
+                  🗺 Stratégie de développement (12-18 mois)
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.7, background: '#FFF9F6', border: '1px solid #FF795A30', borderRadius: 8, padding: '10px 14px' }}>
+                  {r.strategie_developpement}
+                </div>
               </div>
             )}
           </div>
