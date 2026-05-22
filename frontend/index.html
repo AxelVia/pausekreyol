@@ -27,9 +27,23 @@
   <div id="root"></div>
 
   <!--
-    Application React PauseKreyol.
-    Éditer app.js pour modifier l'interface sans toucher à ce fichier.
+    Application React PauseKreyol — composants dans frontend/components/
+    Ordre de chargement important : core en premier, app.js en dernier.
   -->
+  <script type="text/babel" src="components/core.js"></script>
+  <script type="text/babel" src="components/dashboard.js"></script>
+  <script type="text/babel" src="components/clients.js"></script>
+  <script type="text/babel" src="components/tasks.js"></script>
+  <script type="text/babel" src="components/comm.js"></script>
+  <script type="text/babel" src="components/calendrier.js"></script>
+  <script type="text/babel" src="components/devis.js"></script>
+  <script type="text/babel" src="components/subventions.js"></script>
+  <script type="text/babel" src="components/ia-emailing.js"></script>
+  <script type="text/babel" src="components/rh.js"></script>
+  <script type="text/babel" src="components/audit.js"></script>
+  <script type="text/babel" src="components/pilotage.js"></script>
+  <script type="text/babel" src="components/zcal.js"></script>
+  <!-- App shell : App + AppContent + LoginScreen + ReactDOM.createRoot -->
   <script type="text/babel" src="app.js"></script>
 </body>
 
