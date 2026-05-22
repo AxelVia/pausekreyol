@@ -328,12 +328,14 @@ const { useState, useEffect, useRef } = React;
       });
 
       const CATEGORIES = [
-        { id: 'admin',  label: 'Admin structure', icon: '🏛', color: '#2834B7', bg: 'var(--pk-blue-light)',
-          exemples: ['Statuts', 'RNA', 'SIRET', 'RIB', 'R\u00e9c\u00e9piss\u00e9 pr\u00e9fecture', 'JO', 'Assurance', 'Compte certifi\u00e9'] },
-        { id: 'social', label: 'Gestion sociale', icon: '👥', color: '#6A1B9A', bg: '#F3E5F5',
-          exemples: ['Contrats artistes', 'GUSO', 'DPAE', 'Bulletins de salaire', 'D\u00e9clarations Urssaf'] },
-        { id: 'projet', label: 'Gestion de projet', icon: '📋', color: '#E65100', bg: '#FFF3E0',
-          exemples: ['Budget pr\u00e9visionnel', 'Dossier subvention', 'Convention', 'Compte-rendu projet'] },
+        { id: 'admin',     label: 'Admin structure',  icon: '🏛', color: '#2834B7', bg: 'var(--pk-blue-light)',
+          exemples: ['Statuts', 'RNA', 'SIRET', 'RIB', 'Récépissé préfecture', 'JO', 'Assurance', 'Compte certifié'] },
+        { id: 'social',    label: 'Gestion sociale',  icon: '👥', color: '#6A1B9A', bg: '#F3E5F5',
+          exemples: ['Contrats artistes', 'GUSO', 'DPAE', 'Bulletins de salaire', 'Déclarations Urssaf'] },
+        { id: 'projet',    label: 'Gestion de projet', icon: '📋', color: '#E65100', bg: '#FFF3E0',
+          exemples: ['Budget prévisionnel', 'Dossier subvention', 'Convention', 'Compte-rendu projet'] },
+        { id: 'juridique', label: 'Juridique',         icon: '⚖️', color: '#37474F', bg: '#ECEFF1',
+          exemples: ['Contrats', 'Procurations', 'Actes notariés', 'Mise en demeure', 'Décisions juridiques', 'CGV'] },
       ];
 
       function saveDocs(newDocs) {
@@ -2595,12 +2597,14 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
     // ── Tâches view ───────────────────────────────────────────────────────────────
 
     function TachesView({ taches, setTaches, setView, setSelectedClient }) {
+      const [mainTab, setMainTab] = useState('taches'); // 'taches' | 'memos'
       const [filterStatut, setFilterStatut] = useState('pending');
       const [filterCategorie, setFilterCategorie] = useState('all');
       const [filterClient, setFilterClient] = useState('all');
       const [search, setSearch] = useState('');
       const [showNew, setShowNew] = useState(false);
-      const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '' });
+      const [offres, setOffres] = useState([]);
+      const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '', offre_id: '', valeur: '', temps_estime_dj: '', bloquer_zcal: false });
 
       // Catégories avec couleurs et icônes
       const CATEGORIES = {
@@ -2663,9 +2667,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       });
 
       function markDone(id) {
-        setTaches(prev => prev.map(t => t.id === id ? { ...t, done: true } : t));
+        const now = new Date().toISOString().slice(0, 10);
+        setTaches(prev => prev.map(t => t.id === id ? { ...t, done: true, done_at: now } : t));
         const task = taches.find(t => t.id === id);
-        if (task) fetch(`${API}/taches/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) }).catch(() => { });
+        if (task) fetch(`${API}/taches/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true, done_at: now }) }).catch(() => { });
       }
 
       function markUndone(id) {
@@ -2683,6 +2688,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
       // Charge la liste clients pour le sélecteur arborescent
       useEffect(() => {
+        fetch(`${API}/offres`).then(r => r.ok ? r.json() : []).then(setOffres).catch(() => {});
         fetch(`${API}/clients`)
           .then(r => r.json())
           .then(clients => {
@@ -2711,15 +2717,41 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             const t = await res.json();
             setTaches(prev => [t, ...prev]);
             setShowNew(false);
-            setNewTask({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '' });
+            setNewTask({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '', offre_id: '', valeur: '', temps_estime_dj: '', bloquer_zcal: false });
           }
         } catch { }
       }
 
       const urgentCount = taches.filter(t => !t.done && t.priorite === 'URGENT').length;
 
+      async function exportDone() {
+        try {
+          const url = `${API}/taches/export`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('Erreur export');
+          const blob = await res.blob();
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'taches_terminees.csv';
+          a.click();
+        } catch (e) { alert('Erreur lors de l\'export : ' + e.message); }
+      }
+
       return (
         <div>
+          {/* Onglets principaux Tâches / Mémo */}
+          <div className="tabs" style={{ marginBottom: 16 }}>
+            <button className={`tab ${mainTab === 'taches' ? 'active' : ''}`} onClick={() => setMainTab('taches')}>
+              ✅ Tâches {urgentCount > 0 && <span style={{ background: 'var(--danger)', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, marginLeft: 4 }}>{urgentCount}</span>}
+            </button>
+            <button className={`tab ${mainTab === 'memos' ? 'active' : ''}`} onClick={() => setMainTab('memos')}>
+              📝 Mémo
+            </button>
+          </div>
+
+          {mainTab === 'memos' && <MemosView />}
+
+          {mainTab === 'taches' && (<div>
           {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <div>
@@ -2737,6 +2769,9 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 <option value="all">Tous clients</option>
                 {clientsUniques.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+              {filterStatut === 'done' && (
+                <button className="btn" style={{ fontSize: 12 }} onClick={exportDone} title="Exporter CSV">📊 Export</button>
+              )}
               <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowNew(true)}>+ Nouvelle tâche</button>
             </div>
           </div>
@@ -2965,6 +3000,47 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                   <div style={{ fontSize: 11, color: 'var(--warn)', marginBottom: 8 }}>⚠️ Ajoutez une deadline pour que la tâche apparaisse sur le calendrier.</div>
                 )}
 
+                {/* Offre & valorisation */}
+                <div className="form-group">
+                  <label className="form-label">Offre associée (optionnel)</label>
+                  <select className="form-input" value={newTask.offre_id || ''}
+                    onChange={e => {
+                      const o = offres.find(x => x.id === e.target.value);
+                      setNewTask(p => ({
+                        ...p,
+                        offre_id: e.target.value,
+                        valeur: o ? String(o.prix) : p.valeur,
+                        temps_estime_dj: o ? String(o.temps_dj) : p.temps_estime_dj,
+                      }));
+                    }}>
+                    <option value="">— Sélectionner une offre —</option>
+                    {offres.filter(o => o.actif !== false).map(o => (
+                      <option key={o.id} value={o.id}>{o.nom} — {o.prix} € · {o.temps_dj} demi-j.</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Valeur (€)</label>
+                    <input className="form-input" type="number" min="0" step="0.01"
+                      value={newTask.valeur || ''} onChange={e => setNewTask(p => ({ ...p, valeur: e.target.value }))}
+                      placeholder="Tarif de la prestation" />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Temps estimé (demi-journées)</label>
+                    <input className="form-input" type="number" min="0.5" step="0.5"
+                      value={newTask.temps_estime_dj || ''} onChange={e => setNewTask(p => ({ ...p, temps_estime_dj: e.target.value }))}
+                      placeholder="0.5 = demi-journée" />
+                  </div>
+                </div>
+                {newTask.temps_estime_dj && newTask.deadline && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 8, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!newTask.bloquer_zcal}
+                      onChange={e => setNewTask(p => ({ ...p, bloquer_zcal: e.target.checked }))} />
+                    🚫 Bloquer automatiquement le temps dans Zcal & Disponibilités
+                  </label>
+                )}
+
                 <div className="form-group">
                   <label className="form-label">Description</label>
                   <textarea className="form-input" rows={3} value={newTask.description}
@@ -2975,6 +3051,132 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                 <div className="modal-footer">
                   <button className="btn" onClick={() => setShowNew(false)}>Annuler</button>
                   <button className="btn btn-primary" onClick={createTask} disabled={!newTask.titre}>Créer →</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>)} {/* fin mainTab === 'taches' */}
+        </div>
+      );
+    }
+
+    // ── Mémos view ───────────────────────────────────────────────────────────────
+
+    function MemosView() {
+      const [memos, setMemos] = useState([]);
+      const [showNew, setShowNew] = useState(false);
+      const [editMemo, setEditMemo] = useState(null);
+      const [search, setSearch] = useState('');
+      const EMPTY = { titre: '', contenu: '', couleur: '#FFFDE7' };
+      const [form, setForm] = useState(EMPTY);
+
+      const COULEURS = [
+        '#FFFDE7', '#E8F5E9', '#E3F2FD', '#FCE4EC', '#F3E5F5', '#FFF3E0', '#E0F2F1', '#FAFAFA',
+      ];
+
+      useEffect(() => {
+        fetch(`${API}/memos`).then(r => r.ok ? r.json() : []).then(setMemos).catch(() => {});
+      }, []);
+
+      const filtered = memos.filter(m => !m.archive && (!search || [m.titre, m.contenu].some(v => v?.toLowerCase().includes(search.toLowerCase()))));
+
+      async function saveMemo() {
+        if (!form.titre && !form.contenu) return;
+        try {
+          if (editMemo) {
+            const res = await fetch(`${API}/memos/${editMemo.id}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
+            });
+            if (res.ok) {
+              const updated = await res.json();
+              setMemos(p => p.map(m => m.id === editMemo.id ? updated : m));
+            }
+          } else {
+            const res = await fetch(`${API}/memos`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
+            });
+            if (res.ok) {
+              const created = await res.json();
+              setMemos(p => [created, ...p]);
+            }
+          }
+        } catch {}
+        setShowNew(false);
+        setEditMemo(null);
+        setForm(EMPTY);
+      }
+
+      async function deleteMemo(id) {
+        if (!window.confirm('Supprimer ce mémo ?')) return;
+        await fetch(`${API}/memos/${id}`, { method: 'DELETE' }).catch(() => {});
+        setMemos(p => p.filter(m => m.id !== id));
+      }
+
+      function openEdit(m) {
+        setForm({ titre: m.titre, contenu: m.contenu, couleur: m.couleur || '#FFFDE7' });
+        setEditMemo(m);
+        setShowNew(true);
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>📝 Mémos — Notes internes</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="form-input" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="🔍 Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 160 }} />
+              <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => { setForm(EMPTY); setEditMemo(null); setShowNew(true); }}>+ Nouveau mémo</button>
+            </div>
+          </div>
+
+          {filtered.length === 0 && !showNew && (
+            <div className="empty">
+              <div className="empty-icon">📝</div>
+              <div className="empty-text">Aucun mémo. Créez votre premier mémo pour garder des notes, idées, brouillons…</div>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
+            {filtered.map(m => (
+              <div key={m.id} style={{ background: m.couleur || '#FFFDE7', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', position: 'relative' }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, paddingRight: 40 }}>{m.titre || '(Sans titre)'}</div>
+                <div style={{ fontSize: 12, color: '#444', whiteSpace: 'pre-wrap', lineHeight: 1.5, maxHeight: 120, overflow: 'hidden' }}>{m.contenu}</div>
+                <div style={{ fontSize: 10, color: '#999', marginTop: 8 }}>{m.updated_at?.slice(0, 10)}</div>
+                <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 4 }}>
+                  <button onClick={() => openEdit(m)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: 2 }} title="Modifier">✏️</button>
+                  <button onClick={() => deleteMemo(m.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: 2 }} title="Supprimer">🗑</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {showNew && (
+            <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowNew(false)}>
+              <div className="modal">
+                <div className="modal-title">{editMemo ? '✏️ Modifier le mémo' : '📝 Nouveau mémo'}</div>
+                <div className="form-group">
+                  <label className="form-label">Titre</label>
+                  <input className="form-input" value={form.titre} onChange={e => setForm(p => ({ ...p, titre: e.target.value }))}
+                    placeholder="Titre du mémo..." autoFocus />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Contenu</label>
+                  <textarea className="form-input" rows={8} value={form.contenu}
+                    onChange={e => setForm(p => ({ ...p, contenu: e.target.value }))}
+                    placeholder="Vos notes, idées, points importants..." style={{ resize: 'vertical' }} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Couleur</label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {COULEURS.map(c => (
+                      <button key={c} onClick={() => setForm(p => ({ ...p, couleur: c }))}
+                        style={{ width: 28, height: 28, background: c, borderRadius: 6, border: form.couleur === c ? '2px solid #333' : '1.5px solid #ccc', cursor: 'pointer' }} />
+                    ))}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => { setShowNew(false); setEditMemo(null); setForm(EMPTY); }}>Annuler</button>
+                  <button className="btn btn-primary" onClick={saveMemo}>💾 Enregistrer</button>
                 </div>
               </div>
             </div>
@@ -4135,6 +4337,8 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [filterArchive, setFilterArchive] = useState(false);
       const [filterAnnee, setFilterAnnee] = useState('tous');
       const [filterMois, setFilterMois] = useState('tous');
+      const [remiseModal, setRemiseModal] = useState(null); // { id, remise_globale_pct }
+      const [remiseVal, setRemiseVal] = useState(0);
 
       const MOIS_LABELS = ['Tous les mois','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
@@ -4421,6 +4625,12 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                       <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent)' }}>
                         {(devis.total_ht || 0).toLocaleString('fr-FR')} €
                       </div>
+                      {devis.remise_globale_pct > 0 && (
+                        <div style={{ fontSize: 11, color: 'var(--success)', fontWeight: 600 }}>
+                          🏷 Remise {devis.remise_globale_pct}% appliquée
+                          {devis.remise_globale_amt > 0 && <span style={{ fontWeight: 400, color: 'var(--text3)' }}> (−{devis.remise_globale_amt} €)</span>}
+                        </div>
+                      )}
                       {devis.acompte_montant > 0 && (
                         <div style={{ fontSize: 11, color: 'var(--text3)' }}>Acompte : {devis.acompte_montant} €</div>
                       )}
@@ -4439,6 +4649,12 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                           )}
                           {devis.statut === 'signé' && (
                             <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => patchDevis(devis.id, { statut: 'validé' })}>✅ Valider</button>
+                          )}
+                          {!['annulé', 'caduc', 'facturé'].includes(devis.statut) && (
+                            <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--pk-blue)', borderColor: 'var(--pk-blue)' }}
+                              onClick={() => { setRemiseVal(devis.remise_globale_pct || 0); setRemiseModal({ id: devis.id, total_brut: devis.total_brut || devis.total_ht }); }}>
+                              🏷 Remise
+                            </button>
                           )}
                           {!['annulé', 'caduc', 'facturé'].includes(devis.statut) && (
                             <button className="btn" style={{ fontSize: 11, padding: '3px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
@@ -4557,6 +4773,40 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           )}
 
           {showNewDevis && <NewDevisModal onClose={() => setShowNewDevis(false)} onCreated={() => { load(); setShowNewDevis(false); }} />}
+
+          {/* Modal Remise */}
+          {remiseModal && (
+            <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setRemiseModal(null)}>
+              <div className="modal" style={{ maxWidth: 380 }}>
+                <div className="modal-title">🏷 Appliquer une remise / rabais / ristourne</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
+                  La remise est calculée sur le montant brut HT du devis.
+                  {remiseModal.total_brut > 0 && (
+                    <span style={{ display: 'block', marginTop: 4 }}>
+                      Montant brut : <strong>{remiseModal.total_brut.toLocaleString('fr-FR')} €</strong>
+                      {remiseVal > 0 && <> → Net après remise : <strong style={{ color: 'var(--success)' }}>{(remiseModal.total_brut * (1 - remiseVal / 100)).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €</strong></>}
+                    </span>
+                  )}
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Remise (%)</label>
+                  <input className="form-input" type="number" min="0" max="100" step="0.5"
+                    value={remiseVal} onChange={e => setRemiseVal(parseFloat(e.target.value) || 0)}
+                    autoFocus />
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                    0% = pas de remise · 10% = rabais de 10% sur le montant total
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => setRemiseModal(null)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={async () => {
+                    await patchDevis(remiseModal.id, { remise_globale_pct: remiseVal });
+                    setRemiseModal(null);
+                  }}>✅ Appliquer la remise</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Modal PDF */}
           {pdfModal && (
@@ -5873,6 +6123,10 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
           });
           if (res.ok) {
             const saved = await res.json();
+            // Avertissement règle 30 jours
+            if (saved.tarif_urgence) {
+              alert(`⚠️ TARIF URGENCE activé !\n\nDélai restant avant la deadline : ${saved.jours_restants} jour(s).\nLe cadre standard exige minimum 30 jours entre la demande et la soumission.\n\nUn supplément urgence de +${saved.supplement_urgence_pct}% s'applique.`);
+            }
             setSubventions(p => [saved, ...p]);
           }
         } catch {}
@@ -6084,17 +6338,29 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                     <div key={s.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'flex-start', opacity: s.archived ? 0.6 : 1, cursor: 'pointer' }}
                       onClick={e => { if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'BUTTON') setSelectedSub(s); }}>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{s.modele_nom || s.organisme}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>
-                          {s.client_nom && <span style={{ color: 'var(--pk-blue)', fontWeight: 500 }}>{s.client_nom}</span>}
-                          {s.projet_nom && <span style={{ color: 'var(--text3)' }}> › {s.projet_nom}</span>}
-                        </div>
-                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11 }}>
-                          {s.deadline && dl && <span style={{ color: dl.c }}>⏰ Dépôt : {dl.txt}</span>}
-                          {s.date_retour_prevue && dlRetour && <span style={{ color: dlRetour.c }}>📬 Retour prévu : {dlRetour.txt}</span>}
-                        </div>
-                        {s.notes && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3, fontStyle: 'italic' }}>{s.notes}</div>}
-                      </div>
+                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                         <div style={{ fontWeight: 600, fontSize: 13 }}>{s.modele_nom || s.organisme}</div>
+                         {s.tarif_urgence && (
+                           <span style={{ background: '#B71C1C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10 }}>
+                             🚨 URGENCE +{s.supplement_urgence_pct || 30}%
+                           </span>
+                         )}
+                       </div>
+                       <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>
+                         {s.client_nom && <span style={{ color: 'var(--pk-blue)', fontWeight: 500 }}>{s.client_nom}</span>}
+                         {s.projet_nom && <span style={{ color: 'var(--text3)' }}> › {s.projet_nom}</span>}
+                       </div>
+                       {s.tarif_urgence && s.jours_restants != null && (
+                         <div style={{ fontSize: 11, color: '#B71C1C', marginBottom: 3, fontWeight: 500 }}>
+                          ⚠️ {s.jours_restants} jour(s) restant(s) — délai {'<'} 30j, supplément urgence applicable
+                         </div>
+                       )}
+                       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11 }}>
+                         {s.deadline && dl && <span style={{ color: dl.c }}>⏰ Dépôt : {dl.txt}</span>}
+                         {s.date_retour_prevue && dlRetour && <span style={{ color: dlRetour.c }}>📬 Retour prévu : {dlRetour.txt}</span>}
+                       </div>
+                       {s.notes && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3, fontStyle: 'italic' }}>{s.notes}</div>}
+                     </div>
                       <div style={{ flexShrink: 0, textAlign: 'right' }}>
                         {s.montant_sollicite && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>{Number(s.montant_sollicite).toLocaleString('fr-FR')} €</div>}
                         <select style={{ fontSize: 11, padding: '3px 6px', border: `1px solid ${sc.c}40`, borderRadius: 6, background: sc.bg, color: sc.c, fontWeight: 600, cursor: 'pointer', marginBottom: 6 }}
@@ -8114,6 +8380,190 @@ function EmailingView() {
 
 
     // ══════════════════════════════════════════════════════════════════════════════
+    // OFFRES — Catalogue des prestations
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    function OffresView() {
+      const [offres, setOffres] = useState([]);
+      const [showNew, setShowNew] = useState(false);
+      const [editOffre, setEditOffre] = useState(null);
+      const [search, setSearch] = useState('');
+      const EMPTY = { nom: '', description: '', prix: '', temps_dj: '0.5', categorie: 'admin', actif: true };
+      const [form, setForm] = useState(EMPTY);
+
+      const CAT_LABELS = {
+        admin: 'Admin', subvention: 'Subvention', gestion_client: 'Gestion client',
+        comm: 'Communication', finance: 'Finance', juridique: 'Juridique', autre: 'Autre',
+      };
+
+      useEffect(() => {
+        fetch(`${API}/offres`).then(r => r.ok ? r.json() : []).then(setOffres).catch(() => {});
+      }, []);
+
+      const filtered = offres.filter(o => !search || [o.nom, o.description, o.categorie].some(v => v?.toLowerCase().includes(search.toLowerCase())));
+
+      async function saveOffre() {
+        if (!form.nom) return;
+        const payload = { ...form, prix: parseFloat(form.prix) || 0, temps_dj: parseFloat(form.temps_dj) || 0.5 };
+        try {
+          if (editOffre) {
+            const res = await fetch(`${API}/offres/${editOffre.id}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+            });
+            if (res.ok) { const updated = await res.json(); setOffres(p => p.map(o => o.id === editOffre.id ? updated : o)); }
+          } else {
+            const res = await fetch(`${API}/offres`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+            });
+            if (res.ok) { const created = await res.json(); setOffres(p => [...p, created]); }
+          }
+        } catch {}
+        setShowNew(false); setEditOffre(null); setForm(EMPTY);
+      }
+
+      async function deleteOffre(id) {
+        if (!window.confirm('Supprimer cette offre ?')) return;
+        await fetch(`${API}/offres/${id}`, { method: 'DELETE' }).catch(() => {});
+        setOffres(p => p.filter(o => o.id !== id));
+      }
+
+      async function toggleActif(o) {
+        const res = await fetch(`${API}/offres/${o.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actif: !o.actif }),
+        }).catch(() => null);
+        if (res?.ok) setOffres(p => p.map(x => x.id === o.id ? { ...x, actif: !x.actif } : x));
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>📦 Catalogue des Offres</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>Listez vos prestations, tarifs et temps d'exécution estimés</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="form-input" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="🔍 Rechercher..." style={{ fontSize: 12, padding: '5px 10px', width: 160 }} />
+              <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => { setForm(EMPTY); setEditOffre(null); setShowNew(true); }}>+ Nouvelle offre</button>
+            </div>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">📦</div>
+              <div className="empty-text">Aucune offre. Créez votre catalogue pour valoriser et rattacher des tâches à des prestations précises.</div>
+            </div>
+          ) : (
+            <div className="card">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, padding: '4px 0' }}>
+                {filtered.map(o => (
+                  <div key={o.id} style={{ border: `1.5px solid ${o.actif ? 'var(--border)' : 'var(--border2)'}`, borderRadius: 10, padding: '14px 16px', background: o.actif ? 'var(--surface)' : 'var(--surface2)', opacity: o.actif ? 1 : 0.65 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{o.nom}</div>
+                      <span style={{ fontSize: 10, background: 'var(--pk-blue-light)', color: 'var(--pk-blue)', padding: '1px 7px', borderRadius: 8, flexShrink: 0 }}>
+                        {CAT_LABELS[o.categorie] || o.categorie}
+                      </span>
+                    </div>
+                    {o.description && <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.4 }}>{o.description}</div>}
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{(o.prix || 0).toLocaleString('fr-FR')} €</div>
+                      <div style={{ fontSize: 12, color: 'var(--text2)' }}>⏱ {o.temps_dj} demi-j. ({o.temps_dj <= 0.5 ? 'demi-journée' : o.temps_dj < 1 ? `${o.temps_dj} demi-journée` : o.temps_dj === 1 ? '1 journée' : `${o.temps_dj} journée${o.temps_dj > 1 ? 's' : ''}`})</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button className="btn" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setForm({ nom: o.nom, description: o.description, prix: String(o.prix), temps_dj: String(o.temps_dj), categorie: o.categorie, actif: o.actif }); setEditOffre(o); setShowNew(true); }}>✏️ Modifier</button>
+                      <button className="btn" style={{ fontSize: 11, padding: '2px 8px', color: o.actif ? 'var(--warn)' : 'var(--success)' }} onClick={() => toggleActif(o)}>
+                        {o.actif ? '⏸ Désactiver' : '▶ Activer'}
+                      </button>
+                      <button className="btn" style={{ fontSize: 11, padding: '2px 8px', color: 'var(--danger)', borderColor: 'transparent' }} onClick={() => deleteOffre(o.id)}>🗑</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showNew && (
+            <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowNew(false)}>
+              <div className="modal">
+                <div className="modal-title">{editOffre ? '✏️ Modifier l\'offre' : '📦 Nouvelle offre'}</div>
+                <div className="form-group">
+                  <label className="form-label">Nom de la prestation *</label>
+                  <input className="form-input" value={form.nom} onChange={e => setForm(p => ({ ...p, nom: e.target.value }))}
+                    placeholder="Ex: Montage dossier subvention DRAC..." autoFocus />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Description</label>
+                  <textarea className="form-input" rows={3} value={form.description}
+                    onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+                    placeholder="Détail de ce qui est inclus..." style={{ resize: 'vertical' }} />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Prix (€ HT)</label>
+                    <input className="form-input" type="number" min="0" step="0.01"
+                      value={form.prix} onChange={e => setForm(p => ({ ...p, prix: e.target.value }))} placeholder="0" />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Temps estimé (demi-journées)</label>
+                    <input className="form-input" type="number" min="0.5" step="0.5"
+                      value={form.temps_dj} onChange={e => setForm(p => ({ ...p, temps_dj: e.target.value }))} />
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 3 }}>0.5 = demi-journée · 1 = journée complète</div>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Catégorie</label>
+                  <select className="form-input" value={form.categorie} onChange={e => setForm(p => ({ ...p, categorie: e.target.value }))}>
+                    {Object.entries(CAT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => { setShowNew(false); setEditOffre(null); setForm(EMPTY); }}>Annuler</button>
+                  <button className="btn btn-primary" onClick={saveOffre} disabled={!form.nom}>💾 Enregistrer</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // STRATÉGIE & PILOTAGE
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    function StrategiePilotageView() {
+      return (
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>📈 Stratégie & Pilotage</div>
+          <div className="metrics-grid" style={{ marginBottom: 20 }}>
+            <div className="metric-card accent-info">
+              <div className="metric-label">Vision</div>
+              <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.5, marginTop: 4 }}>
+                Centraliser les indicateurs clés de pilotage de l'activité Pause Kréyol.
+              </div>
+            </div>
+            <div className="metric-card accent-green">
+              <div className="metric-label">Prochaines étapes</div>
+              <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.5, marginTop: 4 }}>
+                Définir les OKRs, objectifs semestriels et axes stratégiques.
+              </div>
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">📊 Tableau de pilotage stratégique</div>
+            </div>
+            <div style={{ padding: '20px 0', color: 'var(--text3)', fontSize: 13, textAlign: 'center' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>🚧</div>
+              <div>Cette section est en cours de construction.</div>
+              <div style={{ marginTop: 6 }}>Elle accueillera les OKRs, KPIs, axes stratégiques, et le pilotage à moyen/long terme de l'activité.</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
     // ZCAL & DISPONIBILITÉS — Sync avec Google Calendar
     // ══════════════════════════════════════════════════════════════════════════════
 
@@ -8582,10 +9032,12 @@ function EmailingView() {
         { key: 'dashboard', label: 'Tableau de bord', icon: icons.dashboard, section: 'gestion' },
         { key: 'clients', label: 'Dossiers clients', icon: icons.clients, section: 'gestion' },
         { key: 'taches', label: 'Tâches', icon: icons.taches, section: 'gestion', badge: urgentCount || null },
+        { key: 'offres', label: 'Offres', icon: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 7h6M5 10h4"/><circle cx="12" cy="3" r="2" fill="currentColor" stroke="none"/></svg>, section: 'gestion' },
         { key: 'devis', label: 'Devis & Factures', icon: icons.devis, section: 'gestion' },
         { key: 'subventions', label: 'Subventions', icon: icons.subventions, section: 'gestion' },
         { key: 'rh', label: 'Ressources Humaines', icon: icons.rh, section: 'gestion' },
         { key: 'audit', label: 'Audits', icon: icons.audit, section: 'gestion' },
+        { key: 'pilotage', label: 'Stratégie & Pilotage', icon: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M2 12L6 7L9 9L14 4"/><circle cx="14" cy="4" r="1.5" fill="currentColor" stroke="none"/></svg>, section: 'gestion' },
         { key: 'calendrier', label: 'Calendriers', icon: icons.calendrier, section: 'outils' },
         { key: 'zcal', label: 'Zcal & Dispos', icon: icons.zcal, section: 'outils' },
         { key: 'annuaire', label: 'Annuaire', icon: icons.annuaire, section: 'outils' },
@@ -8593,7 +9045,7 @@ function EmailingView() {
         { key: 'comm', label: 'Comm & Assets', icon: icons.comm, section: 'outils' },
       ];
 
-      const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', devis: 'Devis & Factures', subventions: 'Subventions', rh: 'Ressources Humaines', audit: 'Audits', zcal: 'Zcal & Disponibilités', annuaire: 'Annuaire', calendrier: 'Calendriers', emailing: 'Gestion Emailing', comm: 'Communication' };
+      const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', offres: 'Catalogue des Offres', devis: 'Devis & Factures', subventions: 'Subventions', rh: 'Ressources Humaines', audit: 'Audits', pilotage: 'Stratégie & Pilotage', zcal: 'Zcal & Disponibilités', annuaire: 'Annuaire', calendrier: 'Calendriers', emailing: 'Gestion Emailing', comm: 'Communication' };
 
       return (
         <div className="app">
@@ -8673,10 +9125,12 @@ function EmailingView() {
               {view === 'clients' && !selectedClient && <ClientsView clients={data?.clients || []} onNewClient={() => setShowModal(true)} onOpenClient={slug => setSelectedClient(slug)} />}
               {view === 'clients' && selectedClient && <ClientDetailView slug={selectedClient} onBack={() => setSelectedClient(null)} onRefresh={fetchDashboard} />}
               {view === 'taches' && <TachesView taches={taches} setTaches={setTaches} setView={setView} setSelectedClient={setSelectedClient} />}
+              {view === 'offres' && <OffresView />}
               {view === 'devis' && <DevisFacturesView setView={setView} setSelectedClient={setSelectedClient} newDevisTrigger={newDevisFromTopbar} />}
               {view === 'subventions' && <SubventionsView clients={data?.clients || []} />}
           {view === 'rh' && <RHView clients={data?.clients || []} />}
           {view === 'audit' && <AuditView clients={data?.clients || []} />}
+          {view === 'pilotage' && <StrategiePilotageView />}
           {view === 'zcal' && <ZcalView clients={data?.clients || []} />}
               {view === 'annuaire' && <AnnuaireView />}
               {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} onSwitchToZcal={() => setView('zcal')} />}
@@ -8704,7 +9158,7 @@ function EmailingView() {
               {/* Bouton Plus — accès aux autres sections */}
               <div style={{ position: 'relative', flex: 1 }}>
                 <button
-                  className={`mobile-nav-item ${['subventions', 'calendrier', 'annuaire', 'comm'].includes(view) ? 'active' : ''}`}
+                  className={`mobile-nav-item ${['subventions', 'calendrier', 'annuaire', 'comm', 'offres', 'pilotage'].includes(view) ? 'active' : ''}`}
                   onClick={() => document.getElementById('mobile-more-menu')?.classList.toggle('open')}
                   style={{ width: '100%' }}
                 >

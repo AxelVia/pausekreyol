@@ -5,6 +5,7 @@ Lance avec : uvicorn api.main:app --reload
 
 import os
 import io
+import math
 import json
 import shutil
 import logging
@@ -270,6 +271,16 @@ def _restore_devis_factures_drive():
                 drive_update_json(fid, comm_data)
             else:
                 drive_upload_json(comm_data, "comm.json", root_id)
+        if MEMOS_FILE.exists():
+            memos_data = json.loads(MEMOS_FILE.read_text())
+            fid = drive_find_file("memos.json", root_id)
+            if fid: drive_update_json(fid, memos_data)
+            else: drive_upload_json(memos_data, "memos.json", root_id)
+        if OFFRES_FILE.exists():
+            offres_data = json.loads(OFFRES_FILE.read_text())
+            fid = drive_find_file("offres.json", root_id)
+            if fid: drive_update_json(fid, offres_data)
+            else: drive_upload_json(offres_data, "offres.json", root_id)
         # Backup RH
         if RH_FILE.exists():
             rh_data = json.loads(RH_FILE.read_text())
@@ -443,6 +454,30 @@ async def lifespan(app: FastAPI):
                 logger.info("comm.json restauré depuis Drive")
         except Exception as e:
             logger.warning(f"comm.json non restauré : {e}")
+
+        # Restaure memos.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            memos_drive = drive_download_json("memos.json", root_id)
+            if memos_drive:
+                MEMOS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                MEMOS_FILE.write_text(json.dumps(memos_drive, ensure_ascii=False, indent=2))
+                logger.info(f"memos.json restauré depuis Drive ({len(memos_drive)} mémos)")
+        except Exception as e:
+            logger.warning(f"memos.json non restauré : {e}")
+
+        # Restaure offres.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            offres_drive = drive_download_json("offres.json", root_id)
+            if offres_drive:
+                OFFRES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                OFFRES_FILE.write_text(json.dumps(offres_drive, ensure_ascii=False, indent=2))
+                logger.info(f"offres.json restauré depuis Drive ({len(offres_drive)} offres)")
+        except Exception as e:
+            logger.warning(f"offres.json non restauré : {e}")
 
         # Restaure calendrier.json depuis Drive
         try:
@@ -1074,6 +1109,8 @@ SUBVENTIONS_FILE = CLIENTS_DIR / "subventions.json"
 ANNUAIRE_FILE = CLIENTS_DIR / "annuaire.json"
 CAMPAIGNS_FILE = CLIENTS_DIR / "campaigns.json"
 COMM_FILE = CLIENTS_DIR / "comm.json"
+MEMOS_FILE = CLIENTS_DIR / "memos.json"
+OFFRES_FILE = CLIENTS_DIR / "offres.json"
 
 def _load_subventions() -> list:
     if SUBVENTIONS_FILE.exists():
@@ -1183,6 +1220,56 @@ def _save_tasks(tasks: list):
             logger.warning(f"tasks.json non sauvegardé sur Drive : {e}")
 
 
+def _load_memos() -> list:
+    """Charge memos.json."""
+    if MEMOS_FILE.exists():
+        return json.loads(MEMOS_FILE.read_text())
+    return []
+
+
+def _save_memos(memos: list):
+    """Sauvegarde memos.json localement et sur Drive."""
+    _backup_json(MEMOS_FILE)
+    MEMOS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MEMOS_FILE.write_text(json.dumps(memos, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("memos.json", root_id)
+            if file_id:
+                drive_update_json(file_id, memos)
+            else:
+                drive_upload_json(memos, "memos.json", root_id)
+        except Exception as e:
+            logger.warning(f"memos.json non sauvegardé sur Drive : {e}")
+
+
+def _load_offres() -> list:
+    """Charge offres.json (catalogue de prestations)."""
+    if OFFRES_FILE.exists():
+        return json.loads(OFFRES_FILE.read_text())
+    return []
+
+
+def _save_offres(offres: list):
+    """Sauvegarde offres.json localement et sur Drive."""
+    _backup_json(OFFRES_FILE)
+    OFFRES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    OFFRES_FILE.write_text(json.dumps(offres, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("offres.json", root_id)
+            if file_id:
+                drive_update_json(file_id, offres)
+            else:
+                drive_upload_json(offres, "offres.json", root_id)
+        except Exception as e:
+            logger.warning(f"offres.json non sauvegardé sur Drive : {e}")
+
+
 @app.get("/taches")
 def get_taches(
     page: int = 1,
@@ -1219,7 +1306,7 @@ def get_taches(
 
 @app.post("/taches")
 def create_tache(body: dict):
-    """Crée une tâche manuellement."""
+    """Crée une tâche manuellement. Supporte offre_id, valeur, temps_estime_dj, bloquer_zcal."""
     task = {
         "id": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_manual",
         "created_at": datetime.now().isoformat(),
@@ -1232,11 +1319,67 @@ def create_tache(body: dict):
         "client_slug": body.get("client_slug"),
         "categorie": body.get("categorie", "admin"),
         "type": body.get("type", "manuel"),
+        "offre_id": body.get("offre_id"),
+        "valeur": body.get("valeur"),
+        "temps_estime_dj": body.get("temps_estime_dj"),
         "done": False,
     }
     tasks = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
     tasks.append(task)
     _save_tasks(tasks)
+
+    # Blocage Zcal si demandé et deadline présente
+    if body.get("bloquer_zcal") and task.get("deadline") and task.get("temps_estime_dj"):
+        try:
+            demi_journees = float(task["temps_estime_dj"])
+            date_debut = task["deadline"]
+            # En demi-journée : AM = 09:00-13:00, PM = 14:00-18:00
+            # Arrondi : on bloque autant de créneaux que nécessaire
+            heures_debut = ["09:00", "14:00"]
+            heures_fin   = ["13:00", "18:00"]
+            nb_creneaux  = math.ceil(demi_journees)
+            # Calcul des jours à bloquer (1 demi-journée = 1 créneau)
+            from datetime import date as _date, timedelta as _td
+            d = _date.fromisoformat(date_debut)
+            creneaux_restants = nb_creneaux
+            jour_offset = 0
+            while creneaux_restants > 0:
+                jour_str = (d + _td(days=jour_offset)).isoformat()
+                nb_ce_jour = min(2, creneaux_restants)
+                for i in range(nb_ce_jour):
+                    cal = _load_cal()
+                    if "indisponibilites" not in cal:
+                        cal["indisponibilites"] = []
+                    local_id = f"indispo_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+                    local_event = {
+                        "id": local_id,
+                        "titre": indispo_body["titre"],
+                        "date": jour_str,
+                        "date_fin": jour_str,
+                        "heure_debut": indispo_body["heure_debut"],
+                        "heure_fin": indispo_body["heure_fin"],
+                        "notes": indispo_body["notes"],
+                        "type": "indisponibilite",
+                        "task_id": task["id"],
+                        "gcal_id": None,
+                        "created_at": datetime.now().isoformat(),
+                    }
+                    cal["indisponibilites"].append(local_event)
+                    _save_cal(cal)
+                    creneaux_restants -= 1
+                jour_offset += 1
+            task["zcal_bloque"] = True
+            # Met à jour la tâche avec le flag
+            tasks_up = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else []
+            for t in tasks_up:
+                if t["id"] == task["id"]:
+                    t["zcal_bloque"] = True
+                    break
+            _save_tasks(tasks_up)
+            logger.info(f"Zcal bloqué pour tâche {task['id']} ({demi_journees} demi-journée(s))")
+        except Exception as e:
+            logger.warning(f"Blocage Zcal tâche : {e}")
+
     return task
 
 
@@ -1252,6 +1395,145 @@ def update_tache(task_id: str, body: dict):
             _save_tasks(tasks)
             return t
     raise HTTPException(status_code=404, detail="Tâche non trouvée")
+
+
+@app.get("/taches/export")
+def export_taches_terminees(client_slug: Optional[str] = None):
+    """
+    Exporte les tâches terminées en CSV (valeur, temps passé).
+    Optionnel : filtrer par client_slug.
+    """
+    from fastapi.responses import StreamingResponse
+    import csv
+    import io as _io
+
+    tasks = _load_tasks()
+    done_tasks = [t for t in tasks if t.get("done")]
+    if client_slug:
+        done_tasks = [t for t in done_tasks if t.get("client_slug") == client_slug]
+
+    output = _io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["Titre", "Client", "Projet", "Catégorie", "Source", "Deadline", "Terminée le",
+                     "Offre", "Valeur (€)", "Temps estimé (demi-journées)", "Description"])
+    for t in done_tasks:
+        writer.writerow([
+            t.get("titre", ""),
+            t.get("client_detecte", ""),
+            t.get("projet_nom", ""),
+            t.get("categorie", ""),
+            t.get("source", ""),
+            t.get("deadline", ""),
+            t.get("done_at", ""),
+            t.get("offre_id", ""),
+            t.get("valeur", ""),
+            t.get("temps_estime_dj", ""),
+            t.get("description", ""),
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        _io.BytesIO(output.getvalue().encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=taches_terminees.csv"},
+    )
+
+
+# ── Routes Mémos ──────────────────────────────────────────────────────────────
+
+@app.get("/memos")
+def get_memos():
+    """Retourne tous les mémos."""
+    return _load_memos()
+
+
+@app.post("/memos", status_code=201)
+def create_memo(body: dict):
+    """Crée un nouveau mémo."""
+    memos = _load_memos()
+    memo = {
+        "id": f"memo_{datetime.now().strftime('%Y%m%d_%H%M%S%f')}",
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+        "titre": body.get("titre", "Sans titre"),
+        "contenu": body.get("contenu", ""),
+        "couleur": body.get("couleur", "#FFFDE7"),
+        "client_slug": body.get("client_slug"),
+        "tags": body.get("tags", []),
+        "archive": False,
+    }
+    memos.insert(0, memo)
+    _save_memos(memos)
+    return memo
+
+
+@app.patch("/memos/{memo_id}")
+def update_memo(memo_id: str, body: dict):
+    """Met à jour un mémo."""
+    memos = _load_memos()
+    for m in memos:
+        if m["id"] == memo_id:
+            m.update(body)
+            m["updated_at"] = datetime.now().isoformat()
+            _save_memos(memos)
+            return m
+    raise HTTPException(status_code=404, detail="Mémo non trouvé")
+
+
+@app.delete("/memos/{memo_id}")
+def delete_memo(memo_id: str):
+    """Supprime un mémo."""
+    memos = _load_memos()
+    memos = [m for m in memos if m["id"] != memo_id]
+    _save_memos(memos)
+    return {"status": "deleted"}
+
+
+# ── Routes Offres ─────────────────────────────────────────────────────────────
+
+@app.get("/offres")
+def get_offres():
+    """Retourne le catalogue d'offres/prestations."""
+    return _load_offres()
+
+
+@app.post("/offres", status_code=201)
+def create_offre(body: dict):
+    """Crée une nouvelle offre dans le catalogue."""
+    offres = _load_offres()
+    offre = {
+        "id": f"offre_{datetime.now().strftime('%Y%m%d_%H%M%S%f')}",
+        "created_at": datetime.now().isoformat(),
+        "nom": body.get("nom", "Sans titre"),
+        "description": body.get("description", ""),
+        "prix": float(body.get("prix", 0)),
+        "temps_dj": float(body.get("temps_dj", 0.5)),  # demi-journées
+        "categorie": body.get("categorie", "admin"),
+        "actif": True,
+    }
+    offres.append(offre)
+    _save_offres(offres)
+    return offre
+
+
+@app.patch("/offres/{offre_id}")
+def update_offre(offre_id: str, body: dict):
+    """Met à jour une offre."""
+    offres = _load_offres()
+    for o in offres:
+        if o["id"] == offre_id:
+            o.update(body)
+            _save_offres(offres)
+            return o
+    raise HTTPException(status_code=404, detail="Offre non trouvée")
+
+
+@app.delete("/offres/{offre_id}")
+def delete_offre(offre_id: str):
+    """Supprime une offre du catalogue."""
+    offres = _load_offres()
+    offres = [o for o in offres if o["id"] != offre_id]
+    _save_offres(offres)
+    return {"status": "deleted"}
 
 
 @app.post("/agent/run")
@@ -2676,10 +2958,30 @@ def update_devis(devis_id: str, body: dict):
     if "prestations" in body:
         total = sum(float(p.get("quantite", 1)) * float(p.get("tarif_unitaire", 0))
                     for p in body["prestations"])
-        d["total_ht"] = round(total, 2)
-        acompte = round(total * float(d.get("acompte_pct", 30)) / 100, 2)
+        d["total_brut"] = round(total, 2)
+        remise_pct = float(d.get("remise_globale_pct", 0))
+        remise_amt = round(total * remise_pct / 100, 2)
+        total_net = round(total - remise_amt, 2)
+        d["remise_globale_amt"] = remise_amt
+        d["total_ht"] = total_net
+        acompte = round(total_net * float(d.get("acompte_pct", 30)) / 100, 2)
         d["acompte_montant"] = acompte
-        d["solde"] = round(total - acompte, 2)
+        d["solde"] = round(total_net - acompte, 2)
+
+    # Recalcule si remise modifiée
+    if "remise_globale_pct" in body:
+        total_brut = float(d.get("total_brut") or d.get("total_ht", 0))
+        remise_pct = float(body["remise_globale_pct"])
+        remise_amt = round(total_brut * remise_pct / 100, 2)
+        total_net = round(total_brut - remise_amt, 2)
+        d["total_brut"] = total_brut
+        d["remise_globale_pct"] = remise_pct
+        d["remise_globale_amt"] = remise_amt
+        d["total_ht"] = total_net
+        acompte = round(total_net * float(d.get("acompte_pct", 30)) / 100, 2)
+        d["acompte_montant"] = acompte
+        d["solde"] = round(total_net - acompte, 2)
+        logger.info(f"Remise {remise_pct}% appliquée sur devis {devis_id} : -{remise_amt}€ → {total_net}€ net")
 
     # Calcule les échéances détaillées si facilité de paiement
     if body.get("facilite_paiement") or body.get("date_signature"):
@@ -3608,11 +3910,35 @@ def get_subventions():
 
 @app.post("/subventions")
 def post_subvention(data: dict):
+    """
+    Crée une demande de subvention.
+    Règle 30 jours : si le délai entre création et deadline < 30 jours → tarif urgence.
+    """
     subs = _load_subventions()
     if "id" not in data:
-        from datetime import datetime
         data["id"] = f"sub_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
         data["created_at"] = datetime.now().isoformat()
+
+    # ── Règle des 30 jours ──────────────────────────────────────────────────
+    deadline = data.get("deadline") or data.get("date_soumission")
+    if deadline:
+        try:
+            from datetime import date as _date
+            d_creation = _date.today()
+            d_deadline = _date.fromisoformat(str(deadline)[:10])
+            jours_restants = (d_deadline - d_creation).days
+            if jours_restants < 30:
+                data["tarif_urgence"] = True
+                data["jours_restants"] = jours_restants
+                data["supplement_urgence_pct"] = 30
+                logger.info(f"Subvention urgence : {jours_restants}j restants → +30%")
+            else:
+                data["tarif_urgence"] = False
+                data["jours_restants"] = jours_restants
+                data["supplement_urgence_pct"] = 0
+        except Exception as e:
+            logger.warning(f"Calcul règle 30j subvention : {e}")
+
     subs.insert(0, data)
     _save_subventions(subs)
     return data
