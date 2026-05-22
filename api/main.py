@@ -537,6 +537,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"prospects.json non restauré : {e}")
 
+        # Restaure ai_usage.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            ai_usage_drive = drive_download_json("ai_usage.json", root_id)
+            if ai_usage_drive:
+                AI_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                AI_USAGE_FILE.write_text(json.dumps(ai_usage_drive, ensure_ascii=False, indent=2))
+                logger.info(f"ai_usage.json restauré depuis Drive ({len(ai_usage_drive)} entrées)")
+        except Exception as e:
+            logger.warning(f"ai_usage.json non restauré : {e}")
+
     scheduler = None
     if env == "production" and gmail_token:
         scheduler = BackgroundScheduler()
@@ -1773,12 +1785,12 @@ Valeurs autorisées : verdict = "POSSIBLE" | "SOUS CONDITIONS" | "DÉCONSEILLÉ"
         ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
         try:
             response = ai.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
-            _log_ai_usage("prospect", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+            _log_ai_usage("prospect", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             result = json.loads(raw)
@@ -1949,12 +1961,12 @@ Les scores sont sur 100."""
         ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
         try:
             response = ai.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
-            _log_ai_usage("strategie", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+            _log_ai_usage("strategie", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             result = json.loads(raw)
@@ -2085,12 +2097,12 @@ Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
         ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
         try:
             response = ai.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=3000,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
-            _log_ai_usage("analyse_formulaire_subvention", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+            _log_ai_usage("analyse_formulaire_subvention", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             result = json.loads(raw)
@@ -2451,12 +2463,12 @@ Réponds UNIQUEMENT en JSON valide :
 
     try:
         response = ai.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = response.content[0].text.strip()
-        _log_ai_usage("sync_projet", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+        _log_ai_usage("sync_projet", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         analyse = json.loads(raw)
@@ -2966,12 +2978,12 @@ Réponds UNIQUEMENT en JSON valide :
 
         try:
             response = ai.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
-            _log_ai_usage("faisabilite", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+            _log_ai_usage("faisabilite", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             result = json.loads(raw)
@@ -4038,12 +4050,12 @@ Génère l'email complet avec l'objet."""
 
     try:
         response = ai.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
         email_text = response.content[0].text.strip()
-        _log_ai_usage("email", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+        _log_ai_usage("email", "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens)
         return {"email": email_text, "client": client_nom, "type": email_type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur génération email : {e}")
@@ -5230,20 +5242,162 @@ def export_formulaire_subvention(sub_id: str):
             ws.cell(r, col).alignment = Alignment(horizontal="center" if col in [2,3] else "left")
     ws.append([])
 
-    # ── Section 4 : Historique / Observations ──
-    section_header(ws, "4. SUIVI ET OBSERVATIONS")
+    # ── Section 4 : Budget (⚠️ point de vigilance) ──
+    RED = "C00000"
+    section_header(ws, "4. BUDGET — ⚠️ POINT DE VIGILANCE", RED)
+    r = ws.max_row
+    ws.cell(r, 1).font = Font(bold=True, size=11, color="FFFFFF", name="DM Sans")
+
+    ws.append(["⚠️ ATTENTION — Le budget doit être préparé selon le modèle OFFICIEL fourni par l'organisme dans son appel à projets.",
+               "", "", ""])
+    r = ws.max_row
+    ws.merge_cells(f"A{r}:D{r}")
+    ws.cell(r, 1).font = Font(bold=True, size=10, color=RED, name="DM Sans")
+    ws.cell(r, 1).fill = PatternFill("solid", fgColor="FFF3E0")
+    ws.cell(r, 1).alignment = Alignment(wrap_text=True)
+    ws.row_dimensions[r].height = 30
+    ws.cell(r, 1).border = bdr()
+
+    ws.append(["Un budget générique (non conforme au modèle AAP) entraîne souvent le REJET du dossier.",
+               "", "", ""])
+    r = ws.max_row
+    ws.merge_cells(f"A{r}:D{r}")
+    ws.cell(r, 1).font = Font(size=9, color="9A3412", name="DM Sans")
+    ws.cell(r, 1).fill = PatternFill("solid", fgColor="FFF3E0")
+    ws.cell(r, 1).alignment = Alignment(wrap_text=True)
+    ws.row_dimensions[r].height = 20
+    ws.cell(r, 1).border = bdr()
+    ws.append([])
+
+    # Tableau budget simplifié
+    ws.append(["Poste de dépense", "Montant HT (€)", "Commentaire", ""])
+    hdr_r = ws.max_row
+    for col, h in enumerate(["Poste de dépense", "Montant HT (€)", "Commentaire", ""], 1):
+        c = ws.cell(hdr_r, col)
+        c.font = hdr(size=10)
+        c.fill = PatternFill("solid", fgColor=RED)
+        c.alignment = Alignment(horizontal="center")
+        c.border = bdr()
+
+    POSTES_BUDGET = [
+        ("Ressources humaines (salaires + charges)", ""),
+        ("Prestations artistiques", ""),
+        ("Cession / droits d'auteur", ""),
+        ("Location matériel / équipements", ""),
+        ("Location / mise à disposition de locaux", ""),
+        ("Communication / diffusion", ""),
+        ("Déplacements / hébergement", ""),
+        ("Administration / frais de gestion", ""),
+        ("Autres dépenses", ""),
+        ("TOTAL DÉPENSES", ""),
+    ]
+    for i, (poste, _) in enumerate(POSTES_BUDGET):
+        ws.append([poste, "", "", ""])
+        r = ws.max_row
+        bg = LIGHT if i % 2 == 0 else "FFFFFF"
+        if "TOTAL" in poste:
+            bg = PEACH
+        for col in range(1, 5):
+            ws.cell(r, col).fill = PatternFill("solid", fgColor=bg)
+            ws.cell(r, col).border = bdr()
+            ws.cell(r, col).font = body(bold="TOTAL" in poste)
+    ws.append([])
+
+    ws.append(["Ressource", "Montant (€)", "Confirmée ?", ""])
+    hdr_r = ws.max_row
+    for col, h in enumerate(["Ressource / Financement", "Montant (€)", "Confirmée ?", ""], 1):
+        c = ws.cell(hdr_r, col)
+        c.font = hdr(size=10)
+        c.fill = PatternFill("solid", fgColor="1B5E20")
+        c.alignment = Alignment(horizontal="center")
+        c.border = bdr()
+
+    RESSOURCES_BUDGET = [
+        "Subvention demandée (présent dossier)",
+        "Autofinancement (fonds propres)",
+        "Autres subventions confirmées",
+        "Co-financements partenaires",
+        "Recettes propres (billetterie, ventes...)",
+        "TOTAL RESSOURCES",
+    ]
+    for i, res in enumerate(RESSOURCES_BUDGET):
+        ws.append([res, "", "☐", ""])
+        r = ws.max_row
+        bg = LIGHT if i % 2 == 0 else "FFFFFF"
+        if "TOTAL" in res:
+            bg = "E8F5E9"
+        for col in range(1, 5):
+            ws.cell(r, col).fill = PatternFill("solid", fgColor=bg)
+            ws.cell(r, col).border = bdr()
+            ws.cell(r, col).font = body(bold="TOTAL" in res)
+            ws.cell(r, col).alignment = Alignment(horizontal="center" if col == 3 else "left")
+    ws.append([])
+
+    # ── Section 5 : Lettres d'engagement ──
+    ORANGE2 = "FF795A"
+    section_header(ws, "5. LETTRES D'ENGAGEMENT — ⚠️ POINT DE VIGILANCE", ORANGE2)
+
+    ws.append(["⚠️ Les lettres d'engagement sont souvent décisives. Sans lettre de co-financeur ou de partenaire,",
+               "", "", ""])
+    r = ws.max_row
+    ws.merge_cells(f"A{r}:D{r}")
+    ws.cell(r, 1).font = Font(bold=True, size=10, color=ORANGE2, name="DM Sans")
+    ws.cell(r, 1).fill = PatternFill("solid", fgColor="FFF9F6")
+    ws.cell(r, 1).border = bdr()
+
+    ws.append(["le dossier peut être rejeté même si toutes les autres pièces sont parfaites.",
+               "", "", ""])
+    r = ws.max_row
+    ws.merge_cells(f"A{r}:D{r}")
+    ws.cell(r, 1).font = Font(size=9, color="9A3412", name="DM Sans")
+    ws.cell(r, 1).fill = PatternFill("solid", fgColor="FFF9F6")
+    ws.cell(r, 1).border = bdr()
+    ws.append([])
+
+    ws.append(["Lettre d'engagement", "Signataire attendu", "Fournie", "Date obtention"])
+    hdr_r = ws.max_row
+    for col, h in enumerate(["Lettre d'engagement", "Signataire attendu", "Fournie", "Date obtention"], 1):
+        c = ws.cell(hdr_r, col)
+        c.font = hdr(size=10)
+        c.fill = PatternFill("solid", fgColor=ORANGE2)
+        c.alignment = Alignment(horizontal="center")
+        c.border = bdr()
+
+    lettres_fournies = sub.get("lettres_engagement", {})
+    LETTRES_STD = [
+        ("Lettre d'engagement — Institution sollicitée", "Directeur/Directrice de l'organisme", "leng_institution"),
+        ("Lettre(s) d'engagement — Co-financeurs", "Responsable de chaque co-financeur", "leng_cofinanceur"),
+        ("Lettre(s) d'engagement — Partenaires artistiques", "Directeur artistique ou structure partenaire", "leng_partenaires"),
+        ("Lettre d'engagement — Territoire / Collectivité", "Maire, Président de Région ou Préfet", "leng_territoire"),
+        ("Lettre(s) d'engagement — Artistes principaux", "Chaque artiste concerné", "leng_artistes"),
+    ]
+    for i, (lettre, signataire, lid) in enumerate(LETTRES_STD):
+        fournie_l = lid in lettres_fournies
+        ws.append([lettre, signataire, "✅" if fournie_l else "☐", ""])
+        r = ws.max_row
+        bg = "F0FFF4" if fournie_l else ("FFFFFF" if i % 2 == 0 else LIGHT)
+        for col in range(1, 5):
+            ws.cell(r, col).fill = PatternFill("solid", fgColor=bg)
+            ws.cell(r, col).border = bdr()
+            ws.cell(r, col).font = body()
+            ws.cell(r, col).alignment = Alignment(horizontal="center" if col == 3 else "left")
+    ws.append([])
+
+    # ── Section 6 : Suivi et observations ──
+    section_header(ws, "6. SUIVI ET OBSERVATIONS")
     field_row(ws, "Date de dépôt effective", "")
-    field_row(ws, "N° de dossier", "")
-    field_row(ws, "Contact instructeur", "")
+    field_row(ws, "N° de dossier / référence", "")
+    field_row(ws, "Contact instructeur (nom + email)", "")
     field_row(ws, "Résultat / Décision", "")
     field_row(ws, "Montant accordé (€)", "")
     field_row(ws, "Date de versement", "")
+    field_row(ws, "Observations / relances", "")
 
     # Largeurs colonnes
-    ws.column_dimensions["A"].width = 35
+    ws.column_dimensions["A"].width = 38
     ws.column_dimensions["B"].width = 25
-    ws.column_dimensions["C"].width = 10
-    ws.column_dimensions["D"].width = 25
+    ws.column_dimensions["C"].width = 12
+    ws.column_dimensions["D"].width = 22
 
     buf = io_mod.BytesIO()
     wb.save(buf)
