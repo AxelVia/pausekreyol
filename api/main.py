@@ -1147,6 +1147,49 @@ MEMOS_FILE = CLIENTS_DIR / "memos.json"
 OFFRES_FILE = CLIENTS_DIR / "offres.json"
 STRATEGIE_FILE = CLIENTS_DIR / "strategie.json"
 PROSPECTS_FILE = CLIENTS_DIR / "prospects.json"
+AI_USAGE_FILE = CLIENTS_DIR / "ai_usage.json"
+
+
+# ── Tracking consommation IA ──────────────────────────────────────────────────
+
+def _load_ai_usage() -> list:
+    if AI_USAGE_FILE.exists():
+        return json.loads(AI_USAGE_FILE.read_text())
+    return []
+
+
+def _save_ai_usage(entries: list):
+    AI_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AI_USAGE_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("ai_usage.json", root_id)
+            if file_id:
+                drive_update_json(file_id, entries)
+            else:
+                drive_upload_json(entries, "ai_usage.json", root_id)
+        except Exception as e:
+            logger.warning(f"ai_usage.json non sauvegardé sur Drive : {e}")
+
+
+def _log_ai_usage(feature: str, model: str, input_tokens: int, output_tokens: int):
+    """Enregistre une entrée de consommation IA."""
+    try:
+        entries = _load_ai_usage()
+        entries.append({
+            "ts": datetime.now().isoformat(),
+            "feature": feature,
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        })
+        # Garde les 2000 dernières entrées pour ne pas surcharger
+        entries = entries[-2000:]
+        _save_ai_usage(entries)
+    except Exception as e:
+        logger.warning(f"_log_ai_usage : {e}")
 
 def _load_subventions() -> list:
     if SUBVENTIONS_FILE.exists():
@@ -1735,6 +1778,7 @@ Valeurs autorisées : verdict = "POSSIBLE" | "SOUS CONDITIONS" | "DÉCONSEILLÉ"
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
+            _log_ai_usage("prospect", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             result = json.loads(raw)
@@ -1782,6 +1826,264 @@ def trigger_agent():
         from engine.gmail_agent import run_agent
         tasks = run_agent()
         return {"status": "ok", "new_tasks": len(tasks or [])}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Consommation IA ────────────────────────────────────────────────────────────
+
+@app.get("/ia/usage")
+def get_ia_usage():
+    """Retourne les statistiques de consommation IA (tokens, appels, features)."""
+    entries = _load_ai_usage()
+    if not entries:
+        return {"total_appels": 0, "total_input_tokens": 0, "total_output_tokens": 0, "par_feature": {}, "historique": []}
+
+    total_input = sum(e.get("input_tokens", 0) for e in entries)
+    total_output = sum(e.get("output_tokens", 0) for e in entries)
+
+    par_feature: dict = {}
+    for e in entries:
+        f = e.get("feature", "inconnu")
+        if f not in par_feature:
+            par_feature[f] = {"appels": 0, "input_tokens": 0, "output_tokens": 0}
+        par_feature[f]["appels"] += 1
+        par_feature[f]["input_tokens"] += e.get("input_tokens", 0)
+        par_feature[f]["output_tokens"] += e.get("output_tokens", 0)
+
+    # Historique des 100 derniers appels (du plus récent au plus ancien)
+    historique = list(reversed(entries[-100:]))
+
+    return {
+        "total_appels": len(entries),
+        "total_input_tokens": total_input,
+        "total_output_tokens": total_output,
+        "total_tokens": total_input + total_output,
+        "par_feature": par_feature,
+        "historique": historique,
+    }
+
+
+# ── Analyse IA Stratégie ───────────────────────────────────────────────────────
+
+@app.post("/strategie/analyser-ia")
+async def analyser_strategie_ia():
+    """
+    Analyse l'ensemble de la stratégie d'entreprise via Claude.
+    Retourne : cohérence, faisabilité, avis sur l'ambition, alignement objectifs, recommandations.
+    """
+    try:
+        import anthropic as anthropic_sdk
+
+        data = _load_strategie()
+        if not any(data.get(k) for k in ["point_etape", "objectifs_6_mois", "objectifs_1_an", "objectifs_5_ans", "kpis", "actions", "plafond_verre"]):
+            raise HTTPException(status_code=400, detail="Aucune donnée de stratégie renseignée. Complétez d'abord les champs.")
+
+        # Contexte de l'activité
+        taches_actives = []
+        try:
+            if TASKS_FILE.exists():
+                tasks_all = json.loads(TASKS_FILE.read_text())
+                taches_actives = [
+                    {"titre": t.get("titre"), "priorite": t.get("priorite"), "categorie": t.get("categorie")}
+                    for t in tasks_all if not t.get("done")
+                ][:10]
+        except Exception:
+            pass
+
+        subventions_actives = []
+        try:
+            subs = _load_subventions()
+            subventions_actives = [
+                {"organisme": s.get("modele_nom") or s.get("organisme"), "statut": s.get("statut"), "montant": s.get("montant_sollicite")}
+                for s in subs if not s.get("archived")
+            ][:10]
+        except Exception:
+            pass
+
+        prompt = f"""Tu es une consultante experte en stratégie pour les entreprises d'ingénierie culturelle.
+Analyse la stratégie de Pause Kréyol et fournis une évaluation complète et bienveillante mais lucide.
+
+STRATÉGIE RENSEIGNÉE :
+Point d'étape : {data.get('point_etape', '—')}
+Objectifs 6 mois : {data.get('objectifs_6_mois', '—')}
+Objectifs 1 an : {data.get('objectifs_1_an', '—')}
+Vision 5 ans : {data.get('objectifs_5_ans', '—')}
+KPIs : {data.get('kpis', '—')}
+Actions à réaliser : {data.get('actions', '—')}
+Plafond de verre / Freins : {data.get('plafond_verre', '—')}
+
+CONTEXTE OPÉRATIONNEL :
+Tâches en cours ({len(taches_actives)}) : {json.dumps(taches_actives, ensure_ascii=False) if taches_actives else "Aucune"}
+Subventions actives ({len(subventions_actives)}) : {json.dumps(subventions_actives, ensure_ascii=False) if subventions_actives else "Aucune"}
+
+Évalue :
+1. La cohérence interne (les objectifs s'enchaînent-ils logiquement ?)
+2. La faisabilité (les actions sont-elles réalistes par rapport aux ressources ?)
+3. L'ambition (le niveau est-il adapté, trop timide ou trop ambitieux ?)
+4. L'alignement (les KPIs mesurent-ils bien les objectifs ?)
+5. Les angles morts (ce qui n'est pas mentionné mais devrait l'être)
+6. Des recommandations concrètes
+
+Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
+{{
+  "score_coherence": 75,
+  "score_faisabilite": 60,
+  "score_ambition": 80,
+  "score_alignement": 70,
+  "score_global": 71,
+  "synthese": "2-3 phrases résumant l'état général de la stratégie",
+  "points_forts": ["point fort 1", "point fort 2"],
+  "points_vigilance": ["point de vigilance 1", "point de vigilance 2"],
+  "angles_morts": ["angle mort 1", "angle mort 2"],
+  "recommandations": [
+    {{"priorite": "HAUTE", "action": "description de l'action recommandée", "pourquoi": "justification"}},
+    {{"priorite": "MOYENNE", "action": "...", "pourquoi": "..."}}
+  ],
+  "verdict_ambition": "ADAPTÉ",
+  "commentaire_ambition": "analyse de l'ambition en 1-2 phrases"
+}}
+Valeurs autorisées pour verdict_ambition : "TROP_TIMIDE" | "ADAPTÉ" | "TRÈS_AMBITIEUX"
+Les scores sont sur 100."""
+
+        ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        try:
+            response = ai.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = response.content[0].text.strip()
+            _log_ai_usage("strategie", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(raw)
+        except Exception as e:
+            logger.warning(f"Analyse stratégie IA échouée : {e}")
+            result = {
+                "score_coherence": 0, "score_faisabilite": 0, "score_ambition": 0,
+                "score_alignement": 0, "score_global": 0,
+                "synthese": f"Analyse IA indisponible : {e}",
+                "points_forts": [], "points_vigilance": [],
+                "angles_morts": [], "recommandations": [],
+                "verdict_ambition": "ADAPTÉ", "commentaire_ambition": "Analyse indisponible.",
+            }
+
+        result["analysed_at"] = datetime.now().isoformat()
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Analyse IA formulaire subvention ──────────────────────────────────────────
+
+@app.post("/subventions/analyser-formulaire")
+async def analyser_formulaire_subvention(body: dict):
+    """
+    Analyse une page web de formulaire de subvention via Claude.
+    Extrait : points de vigilance, documents obligatoires, textes à rédiger.
+    """
+    import urllib.request
+    import html
+    from html.parser import HTMLParser
+
+    url = body.get("url", "").strip()
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="URL invalide ou manquante")
+
+    try:
+        import anthropic as anthropic_sdk
+
+        # ── Récupération de la page ──────────────────────────────────────
+        class _TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.text_parts = []
+                self._skip = False
+            def handle_starttag(self, tag, attrs):
+                if tag in ("script", "style", "nav", "footer", "header"):
+                    self._skip = True
+            def handle_endtag(self, tag):
+                if tag in ("script", "style", "nav", "footer", "header"):
+                    self._skip = False
+            def handle_data(self, data):
+                if not self._skip:
+                    stripped = data.strip()
+                    if stripped:
+                        self.text_parts.append(stripped)
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PauseKreyol/1.0)"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                raw_html = resp.read(300_000).decode("utf-8", errors="replace")
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Impossible d'accéder à l'URL : {e}")
+
+        parser = _TextExtractor()
+        parser.feed(raw_html)
+        page_text = "\n".join(parser.text_parts)
+        page_text = html.unescape(page_text)
+        # Limite à 12 000 caractères pour rester dans les tokens raisonnables
+        page_text = page_text[:12000]
+
+        if len(page_text.strip()) < 100:
+            raise HTTPException(status_code=422, detail="Page trop vide ou inaccessible (peut-être protégée)")
+
+        prompt = f"""Tu es une experte en ingénierie culturelle et en montage de dossiers de subvention.
+Analyse le contenu de cette page officielle de formulaire de subvention et crée un guide complet pour préparer le dossier.
+
+URL : {url}
+CONTENU DE LA PAGE :
+{page_text}
+
+Produis une analyse détaillée structurée pour aider à constituer le dossier.
+
+Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
+{{
+  "nom_programme": "nom du programme ou de l'appel à projets",
+  "organisme": "nom de l'organisme financeur",
+  "synthese": "résumé en 2-3 phrases de ce que finance ce programme",
+  "points_vigilance": [
+    {{"titre": "point à surveiller", "detail": "explication et impact"}}
+  ],
+  "documents_obligatoires": [
+    {{"document": "nom du document", "precision": "format ou contenu attendu", "obligatoire": true}}
+  ],
+  "textes_a_rediger": [
+    {{"section": "nom de la section", "contenu_attendu": "description de ce qui est attendu", "conseils": "tips pour bien rédiger cette section"}}
+  ],
+  "criteres_eligibilite": ["critère 1", "critère 2"],
+  "criteres_selection": ["critère 1", "critère 2"],
+  "deadlines_importantes": ["deadline ou date clé mentionnée"],
+  "montant_info": "informations sur le montant (plafond, taux, etc.)",
+  "conseils_globaux": "conseils généraux pour maximiser les chances"
+}}"""
+
+        ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        try:
+            response = ai.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=3000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = response.content[0].text.strip()
+            _log_ai_usage("analyse_formulaire_subvention", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(raw)
+        except Exception as e:
+            logger.warning(f"Analyse formulaire subvention IA échouée : {e}")
+            raise HTTPException(status_code=500, detail=f"Erreur analyse IA : {e}")
+
+        result["url"] = url
+        result["analysed_at"] = datetime.now().isoformat()
+        return result
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2136,6 +2438,7 @@ Réponds UNIQUEMENT en JSON valide :
             messages=[{"role": "user", "content": prompt}]
         )
         raw = response.content[0].text.strip()
+        _log_ai_usage("sync_projet", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         analyse = json.loads(raw)
@@ -2650,6 +2953,7 @@ Réponds UNIQUEMENT en JSON valide :
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
+            _log_ai_usage("faisabilite", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             result = json.loads(raw)
@@ -3721,6 +4025,7 @@ Génère l'email complet avec l'objet."""
             messages=[{"role": "user", "content": prompt}]
         )
         email_text = response.content[0].text.strip()
+        _log_ai_usage("email", "claude-sonnet-4-20250514", response.usage.input_tokens, response.usage.output_tokens)
         return {"email": email_text, "client": client_nom, "type": email_type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur génération email : {e}")
