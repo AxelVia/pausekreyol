@@ -2604,7 +2604,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [search, setSearch] = useState('');
       const [showNew, setShowNew] = useState(false);
       const [offres, setOffres] = useState([]);
-      const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '', offre_id: '', valeur: '', temps_estime_dj: '', bloquer_zcal: false });
+      const [newTask, setNewTask] = useState({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '', offre_id: '', valeur: '', temps_estime_dj: '', bloquer_zcal: false, checklist_items: [] });
 
       // Catégories avec couleurs et icônes
       const CATEGORIES = {
@@ -2667,9 +2667,15 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       });
 
       function markDone(id) {
+        const task = taches.find(t => t.id === id);
+        // Bloquer si checklist incomplète
+        if (task && (task.checklist_items || []).some(ci => !ci.done)) {
+          const remaining = (task.checklist_items || []).filter(ci => !ci.done).length;
+          alert(`⚠️ Checklist incomplète !\n\n${remaining} étape(s) non cochée(s). Veuillez compléter la checklist avant de valider la tâche.`);
+          return;
+        }
         const now = new Date().toISOString().slice(0, 10);
         setTaches(prev => prev.map(t => t.id === id ? { ...t, done: true, done_at: now } : t));
-        const task = taches.find(t => t.id === id);
         if (task) fetch(`${API}/taches/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true, done_at: now }) }).catch(() => { });
       }
 
@@ -2708,18 +2714,34 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       async function createTask() {
         if (!newTask.titre) return;
         try {
+          // Exclure les items que l'utilisatrice a décochés
+          const payload = {
+            ...newTask,
+            checklist_items: (newTask.checklist_items || []).filter(ci => !ci._excluded).map(ci => ({ label: ci.label, done: false })),
+          };
           const res = await fetch(`${API}/taches`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newTask),
+            body: JSON.stringify(payload),
           });
           if (res.ok) {
             const t = await res.json();
             setTaches(prev => [t, ...prev]);
             setShowNew(false);
-            setNewTask({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '', offre_id: '', valeur: '', temps_estime_dj: '', bloquer_zcal: false });
+            setNewTask({ titre: '', description: '', priorite: 'Normal', categorie: 'admin', client_detecte: '', deadline: '', calendrier: '', offre_id: '', valeur: '', temps_estime_dj: '', bloquer_zcal: false, checklist_items: [] });
           }
         } catch { }
+      }
+
+      async function toggleChecklistItem(taskId, itemIdx) {
+        const task = taches.find(t => t.id === taskId);
+        if (!task) return;
+        const newItems = (task.checklist_items || []).map((ci, i) => i === itemIdx ? { ...ci, done: !ci.done } : ci);
+        setTaches(prev => prev.map(t => t.id === taskId ? { ...t, checklist_items: newItems } : t));
+        await fetch(`${API}/taches/${taskId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ checklist_items: newItems }),
+        }).catch(() => {});
       }
 
       const urgentCount = taches.filter(t => !t.done && t.priorite === 'URGENT').length;
@@ -2875,15 +2897,50 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                         {t.description.slice(0, 120)}{t.description.length > 120 ? '…' : ''}
                       </div>
                     )}
+                    {/* Checklist */}
+                    {!t.done && (t.checklist_items || []).length > 0 && (
+                      <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--surface2)', borderRadius: 8 }}>
+                        {(() => {
+                          const total = t.checklist_items.length;
+                          const done = t.checklist_items.filter(ci => ci.done).length;
+                          const pct = Math.round((done / total) * 100);
+                          return (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, color: done === total ? 'var(--success)' : 'var(--text2)' }}>
+                                  ☑️ Checklist : {done}/{total}
+                                </span>
+                                <span style={{ fontSize: 11, color: done === total ? 'var(--success)' : 'var(--text3)' }}>{pct}%</span>
+                              </div>
+                              <div style={{ height: 4, background: 'var(--border2)', borderRadius: 2, marginBottom: 8 }}>
+                                <div style={{ height: '100%', width: `${pct}%`, background: done === total ? 'var(--success)' : 'var(--pk-blue)', borderRadius: 2, transition: 'width 0.3s' }} />
+                              </div>
+                              {t.checklist_items.map((ci, idx) => (
+                                <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 12, cursor: 'pointer', color: ci.done ? 'var(--text3)' : 'var(--text1)', textDecoration: ci.done ? 'line-through' : 'none' }}>
+                                  <input type="checkbox" checked={!!ci.done} onChange={() => toggleChecklistItem(t.id, idx)} />
+                                  {ci.label}
+                                </label>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </div>
                   {/* Actions */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0, marginTop: 2 }}>
                     {!t.done ? (
                       <>
-                        <button
-                          onClick={() => markDone(t.id)}
-                          style={{ fontSize: 11, padding: '3px 10px', background: 'var(--success-light)', color: 'var(--success)', border: '1px solid #86efac', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
-                        >✅ Fait</button>
+                        {(() => {
+                          const checklistIncomplete = (t.checklist_items || []).length > 0 && (t.checklist_items || []).some(ci => !ci.done);
+                          return (
+                            <button
+                              onClick={() => markDone(t.id)}
+                              title={checklistIncomplete ? 'Checklist incomplète — terminez toutes les étapes' : ''}
+                              style={{ fontSize: 11, padding: '3px 10px', background: checklistIncomplete ? 'var(--warn-light)' : 'var(--success-light)', color: checklistIncomplete ? 'var(--warn)' : 'var(--success)', border: `1px solid ${checklistIncomplete ? 'var(--warn)' : '#86efac'}`, borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                            >{checklistIncomplete ? '⚠️ Checklist' : '✅ Fait'}</button>
+                          );
+                        })()}
                         {t.client_slug && setView && setSelectedClient && (
                           <button
                             onClick={() => { setSelectedClient(t.client_slug); setView('clients'); }}
@@ -3006,11 +3063,14 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                   <select className="form-input" value={newTask.offre_id || ''}
                     onChange={e => {
                       const o = offres.find(x => x.id === e.target.value);
+                      // Pré-sélectionne toute la checklist de l'offre
+                      const checklistItems = (o?.checklist || []).map(label => ({ label, done: false }));
                       setNewTask(p => ({
                         ...p,
                         offre_id: e.target.value,
                         valeur: o ? String(o.prix) : p.valeur,
                         temps_estime_dj: o ? String(o.temps_dj) : p.temps_estime_dj,
+                        checklist_items: checklistItems,
                       }));
                     }}>
                     <option value="">— Sélectionner une offre —</option>
@@ -3019,6 +3079,23 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                     ))}
                   </select>
                 </div>
+                {/* Checklist de l'offre — sélection des items à inclure */}
+                {newTask.offre_id && newTask.checklist_items.length > 0 && (
+                  <div className="form-group">
+                    <label className="form-label">☑️ Checklist pour cette tâche</label>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Décochez les étapes qui ne s'appliquent pas à cette tâche spécifique.</div>
+                    {newTask.checklist_items.map((ci, i) => (
+                      <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', marginBottom: 3, background: 'var(--surface2)', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
+                        <input type="checkbox" checked={!ci._excluded}
+                          onChange={e => setNewTask(p => ({ ...p, checklist_items: p.checklist_items.map((x, j) => j === i ? { ...x, _excluded: !e.target.checked } : x) }))} />
+                        {ci.label}
+                      </label>
+                    ))}
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                      {newTask.checklist_items.filter(ci => !ci._excluded).length} étape(s) sélectionnée(s) sur {newTask.checklist_items.length}
+                    </div>
+                  </div>
+                )}
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Valeur (€)</label>
@@ -5613,6 +5690,15 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       const [tachesSubv, setTachesSubv] = useState(sub.taches || []);
       const [showNewTache, setShowNewTache] = useState(false);
       const [newTache, setNewTache] = useState({ titre: '', deadline: '', priorite: 'Normal', notes: '' });
+      const [editingSub, setEditingSub] = useState(false);
+      const [editForm, setEditForm] = useState({
+        organisme: sub.organisme || sub.modele_nom || '',
+        montant_sollicite: sub.montant_sollicite || '',
+        deadline: sub.deadline || '',
+        date_retour_prevue: sub.date_retour_prevue || '',
+        notes: sub.notes || '',
+      });
+      const [savingEdit, setSavingEdit] = useState(false);
 
       const TACHES_TYPES_SUBV = [
         'Préparer le dossier', 'Collecter les pièces justificatives', 'Rédiger le budget',
@@ -5725,6 +5811,31 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         'Refusée':       { bg: 'var(--danger-light)',   c: 'var(--danger)' },
       }[localSub.statut] || { bg: 'var(--surface2)', c: 'var(--text3)' };
 
+      async function saveSubEdit() {
+        setSavingEdit(true);
+        try {
+          const res = await fetch(`${API}/subventions/${localSub.id}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              organisme: editForm.organisme,
+              montant_sollicite: editForm.montant_sollicite,
+              deadline: editForm.deadline,
+              date_retour_prevue: editForm.date_retour_prevue,
+              notes: editForm.notes,
+            }),
+          });
+          if (res.ok) {
+            const updated = await res.json();
+            setLocalSub(updated);
+            onUpdate(updated);
+            setEditingSub(false);
+            setMsg('✅ Demande mise à jour');
+            setTimeout(() => setMsg(''), 3000);
+          }
+        } catch {}
+        setSavingEdit(false);
+      }
+
       async function uploadPiece(pieceId, file) {
         setUploading(pieceId);
         try {
@@ -5799,12 +5910,49 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {msg && <span style={{ fontSize: 12, color: 'var(--success)', alignSelf: 'center' }}>{msg}</span>}
               <span style={{ background: sc.bg, color: sc.c, padding: '4px 12px', borderRadius: 10, fontSize: 12, fontWeight: 700, alignSelf: 'center' }}>
                 {localSub.statut}
               </span>
+              <button className="btn" style={{ fontSize: 12 }} onClick={() => setEditingSub(true)}>✏️ Modifier</button>
               <button className="btn" style={{ fontSize: 12 }} onClick={exportFormulaire}>📥 Export formulaire xlsx</button>
             </div>
           </div>
+
+          {/* Modal édition de la demande */}
+          {editingSub && (
+            <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setEditingSub(false)}>
+              <div className="modal" style={{ maxWidth: 500 }}>
+                <div className="modal-title">✏️ Modifier la demande de subvention</div>
+                <div className="form-group">
+                  <label className="form-label">Organisme</label>
+                  <input className="form-input" value={editForm.organisme} onChange={e => setEditForm(p => ({ ...p, organisme: e.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Montant sollicité (€)</label>
+                  <input className="form-input" type="number" value={editForm.montant_sollicite} onChange={e => setEditForm(p => ({ ...p, montant_sollicite: e.target.value }))} />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Deadline de dépôt</label>
+                    <input className="form-input" type="date" value={editForm.deadline} onChange={e => setEditForm(p => ({ ...p, deadline: e.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date prévue de retour</label>
+                    <input className="form-input" type="date" value={editForm.date_retour_prevue} onChange={e => setEditForm(p => ({ ...p, date_retour_prevue: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Notes / contexte</label>
+                  <textarea className="form-input" rows={3} value={editForm.notes} onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))} style={{ resize: 'vertical' }} />
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => setEditingSub(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={saveSubEdit} disabled={savingEdit}>{savingEdit ? '⏳...' : '💾 Enregistrer'}</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="grid-2" style={{ gap: 14 }}>
             {/* Colonne gauche : infos + client */}
@@ -6183,19 +6331,63 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       }
 
       // ── CRUD modèles perso ─────────────────────────────────────────────────
+      const [iaModeleLoading, setIaModeleLoading] = useState(false);
+      const [iaModeleResult, setIaModeleResult] = useState(null);
+      const [iaModeleError, setIaModeleError] = useState('');
+
       function saveNewModele() {
         if (!newModele.nom || !newModele.organisme) return;
         const m = {
           id: `custom_${Date.now()}`,
           ...newModele,
           montant_max: Number(newModele.montant_max) || 0,
-          champs: newModele.champs.split(',').map(s => s.trim()).filter(Boolean),
-          pieces: newModele.pieces.split(',').map(s => s.trim()).filter(Boolean),
+          champs: typeof newModele.champs === 'string' ? newModele.champs.split(',').map(s => s.trim()).filter(Boolean) : newModele.champs,
+          pieces: typeof newModele.pieces === 'string' ? newModele.pieces.split(',').map(s => s.trim()).filter(Boolean) : newModele.pieces,
           _custom: true,
         };
         saveModeles([...modeles, m]);
         setShowNewModele(false);
         setNewModele(EMPTY_MODELE);
+        setIaModeleResult(null);
+      }
+
+      function saveEditModele() {
+        if (!editModele || !editModele.nom || !editModele.organisme) return;
+        const updated = {
+          ...editModele,
+          montant_max: Number(editModele.montant_max) || 0,
+          champs: typeof editModele.champs === 'string' ? editModele.champs.split(',').map(s => s.trim()).filter(Boolean) : editModele.champs,
+          pieces: typeof editModele.pieces === 'string' ? editModele.pieces.split(',').map(s => s.trim()).filter(Boolean) : editModele.pieces,
+        };
+        saveModeles(modeles.map(m => m.id === updated.id ? updated : m));
+        setEditModele(null);
+      }
+
+      async function analyserFormulaireIA(url, setTarget) {
+        if (!url || !url.startsWith('http')) { setIaModeleError('Veuillez d\'abord renseigner une URL valide.'); return; }
+        setIaModeleLoading(true);
+        setIaModeleError('');
+        setIaModeleResult(null);
+        try {
+          const res = await fetch(`${API}/subventions/analyser-formulaire`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+          });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Erreur analyse'); }
+          const data = await res.json();
+          setIaModeleResult(data);
+          // Pré-remplit automatiquement les champs si vides
+          setTarget(p => ({
+            ...p,
+            nom: p.nom || data.nom_programme || p.nom,
+            organisme: p.organisme || data.organisme || p.organisme,
+            description: p.description || data.synthese || p.description,
+            pieces: p.pieces || (data.documents_obligatoires || []).map(d => d.document).join(', ') || p.pieces,
+            champs: p.champs || (data.textes_a_rediger || []).map(d => d.section).join(', ') || p.champs,
+          }));
+        } catch (e) {
+          setIaModeleError(e.message);
+        }
+        setIaModeleLoading(false);
       }
 
       function deleteModele(id) {
@@ -6609,8 +6801,8 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
 
           {/* ══ MODAL NOUVEAU MODÈLE ══ */}
           {showNewModele && (
-            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowNewModele(false)}>
-              <div className="modal" style={{ maxWidth: 560 }}>
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && (setShowNewModele(false), setIaModeleResult(null), setIaModeleError(''))}>
+              <div className="modal" style={{ maxWidth: 600, maxHeight: '90vh', overflowY: 'auto' }}>
                 <div className="modal-title">📚 Nouveau modèle de subvention</div>
                 <div className="form-grid">
                   <div className="form-group">
@@ -6639,20 +6831,29 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                   </div>
                   <div className="form-group">
                     <label className="form-label">URL formulaire</label>
-                    <input className="form-input" value={newModele.url} onChange={e => setNewModele(p=>({...p,url:e.target.value}))} placeholder="https://..." />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input className="form-input" value={newModele.url} onChange={e => setNewModele(p=>({...p,url:e.target.value}))} placeholder="https://..." style={{ flex: 1 }} />
+                      <button className="btn" style={{ fontSize: 11, flexShrink: 0, background: 'var(--pk-blue-light)', color: 'var(--pk-blue)' }}
+                        onClick={() => analyserFormulaireIA(newModele.url, setNewModele)} disabled={iaModeleLoading || !newModele.url}>
+                        {iaModeleLoading ? '⏳' : '🤖 IA'}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>L'IA analysera la page pour pré-remplir le modèle</div>
                   </div>
                 </div>
+                {iaModeleError && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>⚠️ {iaModeleError}</div>}
+                {iaModeleResult && <IaModeleResultPanel result={iaModeleResult} onClose={() => setIaModeleResult(null)} />}
                 <div className="form-group">
                   <label className="form-label">Description</label>
                   <textarea className="form-input" rows={2} value={newModele.description} onChange={e => setNewModele(p=>({...p,description:e.target.value}))} style={{ resize: 'vertical' }} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Pièces justificatives (séparées par virgule)</label>
-                  <input className="form-input" value={newModele.pieces} onChange={e => setNewModele(p=>({...p,pieces:e.target.value}))} placeholder="RIB, Statuts, Budget prévisionnel, ..." />
+                  <input className="form-input" value={typeof newModele.pieces === 'string' ? newModele.pieces : (newModele.pieces || []).join(', ')} onChange={e => setNewModele(p=>({...p,pieces:e.target.value}))} placeholder="RIB, Statuts, Budget prévisionnel, ..." />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Champs du formulaire (séparés par virgule)</label>
-                  <input className="form-input" value={newModele.champs} onChange={e => setNewModele(p=>({...p,champs:e.target.value}))} placeholder="Titre du projet, Budget total, ..." />
+                  <input className="form-input" value={typeof newModele.champs === 'string' ? newModele.champs : (newModele.champs || []).join(', ')} onChange={e => setNewModele(p=>({...p,champs:e.target.value}))} placeholder="Titre du projet, Budget total, ..." />
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
@@ -6665,8 +6866,81 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                   </div>
                 </div>
                 <div className="modal-footer">
-                  <button className="btn" onClick={() => { setShowNewModele(false); setNewModele(EMPTY_MODELE); }}>Annuler</button>
+                  <button className="btn" onClick={() => { setShowNewModele(false); setNewModele(EMPTY_MODELE); setIaModeleResult(null); setIaModeleError(''); }}>Annuler</button>
                   <button className="btn btn-primary" onClick={saveNewModele} disabled={!newModele.nom || !newModele.organisme}>Créer le modèle →</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══ MODAL ÉDITION MODÈLE ══ */}
+          {editModele && (
+            <div className="modal-overlay" onClick={e => e.target===e.currentTarget && (setEditModele(null), setIaModeleResult(null), setIaModeleError(''))}>
+              <div className="modal" style={{ maxWidth: 600, maxHeight: '90vh', overflowY: 'auto' }}>
+                <div className="modal-title">✏️ Modifier le modèle</div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Nom du modèle *</label>
+                    <input className="form-input" value={editModele.nom || ''} onChange={e => setEditModele(p=>({...p,nom:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Organisme *</label>
+                    <input className="form-input" value={editModele.organisme || ''} onChange={e => setEditModele(p=>({...p,organisme:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Type</label>
+                    <input className="form-input" value={editModele.type || ''} onChange={e => setEditModele(p=>({...p,type:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Deadline indicative</label>
+                    <input className="form-input" value={editModele.deadline_indicative || ''} onChange={e => setEditModele(p=>({...p,deadline_indicative:e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Montant max (€)</label>
+                    <input className="form-input" type="number" value={editModele.montant_max || ''} onChange={e => setEditModele(p=>({...p,montant_max:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">URL formulaire</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input className="form-input" value={editModele.url || ''} onChange={e => setEditModele(p=>({...p,url:e.target.value}))} placeholder="https://..." style={{ flex: 1 }} />
+                      <button className="btn" style={{ fontSize: 11, flexShrink: 0, background: 'var(--pk-blue-light)', color: 'var(--pk-blue)' }}
+                        onClick={() => analyserFormulaireIA(editModele.url, setEditModele)} disabled={iaModeleLoading || !editModele.url}>
+                        {iaModeleLoading ? '⏳' : '🤖 IA'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                {iaModeleError && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>⚠️ {iaModeleError}</div>}
+                {iaModeleResult && <IaModeleResultPanel result={iaModeleResult} onClose={() => setIaModeleResult(null)} />}
+                <div className="form-group">
+                  <label className="form-label">Description</label>
+                  <textarea className="form-input" rows={2} value={editModele.description || ''} onChange={e => setEditModele(p=>({...p,description:e.target.value}))} style={{ resize: 'vertical' }} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Pièces justificatives (séparées par virgule)</label>
+                  <input className="form-input" value={typeof editModele.pieces === 'string' ? editModele.pieces : (editModele.pieces || []).join(', ')} onChange={e => setEditModele(p=>({...p,pieces:e.target.value}))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Champs du formulaire (séparés par virgule)</label>
+                  <input className="form-input" value={typeof editModele.champs === 'string' ? editModele.champs : (editModele.champs || []).join(', ')} onChange={e => setEditModele(p=>({...p,champs:e.target.value}))} />
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Couleur</label>
+                    <input type="color" value={editModele.couleur || '#2834B7'} onChange={e => setEditModele(p=>({...p,couleur:e.target.value}))} style={{ height: 36, width: '100%', borderRadius: 6, border: '1px solid var(--border2)', cursor: 'pointer' }} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Icône (emoji)</label>
+                    <input className="form-input" value={editModele.icone || '🏛'} onChange={e => setEditModele(p=>({...p,icone:e.target.value}))} style={{ fontSize: 20, textAlign: 'center' }} maxLength={2} />
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn" onClick={() => { setEditModele(null); setIaModeleResult(null); setIaModeleError(''); }}>Annuler</button>
+                  <button className="btn btn-primary" onClick={saveEditModele} disabled={!editModele.nom || !editModele.organisme}>💾 Enregistrer</button>
                 </div>
               </div>
             </div>
@@ -6675,7 +6949,51 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       );
     }
 
-        // ── Annuaire ──────────────────────────────────────────────────────────────────
+    function IaModeleResultPanel({ result, onClose }) {
+      return (
+        <div style={{ background: 'var(--pk-blue-light)', borderRadius: 10, padding: 14, marginBottom: 12, border: '1px solid var(--pk-blue)30' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--pk-blue)' }}>🤖 Analyse IA — {result.nom_programme || result.organisme}</div>
+            <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text3)' }} onClick={onClose}>✕</button>
+          </div>
+          {result.synthese && <div style={{ fontSize: 12, marginBottom: 10, lineHeight: 1.5, color: 'var(--text1)' }}>{result.synthese}</div>}
+          {result.points_vigilance?.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--warn)', marginBottom: 4 }}>⚠️ Points de vigilance</div>
+              {result.points_vigilance.map((p, i) => (
+                <div key={i} style={{ fontSize: 12, padding: '4px 8px', marginBottom: 3, background: 'var(--warn-light)', borderRadius: 6, color: 'var(--text1)' }}>
+                  <strong>{p.titre}</strong>{p.detail ? ` — ${p.detail}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+          {result.documents_obligatoires?.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', marginBottom: 4 }}>📄 Documents obligatoires</div>
+              {result.documents_obligatoires.filter(d => d.obligatoire).map((d, i) => (
+                <div key={i} style={{ fontSize: 12, padding: '3px 0', borderBottom: '1px solid var(--border)', color: 'var(--text1)' }}>
+                  📎 <strong>{d.document}</strong>{d.precision ? ` — ${d.precision}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+          {result.textes_a_rediger?.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#6A1B9A', marginBottom: 4 }}>✍️ Sections à rédiger</div>
+              {result.textes_a_rediger.map((t, i) => (
+                <div key={i} style={{ fontSize: 12, padding: '6px 8px', marginBottom: 4, background: 'white', borderRadius: 6, borderLeft: '3px solid #6A1B9A' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 2 }}>{t.section}</div>
+                  <div style={{ color: 'var(--text2)', lineHeight: 1.4 }}>{t.contenu_attendu}</div>
+                  {t.conseils && <div style={{ color: 'var(--pk-blue)', fontSize: 11, marginTop: 2 }}>💡 {t.conseils}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+          {result.montant_info && <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6 }}>💰 {result.montant_info}</div>}
+          {result.conseils_globaux && <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6, fontStyle: 'italic' }}>💡 {result.conseils_globaux}</div>}
+        </div>
+      );
+    }
 
     function AnnuaireView() {
       const [tab, setTab] = useState('interne');
@@ -6906,6 +7224,147 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         </div>
       );
     }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODULE IA — Tableau de bord des consommations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function IAUsageView() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const FEATURE_LABELS = {
+    prospect: 'Analyse prospect',
+    sync_projet: 'Synchronisation projet',
+    faisabilite: 'Faisabilité financière',
+    email: 'Génération email',
+    strategie: 'Analyse stratégie',
+    analyse_formulaire_subvention: 'Analyse formulaire subvention',
+  };
+
+  // Coût estimé Claude Sonnet : ~$3/M input, ~$15/M output (tarifs Anthropic indicatifs)
+  function estimateCost(input, output) {
+    return ((input / 1_000_000) * 3 + (output / 1_000_000) * 15).toFixed(4);
+  }
+
+  async function loadUsage() {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/ia/usage`);
+      if (!res.ok) throw new Error('Erreur chargement');
+      setData(await res.json());
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }
+
+  useEffect(() => { loadUsage(); }, []);
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}>⏳ Chargement des données…</div>;
+  if (error) return <div style={{ padding: 24, color: 'var(--danger)' }}>⚠️ {error}</div>;
+  if (!data) return null;
+
+  const costEst = estimateCost(data.total_input_tokens, data.total_output_tokens);
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>🤖 Consommation IA</div>
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>État des lieux des appels API Claude sur ce site</div>
+        </div>
+        <button className="btn" style={{ fontSize: 12 }} onClick={loadUsage}>🔄 Actualiser</button>
+      </div>
+
+      {/* Cartes KPIs */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
+        {[
+          ['🔢 Appels total', data.total_appels, '', 'var(--pk-blue)'],
+          ['📥 Tokens entrants', (data.total_input_tokens || 0).toLocaleString('fr-FR'), 'tokens', 'var(--success)'],
+          ['📤 Tokens sortants', (data.total_output_tokens || 0).toLocaleString('fr-FR'), 'tokens', 'var(--accent)'],
+          ['💰 Coût estimé', `$${costEst}`, '(indicatif)', 'var(--warn)'],
+        ].map(([label, val, sub, color]) => (
+          <div key={label} className="card" style={{ padding: '14px 16px', borderLeft: `3px solid ${color}` }}>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color }}>{val}</div>
+            {sub && <div style={{ fontSize: 10, color: 'var(--text3)' }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Répartition par feature */}
+      {Object.keys(data.par_feature || {}).length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-header"><div className="card-title">📊 Répartition par fonctionnalité</div></div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                  {['Fonctionnalité', 'Appels', 'Tokens entrants', 'Tokens sortants', 'Total tokens', 'Coût estimé'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, color: 'var(--text3)', fontWeight: 600, textTransform: 'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(data.par_feature).sort((a, b) => b[1].appels - a[1].appels).map(([feature, stats]) => (
+                  <tr key={feature} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 10px', fontWeight: 500 }}>{FEATURE_LABELS[feature] || feature}</td>
+                    <td style={{ padding: '8px 10px', color: 'var(--pk-blue)' }}>{stats.appels}</td>
+                    <td style={{ padding: '8px 10px' }}>{(stats.input_tokens || 0).toLocaleString('fr-FR')}</td>
+                    <td style={{ padding: '8px 10px' }}>{(stats.output_tokens || 0).toLocaleString('fr-FR')}</td>
+                    <td style={{ padding: '8px 10px', fontWeight: 500 }}>{((stats.input_tokens || 0) + (stats.output_tokens || 0)).toLocaleString('fr-FR')}</td>
+                    <td style={{ padding: '8px 10px', color: 'var(--warn)' }}>${estimateCost(stats.input_tokens || 0, stats.output_tokens || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Historique récent */}
+      {(data.historique || []).length > 0 && (
+        <div className="card">
+          <div className="card-header"><div className="card-title">🕐 Historique des 100 derniers appels</div></div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                  {['Date & heure', 'Fonctionnalité', 'Modèle', 'Tokens in', 'Tokens out'].map(h => (
+                    <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.historique.map((e, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)', opacity: i > 0 && i % 2 === 0 ? 0.85 : 1 }}>
+                    <td style={{ padding: '5px 10px', color: 'var(--text3)' }}>{new Date(e.ts).toLocaleString('fr-FR')}</td>
+                    <td style={{ padding: '5px 10px', fontWeight: 500 }}>{FEATURE_LABELS[e.feature] || e.feature}</td>
+                    <td style={{ padding: '5px 10px', color: 'var(--text3)', fontSize: 11 }}>{(e.model || '').replace('claude-', '').replace('-20250514', '')}</td>
+                    <td style={{ padding: '5px 10px' }}>{(e.input_tokens || 0).toLocaleString('fr-FR')}</td>
+                    <td style={{ padding: '5px 10px' }}>{(e.output_tokens || 0).toLocaleString('fr-FR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {data.total_appels === 0 && (
+        <div className="empty">
+          <div className="empty-icon">🤖</div>
+          <div className="empty-text">Aucun appel IA enregistré pour l'instant. Les consommations apparaîtront ici lors des prochaines analyses.</div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+        ℹ️ Coût estimé basé sur les tarifs Claude Sonnet indicatifs ($3/M tokens entrants, $15/M tokens sortants). Se référer au tableau de bord Anthropic pour les montants réels.
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODULE EMAILING & NEWSLETTER
@@ -8416,8 +8875,9 @@ function EmailingView() {
       const [showNew, setShowNew] = useState(false);
       const [editOffre, setEditOffre] = useState(null);
       const [search, setSearch] = useState('');
-      const EMPTY = { nom: '', description: '', prix: '', temps_dj: '0.5', categorie: 'admin', actif: true };
+      const EMPTY = { nom: '', description: '', prix: '', temps_dj: '0.5', categorie: 'admin', actif: true, checklist: [] };
       const [form, setForm] = useState(EMPTY);
+      const [newCheckItem, setNewCheckItem] = useState('');
 
       const CAT_LABELS = {
         admin: 'Admin', subvention: 'Subvention', gestion_client: 'Gestion client',
@@ -8446,7 +8906,7 @@ function EmailingView() {
             if (res.ok) { const created = await res.json(); setOffres(p => [...p, created]); }
           }
         } catch {}
-        setShowNew(false); setEditOffre(null); setForm(EMPTY);
+        setShowNew(false); setEditOffre(null); setForm(EMPTY); setNewCheckItem('');
       }
 
       async function deleteOffre(id) {
@@ -8460,6 +8920,17 @@ function EmailingView() {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actif: !o.actif }),
         }).catch(() => null);
         if (res?.ok) setOffres(p => p.map(x => x.id === o.id ? { ...x, actif: !x.actif } : x));
+      }
+
+      function addCheckItem() {
+        const label = newCheckItem.trim();
+        if (!label) return;
+        setForm(p => ({ ...p, checklist: [...(p.checklist || []), label] }));
+        setNewCheckItem('');
+      }
+
+      function removeCheckItem(idx) {
+        setForm(p => ({ ...p, checklist: (p.checklist || []).filter((_, i) => i !== idx) }));
       }
 
       return (
@@ -8497,8 +8968,15 @@ function EmailingView() {
                       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{(o.prix || 0).toLocaleString('fr-FR')} €</div>
                       <div style={{ fontSize: 12, color: 'var(--text2)' }}>⏱ {o.temps_dj} demi-j. ({o.temps_dj <= 0.5 ? 'demi-journée' : o.temps_dj < 1 ? `${o.temps_dj} demi-journée` : o.temps_dj === 1 ? '1 journée' : `${o.temps_dj} journée${o.temps_dj > 1 ? 's' : ''}`})</div>
                     </div>
+                    {(o.checklist || []).length > 0 && (
+                      <div style={{ marginBottom: 10, padding: '6px 8px', background: 'var(--surface2)', borderRadius: 6 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 4 }}>Checklist ({o.checklist.length} étapes)</div>
+                        {o.checklist.slice(0, 3).map((item, i) => <div key={i} style={{ fontSize: 11, color: 'var(--text2)', padding: '2px 0' }}>☐ {item}</div>)}
+                        {o.checklist.length > 3 && <div style={{ fontSize: 10, color: 'var(--text3)' }}>+{o.checklist.length - 3} étapes…</div>}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button className="btn" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setForm({ nom: o.nom, description: o.description, prix: String(o.prix), temps_dj: String(o.temps_dj), categorie: o.categorie, actif: o.actif }); setEditOffre(o); setShowNew(true); }}>✏️ Modifier</button>
+                      <button className="btn" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setForm({ nom: o.nom, description: o.description, prix: String(o.prix), temps_dj: String(o.temps_dj), categorie: o.categorie, actif: o.actif, checklist: o.checklist || [] }); setEditOffre(o); setShowNew(true); }}>✏️ Modifier</button>
                       <button className="btn" style={{ fontSize: 11, padding: '2px 8px', color: o.actif ? 'var(--warn)' : 'var(--success)' }} onClick={() => toggleActif(o)}>
                         {o.actif ? '⏸ Désactiver' : '▶ Activer'}
                       </button>
@@ -8512,7 +8990,7 @@ function EmailingView() {
 
           {showNew && (
             <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowNew(false)}>
-              <div className="modal">
+              <div className="modal" style={{ maxWidth: 540 }}>
                 <div className="modal-title">{editOffre ? '✏️ Modifier l\'offre' : '📦 Nouvelle offre'}</div>
                 <div className="form-group">
                   <label className="form-label">Nom de la prestation *</label>
@@ -8544,8 +9022,25 @@ function EmailingView() {
                     {Object.entries(CAT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
+                {/* Checklist */}
+                <div className="form-group">
+                  <label className="form-label">☑️ Checklist des étapes (optionnel)</label>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Ces étapes seront proposées lors de la création d'une tâche rattachée à cette offre.</div>
+                  {(form.checklist || []).map((item, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', marginBottom: 4, background: 'var(--surface2)', borderRadius: 6 }}>
+                      <span style={{ flex: 1, fontSize: 13 }}>☐ {item}</span>
+                      <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14, lineHeight: 1 }} onClick={() => removeCheckItem(i)}>✕</button>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                    <input className="form-input" value={newCheckItem} onChange={e => setNewCheckItem(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCheckItem())}
+                      placeholder="Ajouter une étape..." style={{ flex: 1, fontSize: 12 }} />
+                    <button className="btn" style={{ fontSize: 12, flexShrink: 0 }} onClick={addCheckItem}>+ Ajouter</button>
+                  </div>
+                </div>
                 <div className="modal-footer">
-                  <button className="btn" onClick={() => { setShowNew(false); setEditOffre(null); setForm(EMPTY); }}>Annuler</button>
+                  <button className="btn" onClick={() => { setShowNew(false); setEditOffre(null); setForm(EMPTY); setNewCheckItem(''); }}>Annuler</button>
                   <button className="btn btn-primary" onClick={saveOffre} disabled={!form.nom}>💾 Enregistrer</button>
                 </div>
               </div>
@@ -8592,6 +9087,9 @@ function EmailingView() {
       const [form, setForm] = useState(EMPTY);
       const [saving, setSaving] = useState(false);
       const [msg, setMsg] = useState('');
+      const [iaResult, setIaResult] = useState(null);
+      const [iaLoading, setIaLoading] = useState(false);
+      const [iaError, setIaError] = useState('');
 
       useEffect(() => {
         fetch(`${API}/strategie`).then(r => r.ok ? r.json() : {}).then(d => {
@@ -8622,6 +9120,23 @@ function EmailingView() {
         setSaving(false);
       }
 
+      async function analyserIA() {
+        setIaLoading(true);
+        setIaError('');
+        setIaResult(null);
+        try {
+          const res = await fetch(`${API}/strategie/analyser-ia`, { method: 'POST' });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Erreur analyse');
+          }
+          setIaResult(await res.json());
+        } catch (e) {
+          setIaError(e.message);
+        }
+        setIaLoading(false);
+      }
+
       const SECTIONS = [
         { key: 'point_etape', label: '📍 Point d\'étape — Où en est-on aujourd\'hui ?', icon: '📍', color: 'var(--pk-blue)' },
         { key: 'objectifs_6_mois', label: '⏱ Objectifs à 6 mois', icon: '⏱', color: 'var(--warn)' },
@@ -8632,6 +9147,9 @@ function EmailingView() {
         { key: 'plafond_verre', label: '🔭 Plafond de verre — Analyse des freins & leviers', icon: '🔭', color: 'var(--danger)' },
       ];
 
+      const SCORE_COLOR = s => s >= 75 ? 'var(--success)' : s >= 50 ? 'var(--warn)' : 'var(--danger)';
+      const AMBITION_LABELS = { 'TROP_TIMIDE': '🐌 Trop timide', 'ADAPTÉ': '🎯 Adapté', 'TRÈS_AMBITIEUX': '🚀 Très ambitieux' };
+
       return (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -8641,6 +9159,10 @@ function EmailingView() {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {msg && <span style={{ fontSize: 12, color: 'var(--success)' }}>{msg}</span>}
+              <button className="btn" style={{ fontSize: 12, background: iaLoading ? 'var(--surface2)' : 'var(--pk-blue-light)', color: 'var(--pk-blue)', borderColor: 'var(--pk-blue)30' }}
+                onClick={analyserIA} disabled={iaLoading}>
+                {iaLoading ? '⏳ Analyse...' : '🤖 Analyser avec l\'IA'}
+              </button>
               {!editing
                 ? <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setEditing(true)}>✏️ Modifier</button>
                 : <>
@@ -8650,6 +9172,77 @@ function EmailingView() {
               }
             </div>
           </div>
+
+          {iaError && (
+            <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+              ⚠️ {iaError}
+            </div>
+          )}
+
+          {iaResult && (
+            <div className="card" style={{ marginBottom: 20, borderLeft: '4px solid var(--pk-blue)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--pk-blue)', marginBottom: 4 }}>🤖 Analyse IA de votre stratégie</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)' }}>{new Date(iaResult.analysed_at).toLocaleString('fr-FR')}</div>
+                </div>
+                <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text3)' }} onClick={() => setIaResult(null)}>✕</button>
+              </div>
+              {/* Scores */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, marginBottom: 14 }}>
+                {[['Cohérence', iaResult.score_coherence], ['Faisabilité', iaResult.score_faisabilite], ['Ambition', iaResult.score_ambition], ['Alignement', iaResult.score_alignement], ['Score global', iaResult.score_global]].map(([label, score]) => (
+                  <div key={label} style={{ background: 'var(--surface2)', borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: SCORE_COLOR(score) }}>{score}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>/100</div>
+                  </div>
+                ))}
+              </div>
+              {/* Verdict ambition */}
+              <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{AMBITION_LABELS[iaResult.verdict_ambition] || iaResult.verdict_ambition}</span>
+                <span style={{ fontSize: 12, color: 'var(--text2)', marginLeft: 10 }}>{iaResult.commentaire_ambition}</span>
+              </div>
+              {/* Synthèse */}
+              <div style={{ fontSize: 13, color: 'var(--text1)', lineHeight: 1.6, marginBottom: 14, padding: '10px 14px', background: 'var(--pk-blue-light)', borderRadius: 8 }}>
+                {iaResult.synthese}
+              </div>
+              <div className="grid-2" style={{ gap: 12, marginBottom: 12 }}>
+                {iaResult.points_forts?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', textTransform: 'uppercase', marginBottom: 6 }}>✅ Points forts</div>
+                    {iaResult.points_forts.map((p, i) => <div key={i} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)', color: 'var(--text1)' }}>• {p}</div>)}
+                  </div>
+                )}
+                {iaResult.points_vigilance?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--warn)', textTransform: 'uppercase', marginBottom: 6 }}>⚠️ Points de vigilance</div>
+                    {iaResult.points_vigilance.map((p, i) => <div key={i} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)', color: 'var(--text1)' }}>• {p}</div>)}
+                  </div>
+                )}
+              </div>
+              {iaResult.angles_morts?.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', textTransform: 'uppercase', marginBottom: 6 }}>🔍 Angles morts identifiés</div>
+                  {iaResult.angles_morts.map((p, i) => <div key={i} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)', color: 'var(--text1)' }}>• {p}</div>)}
+                </div>
+              )}
+              {iaResult.recommandations?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--pk-blue)', textTransform: 'uppercase', marginBottom: 8 }}>💡 Recommandations</div>
+                  {iaResult.recommandations.map((r, i) => (
+                    <div key={i} style={{ padding: '10px 12px', marginBottom: 6, borderRadius: 8, background: r.priorite === 'HAUTE' ? 'var(--danger-light)' : 'var(--surface2)', borderLeft: `3px solid ${r.priorite === 'HAUTE' ? 'var(--danger)' : 'var(--accent)'}` }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: r.priorite === 'HAUTE' ? 'var(--danger)' : 'var(--accent)', textTransform: 'uppercase' }}>{r.priorite}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{r.action}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text2)' }}>{r.pourquoi}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
             {SECTIONS.map(s => (
@@ -9386,9 +9979,10 @@ function EmailingView() {
         { key: 'annuaire', label: 'Annuaire', icon: icons.annuaire, section: 'outils' },
         { key: 'emailing', label: 'Emailing', icon: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><path d="M2.5 3.5L8 7.5L13.5 3.5" /><rect x="1" y="2" width="14" height="12" rx="1" /></svg>, section: 'outils' },
         { key: 'comm', label: 'Comm & Assets', icon: icons.comm, section: 'outils' },
+        { key: 'ia', label: 'IA', icon: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="nav-icon"><circle cx="8" cy="8" r="5.5"/><path d="M5 8.5L7 10.5L11 6.5"/><circle cx="8" cy="3" r="1" fill="currentColor" stroke="none"/></svg>, section: 'outils' },
       ];
 
-      const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', offres: 'Catalogue des Offres', devis: 'Devis & Factures', subventions: 'Subventions', rh: 'Ressources Humaines', audit: 'Audits', pilotage: 'Stratégie & Pilotage', zcal: 'Zcal & Disponibilités', annuaire: 'Annuaire', calendrier: 'Calendriers', emailing: 'Gestion Emailing', comm: 'Communication' };
+      const titles = { dashboard: 'Tableau de bord', clients: 'Dossiers clients', taches: 'Tâches', offres: 'Catalogue des Offres', devis: 'Devis & Factures', subventions: 'Subventions', rh: 'Ressources Humaines', audit: 'Audits', pilotage: 'Stratégie & Pilotage', zcal: 'Zcal & Disponibilités', annuaire: 'Annuaire', calendrier: 'Calendriers', emailing: 'Gestion Emailing', comm: 'Communication', ia: '🤖 Consommation IA' };
 
       return (
         <div className="app">
@@ -9479,6 +10073,7 @@ function EmailingView() {
               {view === 'calendrier' && <CalendrierView alertes={data?.alertes || []} clients={data?.clients || []} taches={taches} onSwitchToZcal={() => setView('zcal')} />}
               {view === 'emailing' && <EmailingView />}
               {view === 'comm' && <CommView clients={data?.clients || []} />}
+              {view === 'ia' && <IAUsageView />}
             </main>
           </div>
 
