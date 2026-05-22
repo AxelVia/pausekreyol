@@ -281,6 +281,16 @@ def _restore_devis_factures_drive():
             fid = drive_find_file("offres.json", root_id)
             if fid: drive_update_json(fid, offres_data)
             else: drive_upload_json(offres_data, "offres.json", root_id)
+        if STRATEGIE_FILE.exists():
+            strat_data = json.loads(STRATEGIE_FILE.read_text())
+            fid = drive_find_file("strategie.json", root_id)
+            if fid: drive_update_json(fid, strat_data)
+            else: drive_upload_json(strat_data, "strategie.json", root_id)
+        if PROSPECTS_FILE.exists():
+            prospects_data = json.loads(PROSPECTS_FILE.read_text())
+            fid = drive_find_file("prospects.json", root_id)
+            if fid: drive_update_json(fid, prospects_data)
+            else: drive_upload_json(prospects_data, "prospects.json", root_id)
         # Backup RH
         if RH_FILE.exists():
             rh_data = json.loads(RH_FILE.read_text())
@@ -502,6 +512,30 @@ async def lifespan(app: FastAPI):
                 logger.info(f"audits.json restauré depuis Drive ({len(audits_drive)} audits)")
         except Exception as e:
             logger.warning(f"audits.json non restauré : {e}")
+
+        # Restaure strategie.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            strat_drive = drive_download_json("strategie.json", root_id)
+            if strat_drive:
+                STRATEGIE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                STRATEGIE_FILE.write_text(json.dumps(strat_drive, ensure_ascii=False, indent=2))
+                logger.info("strategie.json restauré depuis Drive")
+        except Exception as e:
+            logger.warning(f"strategie.json non restauré : {e}")
+
+        # Restaure prospects.json depuis Drive
+        try:
+            from engine.drive_storage import drive_download_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            prospects_drive = drive_download_json("prospects.json", root_id)
+            if prospects_drive:
+                PROSPECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                PROSPECTS_FILE.write_text(json.dumps(prospects_drive, ensure_ascii=False, indent=2))
+                logger.info(f"prospects.json restauré depuis Drive ({len(prospects_drive)} analyses)")
+        except Exception as e:
+            logger.warning(f"prospects.json non restauré : {e}")
 
     scheduler = None
     if env == "production" and gmail_token:
@@ -1111,6 +1145,8 @@ CAMPAIGNS_FILE = CLIENTS_DIR / "campaigns.json"
 COMM_FILE = CLIENTS_DIR / "comm.json"
 MEMOS_FILE = CLIENTS_DIR / "memos.json"
 OFFRES_FILE = CLIENTS_DIR / "offres.json"
+STRATEGIE_FILE = CLIENTS_DIR / "strategie.json"
+PROSPECTS_FILE = CLIENTS_DIR / "prospects.json"
 
 def _load_subventions() -> list:
     if SUBVENTIONS_FILE.exists():
@@ -1268,6 +1304,54 @@ def _save_offres(offres: list):
                 drive_upload_json(offres, "offres.json", root_id)
         except Exception as e:
             logger.warning(f"offres.json non sauvegardé sur Drive : {e}")
+
+
+def _load_strategie() -> dict:
+    """Charge strategie.json (vision & pilotage d'entreprise)."""
+    if STRATEGIE_FILE.exists():
+        return json.loads(STRATEGIE_FILE.read_text())
+    return {}
+
+
+def _save_strategie(data: dict):
+    """Sauvegarde strategie.json localement et sur Drive."""
+    STRATEGIE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STRATEGIE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("strategie.json", root_id)
+            if file_id:
+                drive_update_json(file_id, data)
+            else:
+                drive_upload_json(data, "strategie.json", root_id)
+        except Exception as e:
+            logger.warning(f"strategie.json non sauvegardé sur Drive : {e}")
+
+
+def _load_prospects() -> list:
+    """Charge prospects.json (historique des analyses de prospects)."""
+    if PROSPECTS_FILE.exists():
+        return json.loads(PROSPECTS_FILE.read_text())
+    return []
+
+
+def _save_prospects(prospects: list):
+    """Sauvegarde prospects.json localement et sur Drive."""
+    PROSPECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROSPECTS_FILE.write_text(json.dumps(prospects, ensure_ascii=False, indent=2))
+    if os.getenv("ENV") == "production":
+        try:
+            from engine.drive_storage import drive_upload_json, drive_find_file, drive_update_json, get_root_folder_id
+            root_id = get_root_folder_id()
+            file_id = drive_find_file("prospects.json", root_id)
+            if file_id:
+                drive_update_json(file_id, prospects)
+            else:
+                drive_upload_json(prospects, "prospects.json", root_id)
+        except Exception as e:
+            logger.warning(f"prospects.json non sauvegardé sur Drive : {e}")
 
 
 @app.get("/taches")
@@ -1534,6 +1618,159 @@ def delete_offre(offre_id: str):
     offres = [o for o in offres if o["id"] != offre_id]
     _save_offres(offres)
     return {"status": "deleted"}
+
+
+# ── Routes Stratégie & Croissance ────────────────────────────────────────────
+
+@app.get("/strategie")
+def get_strategie():
+    """Retourne les données de stratégie d'entreprise."""
+    return _load_strategie()
+
+
+@app.patch("/strategie")
+def patch_strategie(body: dict):
+    """Met à jour les données de stratégie (vision, KPIs, objectifs, actions)."""
+    data = _load_strategie()
+    data.update(body)
+    data["updated_at"] = datetime.now().isoformat()
+    _save_strategie(data)
+    return data
+
+
+# ── Routes Prospects ─────────────────────────────────────────────────────────
+
+@app.get("/prospects")
+def get_prospects():
+    """Retourne la liste des analyses de prospects."""
+    return _load_prospects()
+
+
+@app.delete("/prospects/{prospect_id}")
+def delete_prospect(prospect_id: str):
+    """Supprime une analyse de prospect."""
+    prospects = _load_prospects()
+    prospects = [p for p in prospects if p["id"] != prospect_id]
+    _save_prospects(prospects)
+    return {"status": "deleted"}
+
+
+@app.post("/prospects/analyser")
+async def analyser_prospect(body: dict):
+    """
+    Analyse IA d'une demande prospect.
+    Évalue la faisabilité, la rentabilité, la charge de travail et les conditions d'engagement.
+    """
+    try:
+        import anthropic as anthropic_sdk
+
+        nom = body.get("nom", "?")
+        description = body.get("description", "")
+        budget = body.get("budget", "")
+        deadline = body.get("deadline", "")
+        missions = body.get("missions", "")
+        contexte = body.get("contexte", "")
+
+        # Contexte interne : tâches urgentes en cours
+        taches_actives = []
+        try:
+            if TASKS_FILE.exists():
+                tasks_all = json.loads(TASKS_FILE.read_text())
+                taches_actives = [
+                    {"titre": t.get("titre"), "priorite": t.get("priorite"), "deadline": t.get("deadline")}
+                    for t in tasks_all
+                    if not t.get("done") and t.get("priorite") in ("URGENT", "Attention")
+                ][:6]
+        except Exception:
+            pass
+
+        prompt = f"""Tu es une conseillère expérimentée en ingénierie culturelle pour Pause Kréyol.
+On te soumet une demande d'un prospect. Tu dois évaluer si c'est faisable et rentable.
+
+PROSPECT :
+- Nom / contact : {nom}
+- Description du projet : {description or "Non précisée"}
+- Budget proposé : {budget or "Non communiqué"}
+- Deadline / date souhaitée : {deadline or "Non communiquée"}
+- Missions demandées : {missions or "Non précisées"}
+- Contexte supplémentaire : {contexte or "Aucun"}
+
+CHARGE DE TRAVAIL ACTUELLE (tâches urgentes non terminées) :
+{json.dumps(taches_actives, ensure_ascii=False) if taches_actives else "Aucune tâche urgente identifiée"}
+
+RÈGLES MÉTIER PAUSE KRÉYOL :
+- Dossier de subvention : 1 à 3 semaines de travail selon complexité
+- Subventions publiques : pas de dépôt en juillet-août
+- Mécénat : possible toute l'année mais 2 à 6 semaines minimum
+- Résidence artistique : minimum 5 à 10 jours de travail (logistique + coordination)
+- Seuil de rentabilité : minimum 400 € HT par demi-journée travaillée
+- Délai minimum de préparation sérieuse : 15 jours
+- Ne jamais s'engager sans budget confirmé ou lettre d'intention
+
+Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
+{{
+  "id": "prospect_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+  "nom": "{nom}",
+  "verdict": "POSSIBLE",
+  "rentabilite": "RENTABLE",
+  "charge_warning": false,
+  "synthese": "2-3 phrases résumant la situation globale",
+  "points_positifs": ["point 1"],
+  "points_risques": ["risque 1"],
+  "conditions_acceptation": ["condition 1"],
+  "engagements_possibles": ["sur quoi on peut s'engager"],
+  "engagements_risques": ["ce qui est risqué d'accepter"],
+  "estimation_charge": "ex : 3 à 5 jours de travail",
+  "recommandation_finale": "conseil final clair et direct"
+}}
+Valeurs autorisées : verdict = "POSSIBLE" | "SOUS CONDITIONS" | "DÉCONSEILLÉ" ; rentabilite = "RENTABLE" | "LIMITE" | "NON_RENTABLE"."""
+
+        ai = anthropic_sdk.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        try:
+            response = ai.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = response.content[0].text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(raw)
+        except Exception as e:
+            logger.warning(f"Analyse prospect IA échouée : {e}")
+            result = {
+                "id": f"prospect_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "nom": nom,
+                "verdict": "SOUS CONDITIONS",
+                "rentabilite": "LIMITE",
+                "charge_warning": bool(taches_actives),
+                "synthese": f"Analyse automatique indisponible. Évaluation manuelle requise.",
+                "points_positifs": [],
+                "points_risques": ["Analyse IA indisponible — vérification manuelle requise"],
+                "conditions_acceptation": [],
+                "engagements_possibles": [],
+                "engagements_risques": [],
+                "estimation_charge": "Non estimée",
+                "recommandation_finale": "Veuillez analyser manuellement cette demande.",
+            }
+
+        result["created_at"] = datetime.now().isoformat()
+        result["request"] = {
+            "nom": nom, "description": description, "budget": budget,
+            "deadline": deadline, "missions": missions, "contexte": contexte,
+        }
+
+        prospects = _load_prospects()
+        prospects.insert(0, result)
+        prospects = prospects[:50]  # Garde les 50 dernières analyses
+        _save_prospects(prospects)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/agent/run")
