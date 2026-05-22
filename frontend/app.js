@@ -2670,7 +2670,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
         const task = taches.find(t => t.id === id);
         // Bloquer si checklist incomplète
         if (task && (task.checklist_items || []).some(ci => !ci.done)) {
-          const remaining = task.checklist_items.filter(ci => !ci.done).length;
+          const remaining = (task.checklist_items || []).filter(ci => !ci.done).length;
           alert(`⚠️ Checklist incomplète !\n\n${remaining} étape(s) non cochée(s). Veuillez compléter la checklist avant de valider la tâche.`);
           return;
         }

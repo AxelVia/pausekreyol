@@ -1975,10 +1975,8 @@ Les scores sont sur 100."""
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ── Analyse IA formulaire subvention ──────────────────────────────────────────
+        logger.warning(f"analyser_strategie_ia : {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de l'analyse de la stratégie. Veuillez réessayer.")
 
 @app.post("/subventions/analyser-formulaire")
 async def analyser_formulaire_subvention(body: dict):
@@ -1991,8 +1989,30 @@ async def analyser_formulaire_subvention(body: dict):
     from html.parser import HTMLParser
 
     url = body.get("url", "").strip()
-    if not url or not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="URL invalide ou manquante")
+    if not url or not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="URL invalide ou manquante (http ou https requis)")
+
+    # Protection SSRF : validation que l'URL pointe bien vers un hôte public
+    try:
+        import urllib.parse
+        import ipaddress
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname or ""
+        if not hostname:
+            raise HTTPException(status_code=400, detail="URL invalide : hôte manquant")
+        # Bloquer localhost et les IPs privées
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+            raise HTTPException(status_code=400, detail="URL non autorisée")
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                raise HTTPException(status_code=400, detail="URL non autorisée (IP privée)")
+        except ValueError:
+            pass  # hostname is a domain name, not an IP — allowed
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="URL invalide")
 
     try:
         import anthropic as anthropic_sdk
@@ -2076,7 +2096,7 @@ Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
             result = json.loads(raw)
         except Exception as e:
             logger.warning(f"Analyse formulaire subvention IA échouée : {e}")
-            raise HTTPException(status_code=500, detail=f"Erreur analyse IA : {e}")
+            raise HTTPException(status_code=500, detail="Erreur lors de l'analyse IA du formulaire. Veuillez réessayer.")
 
         result["url"] = url
         result["analysed_at"] = datetime.now().isoformat()
@@ -2085,10 +2105,8 @@ Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ── Routes projet ─────────────────────────────────────────────────────────────
+        logger.warning(f"analyser_formulaire_subvention : {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de l'analyse du formulaire. Veuillez réessayer.")
 
 def _get_projet(slug: str, slug_projet: str):
     matches = list(CLIENTS_DIR.glob(f"{slug}*"))
