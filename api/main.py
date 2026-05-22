@@ -1684,6 +1684,8 @@ async def analyser_prospect(body: dict):
         except Exception:
             pass
 
+        prospect_id = f"prospect_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
         prompt = f"""Tu es une conseillère expérimentée en ingénierie culturelle pour Pause Kréyol.
 On te soumet une demande d'un prospect. Tu dois évaluer si c'est faisable et rentable.
 
@@ -1709,7 +1711,7 @@ RÈGLES MÉTIER PAUSE KRÉYOL :
 
 Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
 {{
-  "id": "prospect_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+  "id": "{prospect_id}",
   "nom": "{nom}",
   "verdict": "POSSIBLE",
   "rentabilite": "RENTABLE",
@@ -1739,7 +1741,7 @@ Valeurs autorisées : verdict = "POSSIBLE" | "SOUS CONDITIONS" | "DÉCONSEILLÉ"
         except Exception as e:
             logger.warning(f"Analyse prospect IA échouée : {e}")
             result = {
-                "id": f"prospect_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "id": prospect_id,
                 "nom": nom,
                 "verdict": "SOUS CONDITIONS",
                 "rentabilite": "LIMITE",

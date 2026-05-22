@@ -5149,7 +5149,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
             {offres.length > 0 && (
               <select className="form-input" style={{ fontSize: 12, marginBottom: 10, marginLeft: 8, width: 'auto', display: 'inline-block' }}
                 value=""
-                onChange={e => { addLineFromOffre(e.target.value); e.target.value = ''; }}>
+                onChange={e => { addLineFromOffre(e.target.value); }}>
                 <option value="">📦 Insérer depuis catalogue...</option>
                 {offres.map(o => (
                   <option key={o.id} value={o.id}>{o.nom} — {(o.prix || 0).toLocaleString('fr-FR')} €</option>
@@ -8889,7 +8889,7 @@ function EmailingView() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{h.nom || h.request?.nom || '—'}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(h.created_at).toLocaleDateString('fr-FR')} · {h.request?.description?.slice(0, 80)}...</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(h.created_at).toLocaleDateString('fr-FR')} · {h.request?.description ? (h.request.description.length > 80 ? h.request.description.slice(0, 80) + '...' : h.request.description) : ''}</div>
                       </div>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
                         <span style={{ background: vs.bg, color: vs.color, padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 700 }}>{vs.icon} {h.verdict}</span>
