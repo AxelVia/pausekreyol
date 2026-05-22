@@ -5,6 +5,7 @@ Lance avec : uvicorn api.main:app --reload
 
 import os
 import io
+import math
 import json
 import shutil
 import logging
@@ -1336,7 +1337,7 @@ def create_tache(body: dict):
             # Arrondi : on bloque autant de créneaux que nécessaire
             heures_debut = ["09:00", "14:00"]
             heures_fin   = ["13:00", "18:00"]
-            nb_creneaux  = int(demi_journees) if demi_journees == int(demi_journees) else int(demi_journees) + 1
+            nb_creneaux  = math.ceil(demi_journees)
             # Calcul des jours à bloquer (1 demi-journée = 1 créneau)
             from datetime import date as _date, timedelta as _td
             d = _date.fromisoformat(date_debut)
@@ -1346,17 +1347,6 @@ def create_tache(body: dict):
                 jour_str = (d + _td(days=jour_offset)).isoformat()
                 nb_ce_jour = min(2, creneaux_restants)
                 for i in range(nb_ce_jour):
-                    indispo_body = {
-                        "titre": f"⏳ {task['titre']} — {task.get('client_detecte', '')}".strip(" —"),
-                        "date_debut": jour_str,
-                        "date_fin": jour_str,
-                        "heure_debut": heures_debut[i % 2],
-                        "heure_fin": heures_fin[i % 2],
-                        "notes": f"Tâche PauseKreyol · {task['id']}",
-                    }
-                    # Appel interne à l'endpoint indisponibilité
-                    from fastapi.testclient import TestClient as _TC
-                    pass  # On appellera directement la logique
                     cal = _load_cal()
                     if "indisponibilites" not in cal:
                         cal["indisponibilites"] = []

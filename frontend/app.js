@@ -6352,7 +6352,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
                        </div>
                        {s.tarif_urgence && s.jours_restants != null && (
                          <div style={{ fontSize: 11, color: '#B71C1C', marginBottom: 3, fontWeight: 500 }}>
-                           ⚠️ {s.jours_restants} jour(s) restant(s) — délai &lt; 30j, supplément urgence applicable
+                          ⚠️ {s.jours_restants} jour(s) restant(s) — délai {'<'} 30j, supplément urgence applicable
                          </div>
                        )}
                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11 }}>
@@ -8467,7 +8467,7 @@ function EmailingView() {
                     {o.description && <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.4 }}>{o.description}</div>}
                     <div style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{(o.prix || 0).toLocaleString('fr-FR')} €</div>
-                      <div style={{ fontSize: 12, color: 'var(--text2)' }}>⏱ {o.temps_dj} demi-j. ({o.temps_dj <= 0.5 ? 'demi-journée' : o.temps_dj === 1 ? '1 journée' : `${o.temps_dj} journées`})</div>
+                      <div style={{ fontSize: 12, color: 'var(--text2)' }}>⏱ {o.temps_dj} demi-j. ({o.temps_dj <= 0.5 ? 'demi-journée' : o.temps_dj < 1 ? `${o.temps_dj} demi-journée` : o.temps_dj === 1 ? '1 journée' : `${o.temps_dj} journée${o.temps_dj > 1 ? 's' : ''}`})</div>
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       <button className="btn" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setForm({ nom: o.nom, description: o.description, prix: String(o.prix), temps_dj: String(o.temps_dj), categorie: o.categorie, actif: o.actif }); setEditOffre(o); setShowNew(true); }}>✏️ Modifier</button>
