@@ -4947,6 +4947,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
     function NewDevisModal({ onClose, onCreated, defaultClientSlug = '', defaultClientNom = '' }) {
       const [clients, setClients] = useState([]);
       const [tarifs, setTarifs] = useState([]);
+      const [offres, setOffres] = useState([]);
       const [form, setForm] = useState({
         client_slug: defaultClientSlug,
         client_nom: defaultClientNom,
@@ -4964,6 +4965,7 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       useEffect(() => {
         fetch(`${API}/clients`).then(r => r.json()).then(d => setClients(d || [])).catch(() => { });
         fetch(`${API}/devis/tarifs`).then(r => r.json()).then(d => setTarifs(d || [])).catch(() => { });
+        fetch(`${API}/offres`).then(r => r.ok ? r.json() : []).then(d => setOffres(d.filter(o => o.actif !== false))).catch(() => {});
       }, []);
 
       function setF(k, v) { setForm(p => ({ ...p, [k]: v })); }
@@ -4992,6 +4994,22 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
       }
       function addLine() {
         setPrestations(prev => [...prev, { description: '', texte_libre: '', type: '', quantite: 1, tarif_unitaire: 0, remise_pct: 0, sous_total: 0 }]);
+      }
+
+      function addLineFromOffre(offreId) {
+        if (!offreId) return;
+        const o = offres.find(x => x.id === offreId);
+        if (!o) return;
+        setPrestations(prev => [...prev, {
+          description: o.nom,
+          texte_libre: o.description || '',
+          type: '',
+          quantite: 1,
+          tarif_unitaire: o.prix || 0,
+          remise_pct: 0,
+          sous_total: o.prix || 0,
+          offre_id: o.id,
+        }]);
       }
 
 
@@ -5128,6 +5146,16 @@ ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#f5f5f5;border-
               </div>
             ))}
             <button className="btn" style={{ fontSize: 12, marginBottom: 10 }} onClick={addLine}>+ Ligne</button>
+            {offres.length > 0 && (
+              <select className="form-input" style={{ fontSize: 12, marginBottom: 10, marginLeft: 8, width: 'auto', display: 'inline-block' }}
+                value=""
+                onChange={e => { addLineFromOffre(e.target.value); }}>
+                <option value="">📦 Insérer depuis catalogue...</option>
+                {offres.map(o => (
+                  <option key={o.id} value={o.id}>{o.nom} — {(o.prix || 0).toLocaleString('fr-FR')} €</option>
+                ))}
+              </select>
+            )}
 
             {/* Totaux */}
             <div style={{ background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', padding: '12px', marginBottom: 14 }}>
@@ -8532,33 +8560,348 @@ function EmailingView() {
     // ══════════════════════════════════════════════════════════════════════════════
 
     function StrategiePilotageView() {
+      const [tab, setTab] = useState('strategie');
+
       return (
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>📈 Stratégie & Pilotage</div>
-          <div className="metrics-grid" style={{ marginBottom: 20 }}>
-            <div className="metric-card accent-info">
-              <div className="metric-label">Vision</div>
-              <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.5, marginTop: 4 }}>
-                Centraliser les indicateurs clés de pilotage de l'activité Pause Kréyol.
-              </div>
+          <div className="tabs" style={{ marginBottom: 20 }}>
+            {[['strategie', '📈 Stratégie & Croissance'], ['prospect', '🔍 Prospect']].map(([k, l]) => (
+              <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
+            ))}
+          </div>
+          {tab === 'strategie' && <StrategieCroissanceTab />}
+          {tab === 'prospect' && <ProspectTab />}
+        </div>
+      );
+    }
+
+    // ── Onglet Stratégie & Croissance ─────────────────────────────────────────
+
+    function StrategieCroissanceTab() {
+      const EMPTY = {
+        point_etape: '',
+        objectifs_6_mois: '',
+        objectifs_1_an: '',
+        objectifs_5_ans: '',
+        kpis: '',
+        actions: '',
+        plafond_verre: '',
+      };
+      const [data, setData] = useState(EMPTY);
+      const [editing, setEditing] = useState(false);
+      const [form, setForm] = useState(EMPTY);
+      const [saving, setSaving] = useState(false);
+      const [msg, setMsg] = useState('');
+
+      useEffect(() => {
+        fetch(`${API}/strategie`).then(r => r.ok ? r.json() : {}).then(d => {
+          const merged = { ...EMPTY, ...d };
+          setData(merged);
+          setForm(merged);
+        }).catch(() => {});
+      }, []);
+
+      function set(k, v) { setForm(p => ({ ...p, [k]: v })); }
+
+      async function save() {
+        setSaving(true);
+        try {
+          const res = await fetch(`${API}/strategie`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
+          });
+          if (res.ok) {
+            const saved = await res.json();
+            const merged = { ...EMPTY, ...saved };
+            setData(merged);
+            setForm(merged);
+            setEditing(false);
+            setMsg('✅ Stratégie enregistrée');
+            setTimeout(() => setMsg(''), 3000);
+          }
+        } catch {}
+        setSaving(false);
+      }
+
+      const SECTIONS = [
+        { key: 'point_etape', label: '📍 Point d\'étape — Où en est-on aujourd\'hui ?', icon: '📍', color: 'var(--pk-blue)' },
+        { key: 'objectifs_6_mois', label: '⏱ Objectifs à 6 mois', icon: '⏱', color: 'var(--warn)' },
+        { key: 'objectifs_1_an', label: '📅 Objectifs à 1 an', icon: '📅', color: 'var(--accent)' },
+        { key: 'objectifs_5_ans', label: '🚀 Vision à 5 ans', icon: '🚀', color: 'var(--success)' },
+        { key: 'kpis', label: '📊 KPIs de suivi (indicateurs clés)', icon: '📊', color: 'var(--info)' },
+        { key: 'actions', label: '✅ Actions à réaliser', icon: '✅', color: '#6A1B9A' },
+        { key: 'plafond_verre', label: '🔭 Plafond de verre — Analyse des freins & leviers', icon: '🔭', color: 'var(--danger)' },
+      ];
+
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>📈 Stratégie & Croissance</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>Vision, objectifs et pilotage de l'activité Pause Kréyol</div>
             </div>
-            <div className="metric-card accent-green">
-              <div className="metric-label">Prochaines étapes</div>
-              <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.5, marginTop: 4 }}>
-                Définir les OKRs, objectifs semestriels et axes stratégiques.
-              </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {msg && <span style={{ fontSize: 12, color: 'var(--success)' }}>{msg}</span>}
+              {!editing
+                ? <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setEditing(true)}>✏️ Modifier</button>
+                : <>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => { setForm(data); setEditing(false); }}>Annuler</button>
+                  <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={save} disabled={saving}>{saving ? '⏳...' : '💾 Enregistrer'}</button>
+                </>
+              }
             </div>
           </div>
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title">📊 Tableau de pilotage stratégique</div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
+            {SECTIONS.map(s => (
+              <div key={s.key} className="card" style={{ padding: '14px 16px', borderLeft: `3px solid ${s.color}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: s.color, marginBottom: 8 }}>{s.label}</div>
+                {editing ? (
+                  <textarea
+                    className="form-input"
+                    rows={s.key === 'point_etape' || s.key === 'plafond_verre' ? 5 : 4}
+                    value={form[s.key] || ''}
+                    onChange={e => set(s.key, e.target.value)}
+                    placeholder={`Renseigner ${s.label.toLowerCase()}...`}
+                    style={{ resize: 'vertical', fontSize: 13 }}
+                  />
+                ) : (
+                  data[s.key]
+                    ? <div style={{ fontSize: 13, color: 'var(--text1)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{data[s.key]}</div>
+                    : <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic' }}>— Non renseigné —</div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {data.updated_at && !editing && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, textAlign: 'right' }}>
+              Dernière mise à jour : {new Date(data.updated_at).toLocaleString('fr-FR')}
             </div>
-            <div style={{ padding: '20px 0', color: 'var(--text3)', fontSize: 13, textAlign: 'center' }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>🚧</div>
-              <div>Cette section est en cours de construction.</div>
-              <div style={{ marginTop: 6 }}>Elle accueillera les OKRs, KPIs, axes stratégiques, et le pilotage à moyen/long terme de l'activité.</div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Onglet Prospect ───────────────────────────────────────────────────────
+
+    function ProspectTab() {
+      const EMPTY_FORM = { nom: '', description: '', budget: '', deadline: '', missions: '', contexte: '' };
+      const [form, setForm] = useState(EMPTY_FORM);
+      const [result, setResult] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [history, setHistory] = useState([]);
+      const [showHistory, setShowHistory] = useState(false);
+
+      useEffect(() => {
+        fetch(`${API}/prospects`).then(r => r.ok ? r.json() : []).then(setHistory).catch(() => {});
+      }, []);
+
+      function set(k, v) { setForm(p => ({ ...p, [k]: v })); }
+
+      async function analyser() {
+        if (!form.description) { setError('Décrivez le projet pour lancer l\'analyse.'); return; }
+        setLoading(true);
+        setError('');
+        setResult(null);
+        try {
+          const res = await fetch(`${API}/prospects/analyser`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          const data = await res.json();
+          setResult(data);
+          setHistory(p => [data, ...p.slice(0, 49)]);
+        } catch (e) {
+          setError('Erreur lors de l\'analyse : ' + e.message);
+        }
+        setLoading(false);
+      }
+
+      async function deleteAnalyse(id) {
+        await fetch(`${API}/prospects/${id}`, { method: 'DELETE' }).catch(() => {});
+        setHistory(p => p.filter(x => x.id !== id));
+        if (result?.id === id) setResult(null);
+      }
+
+      const VERDICT_STYLE = {
+        'POSSIBLE': { bg: '#E8F5E9', color: '#1B5E20', icon: '✅' },
+        'SOUS CONDITIONS': { bg: '#FFF3E0', color: '#E65100', icon: '⚠️' },
+        'DÉCONSEILLÉ': { bg: '#FFEBEE', color: '#B71C1C', icon: '❌' },
+      };
+      const RENTA_STYLE = {
+        'RENTABLE': { bg: '#E8F5E9', color: '#1B5E20' },
+        'LIMITE': { bg: '#FFF3E0', color: '#E65100' },
+        'NON_RENTABLE': { bg: '#FFEBEE', color: '#B71C1C' },
+      };
+
+      function ResultCard({ r }) {
+        const vs = VERDICT_STYLE[r.verdict] || VERDICT_STYLE['SOUS CONDITIONS'];
+        const rs = RENTA_STYLE[r.rentabilite] || RENTA_STYLE['LIMITE'];
+        return (
+          <div className="card" style={{ marginTop: 16 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+              <span style={{ background: vs.bg, color: vs.color, padding: '4px 12px', borderRadius: 12, fontSize: 13, fontWeight: 700 }}>
+                {vs.icon} {r.verdict}
+              </span>
+              <span style={{ background: rs.bg, color: rs.color, padding: '4px 12px', borderRadius: 12, fontSize: 13, fontWeight: 700 }}>
+                💰 {r.rentabilite}
+              </span>
+              {r.charge_warning && (
+                <span style={{ background: '#FFF3E0', color: '#E65100', padding: '4px 12px', borderRadius: 12, fontSize: 13, fontWeight: 700 }}>
+                  ⚠️ Charge élevée
+                </span>
+              )}
+              {r.estimation_charge && (
+                <span style={{ background: 'var(--surface2)', color: 'var(--text2)', padding: '4px 12px', borderRadius: 12, fontSize: 12 }}>
+                  ⏱ {r.estimation_charge}
+                </span>
+              )}
+            </div>
+
+            {r.synthese && (
+              <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.6, marginBottom: 12, color: 'var(--text1)' }}>
+                {r.synthese}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              {r.points_positifs?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', textTransform: 'uppercase', marginBottom: 6 }}>✅ Points positifs</div>
+                  {r.points_positifs.map((p, i) => <div key={i} style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>• {p}</div>)}
+                </div>
+              )}
+              {r.points_risques?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', textTransform: 'uppercase', marginBottom: 6 }}>⚠️ Risques</div>
+                  {r.points_risques.map((p, i) => <div key={i} style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>• {p}</div>)}
+                </div>
+              )}
+            </div>
+
+            {r.conditions_acceptation?.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--pk-blue)', textTransform: 'uppercase', marginBottom: 6 }}>📋 Conditions d'acceptation</div>
+                {r.conditions_acceptation.map((c, i) => <div key={i} style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>• {c}</div>)}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              {r.engagements_possibles?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#1B5E20', textTransform: 'uppercase', marginBottom: 6 }}>✅ Sur quoi on peut s'engager</div>
+                  {r.engagements_possibles.map((e, i) => <div key={i} style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>• {e}</div>)}
+                </div>
+              )}
+              {r.engagements_risques?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#B71C1C', textTransform: 'uppercase', marginBottom: 6 }}>❌ Ce qui est risqué</div>
+                  {r.engagements_risques.map((e, i) => <div key={i} style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 3 }}>• {e}</div>)}
+                </div>
+              )}
+            </div>
+
+            {r.recommandation_finale && (
+              <div style={{ background: vs.bg, border: `1px solid ${vs.color}30`, borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, color: vs.color }}>
+                💡 {r.recommandation_finale}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>🔍 Analyse Prospect</div>
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>Décrivez une demande entrante et l'IA évalue faisabilité, rentabilité et conditions</div>
+            </div>
+            {history.length > 0 && (
+              <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowHistory(p => !p)}>
+                {showHistory ? '▲ Masquer l\'historique' : `📂 Historique (${history.length})`}
+              </button>
+            )}
+          </div>
+
+          {/* Formulaire */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title" style={{ marginBottom: 14 }}>📝 Nouvelle demande à analyser</div>
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Nom du prospect / contact</label>
+                <input className="form-input" value={form.nom} onChange={e => set('nom', e.target.value)} placeholder="Ex : Cie Lumière, Sophie Martin..." />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Budget proposé (€)</label>
+                <input className="form-input" value={form.budget} onChange={e => set('budget', e.target.value)} placeholder="Ex : 3 000 € ou non communiqué" />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Description du projet *</label>
+              <textarea className="form-input" rows={4} value={form.description}
+                onChange={e => set('description', e.target.value)}
+                placeholder="Décrivez précisément la demande : type de projet, objectifs, contexte, public visé..."
+                style={{ resize: 'vertical' }} />
+            </div>
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Missions demandées</label>
+                <textarea className="form-input" rows={3} value={form.missions}
+                  onChange={e => set('missions', e.target.value)}
+                  placeholder="Ex : montage dossier subvention DRAC, coordination résidence 10 jours, charge de production..."
+                  style={{ resize: 'vertical' }} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Deadline / Date souhaitée</label>
+                <input className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} placeholder="Ex : octobre 2026, avant le 15/09..." style={{ marginBottom: 10 }} />
+                <label className="form-label">Contexte supplémentaire</label>
+                <textarea className="form-input" rows={2} value={form.contexte}
+                  onChange={e => set('contexte', e.target.value)}
+                  placeholder="Contraintes particulières, historique relationnel, urgence..."
+                  style={{ resize: 'vertical' }} />
+              </div>
+            </div>
+
+            {error && <div style={{ background: 'var(--danger-light)', color: 'var(--danger)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 10 }}>{error}</div>}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => { setForm(EMPTY_FORM); setResult(null); setError(''); }}>Réinitialiser</button>
+              <button className="btn btn-primary" onClick={analyser} disabled={loading || !form.description}>
+                {loading ? '⏳ Analyse en cours...' : '🤖 Lancer l\'analyse IA'}
+              </button>
             </div>
           </div>
+
+          {/* Résultat */}
+          {result && <ResultCard r={result} />}
+
+          {/* Historique */}
+          {showHistory && history.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>📂 Historique des analyses</div>
+              {history.map(h => {
+                const vs = VERDICT_STYLE[h.verdict] || VERDICT_STYLE['SOUS CONDITIONS'];
+                return (
+                  <div key={h.id} className="card" style={{ padding: '12px 16px', marginBottom: 10, cursor: 'pointer', borderLeft: `3px solid ${vs.color}` }}
+                    onClick={() => { setResult(h); setShowHistory(false); }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{h.nom || h.request?.nom || '—'}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(h.created_at).toLocaleDateString('fr-FR')} · {h.request?.description ? (h.request.description.length > 80 ? h.request.description.slice(0, 80) + '...' : h.request.description) : ''}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                        <span style={{ background: vs.bg, color: vs.color, padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 700 }}>{vs.icon} {h.verdict}</span>
+                        <button className="btn" style={{ fontSize: 11, padding: '2px 6px', color: 'var(--danger)' }}
+                          onClick={e => { e.stopPropagation(); deleteAnalyse(h.id); }}>🗑</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       );
     }
